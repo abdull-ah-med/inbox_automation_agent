@@ -5,10 +5,12 @@ import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.api.debug.graph_check import router as debug_graph_check_router
 from app.api.simulate.ingest import router as simulate_ingest_router
 from app.api.simulate.send_confirm import router as simulate_send_confirm_router
 from app.api.webhooks.graph import router as graph_webhook_router
 from app.api.webhooks.slack_actions import router as slack_actions_router
+from app.core.config import get_settings
 from app.core.dependencies import close_redis
 from app.core.exceptions import (
     AuditError,
@@ -19,6 +21,7 @@ from app.core.exceptions import (
     RuleEngineError,
     ThreadStateError,
 )
+from app.core.logging import configure_logging
 from app.db.session import dispose_engine
 
 logger = structlog.get_logger(__name__)
@@ -43,6 +46,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    configure_logging(environment=get_settings().environment)
+
     app = FastAPI(
         title="Inbox Triage Automation",
         version="0.1.0",
@@ -57,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(slack_actions_router)
     app.include_router(simulate_ingest_router)
     app.include_router(simulate_send_confirm_router)
+    app.include_router(debug_graph_check_router)
 
     @app.exception_handler(InboxTriageError)
     async def inbox_triage_exception_handler(
