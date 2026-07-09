@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     graph_client_id: str = ""
     graph_client_secret: str = ""
     graph_tenant_id: str = ""
+    graph_webhook_client_state: str = ""
+    graph_notification_url: str = ""
     target_mailboxes: str = ""
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
