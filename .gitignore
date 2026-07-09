@@ -1,0 +1,55 @@
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+.cursor/plans/
+
+*.log
+*.tmp
+temp-docs/
+
+node_modules/
+.next/
+out/
+.agents
+.cursor
+.cursorrules
+.DS_Store
+.DS_Store
+.DS_Store

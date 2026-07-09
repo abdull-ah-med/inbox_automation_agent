@@ -1,0 +1,26 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.db.base import Base, uuid_pk
+
+
+class Thread(Base):
+    __tablename__ = "threads"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    mailbox: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    conversation_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    subject: Mapped[str] = mapped_column(String(998), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="NEW")
+    urgency: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
