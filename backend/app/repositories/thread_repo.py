@@ -30,8 +30,14 @@ class ThreadSchema(BaseModel):
 async def get_by_conversation_id(
     session: AsyncSession,
     conversation_id: str,
+    *,
+    mailbox: str,
 ) -> ThreadSchema | None:
-    stmt = select(Thread).where(Thread.conversation_id == conversation_id)
+    """Look up a thread by mailbox + conversation_id (unique per mailbox)."""
+    stmt = select(Thread).where(
+        Thread.mailbox == mailbox,
+        Thread.conversation_id == conversation_id,
+    )
     result = await session.execute(stmt)
     thread = result.scalar_one_or_none()
     if thread is None:
@@ -57,8 +63,11 @@ async def upsert_thread(
     last_message_at: datetime | None = None,
     state: str = ThreadStateEnum.NEW.value,
 ) -> ThreadSchema:
-    """Insert a thread or update subject/last_message_at if conversation_id exists."""
-    stmt = select(Thread).where(Thread.conversation_id == conversation_id)
+    """Insert a thread or update subject/last_message_at for mailbox+conversation_id."""
+    stmt = select(Thread).where(
+        Thread.mailbox == mailbox,
+        Thread.conversation_id == conversation_id,
+    )
     result = await session.execute(stmt)
     existing = result.scalar_one_or_none()
 

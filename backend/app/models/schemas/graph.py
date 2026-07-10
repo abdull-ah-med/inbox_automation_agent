@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.models.schemas.email import ThreadContextSchema
 
 
 class GraphNotificationResourceDataSchema(BaseModel):
@@ -14,12 +16,23 @@ class GraphNotificationResourceDataSchema(BaseModel):
 
 
 class GraphNotificationItemSchema(BaseModel):
+    """Change or lifecycle notification item.
+
+    Per Graph docs, changeType and lifecycleEvent are mutually exclusive.
+    """
+
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     id: str | None = None
     subscription_id: str = Field(alias="subscriptionId")
     client_state: str | None = Field(default=None, alias="clientState")
-    change_type: Literal["created", "updated", "deleted"] = Field(alias="changeType")
+    change_type: Literal["created", "updated", "deleted"] | None = Field(
+        default=None,
+        alias="changeType",
+    )
+    lifecycle_event: (
+        Literal["missed", "subscriptionRemoved", "reauthorizationRequired"] | None
+    ) = Field(default=None, alias="lifecycleEvent")
     resource: str
     subscription_expiration_date_time: datetime | None = Field(
         default=None,
@@ -30,6 +43,12 @@ class GraphNotificationItemSchema(BaseModel):
         default=None,
         alias="resourceData",
     )
+
+    @model_validator(mode="after")
+    def require_change_or_lifecycle(self) -> "GraphNotificationItemSchema":
+        if self.change_type is None and self.lifecycle_event is None:
+            raise ValueError("Either changeType or lifecycleEvent is required")
+        return self
 
 
 class GraphNotificationSchema(BaseModel):
@@ -94,6 +113,10 @@ class GraphSubscriptionSchema(BaseModel):
     resource: str
     change_type: str = Field(alias="changeType")
     notification_url: str = Field(alias="notificationUrl")
+    lifecycle_notification_url: str | None = Field(
+        default=None,
+        alias="lifecycleNotificationUrl",
+    )
     expiration_date_time: datetime = Field(alias="expirationDateTime")
     client_state: str | None = Field(default=None, alias="clientState")
     application_id: str | None = Field(default=None, alias="applicationId")
@@ -116,6 +139,7 @@ class IngestResultSchema(BaseModel):
     status: Literal["ingested", "duplicate", "skipped"]
     thread_id: str | None = None
     conversation_id: str | None = None
+    thread_context: ThreadContextSchema | None = None
 
 
 class GraphCheckResponseSchema(BaseModel):

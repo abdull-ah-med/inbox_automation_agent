@@ -4,33 +4,35 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "inbox-triage-automation"
+version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
-    "fastapi",
-    "uvicorn[standard]",
-    "anthropic",
-    "sqlalchemy[asyncio]",
-    "asyncpg",
-    "alembic",
-    "pgvector",
-    "redis[hiredis]",
-    "slack-bolt[async]",
-    "httpx",
-    "pydantic-settings",
-    "structlog",
-    "python-dotenv",
-    "apscheduler",
-    "msal",
+    "fastapi>=0.139,<0.140",
+    "uvicorn[standard]>=0.51,<0.52",
+    "anthropic>=0.116,<0.117",
+    "sqlalchemy[asyncio]>=2.0.51,<2.1",
+    "asyncpg>=0.31,<0.32",
+    "alembic>=1.18,<1.19",
+    "pgvector>=0.5,<0.6",
+    "redis[hiredis]>=8.0,<9.0",
+    "slack-bolt[async]>=1.29,<2.0",
+    "httpx>=0.28,<0.29",
+    "pydantic>=2.13,<3.0",
+    "pydantic-settings>=2.14,<3.0",
+    "structlog>=26.1,<27.0",
+    "python-dotenv>=1.2,<2.0",
+    "pyyaml>=6.0,<7.0",
+    "apscheduler>=3.11,<4.0",
+    "msal>=1.37,<2.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "ruff",
-    "mypy",
-    "httpx",
+    "pytest>=9.1,<10.0",
+    "pytest-asyncio>=1.4,<2.0",
+    "pytest-cov>=7.1,<8.0",
+    "ruff>=0.15,<0.16",
+    "mypy>=2.2,<3.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -42,8 +44,46 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+# E/F = pyflakes+pycodestyle, I = import sorting, UP = pyupgrade,
+# B = bugbear (real-bug patterns), ASYNC = async correctness (critical here),
+# C4 = comprehensions, SIM = simplifications.
+select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+# Alembic env/versions are framework-generated and loosely typed; don't gate on them.
+exclude = ["^app/db/migrations/"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+
+# Third-party packages that ship no type stubs. Scoped narrowly so our own
+# code is still fully type-checked.
+[[tool.mypy.overrides]]
+module = [
+    "msal.*",
+    "slack_bolt.*",
+    "slack_sdk.*",
+    "pgvector.*",
+    "apscheduler.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
