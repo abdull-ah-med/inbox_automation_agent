@@ -41,6 +41,7 @@ ALLOWED_OPERATIONS: frozenset[str] = frozenset(
         "GET /users/{id}/messages",
         "GET /users/{id}/mailFolders/{id}/messages",
         "GET /users/{id}/messages/{id}",
+        "GET /subscriptions",
         "POST /subscriptions",
         "PATCH /subscriptions/{id}",
         "DELETE /subscriptions/{id}",
@@ -210,12 +211,37 @@ class GraphClient:
 
         return messages
 
+    async def list_subscriptions(self) -> list[GraphSubscriptionSchema]:
+        """List all change-notification subscriptions for this app.
+
+        GET /subscriptions
+        """
+        data = await self._request("GET", "/subscriptions")
+        raw_value = (data or {}).get("value", [])
+        subscriptions = [
+            GraphSubscriptionSchema.model_validate(item)
+            for item in raw_value
+            if isinstance(item, dict)
+        ]
+        next_link = (data or {}).get("@odata.nextLink")
+        while isinstance(next_link, str) and next_link:
+            page_data = await self._request("GET", "", absolute_url=next_link)
+            page_value = (page_data or {}).get("value", [])
+            subscriptions.extend(
+                GraphSubscriptionSchema.model_validate(item)
+                for item in page_value
+                if isinstance(item, dict)
+            )
+            next_link = (page_data or {}).get("@odata.nextLink")
+        return subscriptions
+
     async def create_subscription(
         self,
         mailbox: str,
         notification_url: str,
         client_state: str,
         *,
+        lifecycle_notification_url: str,
         expiration_minutes: int = MAX_SUBSCRIPTION_MINUTES,
     ) -> GraphSubscriptionSchema:
         """Create a change notification subscription for a mailbox inbox.
@@ -223,6 +249,8 @@ class GraphClient:
         POST /subscriptions
         Resource: users/{mailbox}/mailFolders('inbox')/messages
         Max lifetime for Outlook messages: 4,230 minutes.
+
+        lifecycleNotificationUrl cannot be added later via PATCH — must be set at create.
         """
         if expiration_minutes > MAX_SUBSCRIPTION_MINUTES:
             raise GraphClientError(
@@ -231,11 +259,14 @@ class GraphClient:
             )
         if len(client_state) > 128:
             raise GraphClientError("clientState must be 128 characters or fewer")
+        if not lifecycle_notification_url.strip():
+            raise GraphClientError("lifecycle_notification_url is required")
 
         expiration = datetime.now(UTC) + timedelta(minutes=expiration_minutes)
         body = {
             "changeType": "created",
             "notificationUrl": notification_url,
+            "lifecycleNotificationUrl": lifecycle_notification_url,
             "resource": f"users/{mailbox}/mailFolders('inbox')/messages",
             "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
             "clientState": client_state,

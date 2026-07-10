@@ -1,5 +1,6 @@
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import urlparse, urlunparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     graph_tenant_id: str = ""
     graph_webhook_client_state: str = ""
     graph_notification_url: str = ""
+    graph_lifecycle_url: str = ""
     target_mailboxes: str = ""
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
@@ -22,6 +24,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     environment: Literal["local", "staging", "production"] = "local"
     staleness_threshold_hours: int = Field(default=24, ge=1)
+    poll_interval_seconds: int = Field(default=300, ge=60)
+    subscription_renew_interval_hours: int = Field(default=48, ge=1)
 
     classification_model: str = "claude-haiku-4-5"
     draft_model: str = "claude-sonnet-4-6"
@@ -31,6 +35,19 @@ class Settings(BaseSettings):
         if not self.target_mailboxes.strip():
             return []
         return [m.strip() for m in self.target_mailboxes.split(",") if m.strip()]
+
+    @property
+    def resolved_lifecycle_url(self) -> str:
+        """Explicit GRAPH_LIFECYCLE_URL, or derive from notification URL path."""
+        if self.graph_lifecycle_url.strip():
+            return self.graph_lifecycle_url.strip()
+        notification = self.graph_notification_url.strip()
+        if not notification:
+            return ""
+        if notification.rstrip("/").endswith("/notifications"):
+            return notification.rstrip("/").removesuffix("/notifications") + "/lifecycle"
+        parsed = urlparse(notification)
+        return urlunparse(parsed._replace(path="/webhooks/graph/lifecycle"))
 
 
 @lru_cache

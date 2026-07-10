@@ -34,10 +34,13 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-def get_graph_auth(settings: Annotated[Settings, Depends(get_settings)]) -> GraphAuth:
+async def get_graph_auth(
+    settings: Annotated[Settings, Depends(get_settings)],
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> GraphAuth:
     global _graph_auth
     if _graph_auth is None:
-        _graph_auth = GraphAuth(settings)
+        _graph_auth = GraphAuth(settings, redis=redis)
     return _graph_auth
 
 
