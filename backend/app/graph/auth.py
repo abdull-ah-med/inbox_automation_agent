@@ -7,7 +7,9 @@ Token acquisition follows the official MSAL Python pattern:
 acquire_token_silent first, then acquire_token_for_client on cache miss.
 
 Token cache is an MSAL SerializableTokenCache persisted in Redis so multi-worker
-processes share tokens across restarts.
+processes share tokens. Per MSAL distributed-cache guidance, reload from Redis
+before every acquire and persist only when has_state_changed is True.
+serialize() resets has_state_changed (do not clear it manually).
 """
 
 from __future__ import annotations
@@ -36,7 +38,6 @@ class GraphAuth:
         self._redis = redis
         self._cache = msal.SerializableTokenCache()
         self._app = self._build_msal_app(settings, self._cache)
-        self._cache_loaded = False
 
     @staticmethod
     def _build_msal_app(
@@ -58,17 +59,17 @@ class GraphAuth:
             token_cache=cache,
         )
 
-    async def _ensure_cache_loaded(self) -> None:
-        if self._cache_loaded or self._redis is None:
-            self._cache_loaded = True
+    async def _load_cache_from_redis(self) -> None:
+        """Deserialize the latest shared MSAL cache before token acquisition."""
+        if self._redis is None:
             return
         raw = await self._redis.get(MSAL_TOKEN_CACHE_KEY)
         if isinstance(raw, str) and raw:
             self._cache.deserialize(raw)
             logger.debug("graph_token_cache_loaded_from_redis")
-        self._cache_loaded = True
 
     async def _persist_cache_if_changed(self) -> None:
+        """Persist only when MSAL mutated the cache; serialize() clears has_state_changed."""
         if self._redis is None or not self._cache.has_state_changed:
             return
         serialized = self._cache.serialize()
@@ -89,7 +90,7 @@ class GraphAuth:
 
     async def get_access_token(self) -> str:
         """Return a valid Graph API bearer token."""
-        await self._ensure_cache_loaded()
+        await self._load_cache_from_redis()
         result = await asyncio.to_thread(self._acquire_token_sync)
         await self._persist_cache_if_changed()
 

@@ -83,6 +83,37 @@ async def test_get_access_token_raises_on_msal_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_token_cache_reloaded_from_redis_on_every_acquire() -> None:
+    settings = _settings()
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value='{"AccessToken":{}}')
+    redis.set = AsyncMock(return_value=True)
+
+    mock_cache = MagicMock()
+    mock_cache.has_state_changed = False
+    mock_cache.serialize.return_value = "{}"
+    mock_cache.deserialize = MagicMock()
+
+    mock_app = MagicMock()
+    mock_app.acquire_token_silent.return_value = {
+        "access_token": "cached-token",
+        "expires_in": 3600,
+    }
+
+    with (
+        patch("app.graph.auth.msal.SerializableTokenCache", return_value=mock_cache),
+        patch("app.graph.auth.msal.ConfidentialClientApplication", return_value=mock_app),
+    ):
+        auth = GraphAuth(settings, redis=redis)
+        assert not hasattr(auth, "_cache_loaded")
+        await auth.get_access_token()
+        await auth.get_access_token()
+
+    assert redis.get.await_count == 2
+    assert mock_cache.deserialize.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_token_cache_loaded_and_persisted_via_redis() -> None:
     settings = _settings()
     redis = AsyncMock()

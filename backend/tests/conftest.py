@@ -10,6 +10,33 @@ from app.core.config import Settings
 from app.models.schemas.graph import GraphMessageSchema
 
 
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
+    """Print each test's purpose (docstring) and outcome when not running quiet."""
+    outcome = yield
+    report = outcome.get_result()
+    if report.when != "call":
+        return
+
+    config = item.config
+    # Skip the banner under default quiet addopts unless the user asked for verbose.
+    if config.option.verbose < 1 and config.getoption("quiet", default=0):
+        return
+
+    doc = ""
+    if hasattr(item, "function") and item.function.__doc__:
+        doc = " ".join(item.function.__doc__.split())
+    why = doc or f"(no docstring) intent from name: {item.name}"
+
+    print(f"\n{'=' * 72}")
+    print(f"TEST:   {item.nodeid}")
+    print(f"WHY:    {why}")
+    print(f"RESULT: {report.outcome.upper()}")
+    if report.failed and report.longrepr is not None:
+        print(f"DETAIL:\n{report.longrepr}")
+    print(f"{'=' * 72}")
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
