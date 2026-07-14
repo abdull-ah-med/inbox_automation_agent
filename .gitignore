@@ -1,7 +1,8 @@
+misc/
+
 # Secrets / env
 .env
 .env.*
-.env.example
 *.pem
 *.key
 *.p12
@@ -44,25 +45,14 @@ htmlcov/
 # Logs / local scratch
 *.log
 *.tmp
-temp-docs/
-backend/plans-temp/
 
 # Frontend
 node_modules/
 .next/
 out/
 
-# Local agent / Cursor tooling (not tracked yet)
+# Cursor / agent tooling (must stay at repo root for IDE behavior)
 .agents/
-skills-lock.json
 .cursor/
 .cursorrules
 *.mdc
-
-# Local / not-yet-tracked project paths
-docs/
-.github/
-.pre-commit-config.yaml
-backend/scripts
-backend/verification/
-backend/scripts
