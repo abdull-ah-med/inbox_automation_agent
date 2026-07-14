@@ -1,11 +1,14 @@
+misc/
 
+# Secrets / env
 .env
 .env.*
-!.env.example
 *.pem
 *.key
 *.p12
 *.pfx
+
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -32,24 +35,24 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Testing
+# Testing / linters
 .coverage
 htmlcov/
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 
-.cursor/plans/
-
+# Logs / local scratch
 *.log
 *.tmp
-temp-docs/
 
+# Frontend
 node_modules/
 .next/
 out/
-.agents
-.cursor
+
+# Cursor / agent tooling (must stay at repo root for IDE behavior)
+.agents/
+.cursor/
 .cursorrules
-.DS_Store
-.DS_Store
-.DS_Store
+*.mdc
