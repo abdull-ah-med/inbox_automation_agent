@@ -5,9 +5,7 @@ from __future__ import annotations
 import structlog
 
 from app.core.config import get_settings
-from app.core.dependencies import get_redis
-from app.graph.auth import GraphAuth
-from app.graph.client import GraphClient
+from app.core.dependencies import get_graph_auth, get_graph_client, get_redis
 from app.services import subscription_service
 
 logger = structlog.get_logger(__name__)
@@ -21,8 +19,8 @@ async def run_subscription_reconcile() -> None:
         return
 
     redis = await get_redis()
-    auth = GraphAuth(settings, redis=redis)
-    graph_client = GraphClient(auth)
+    auth = await get_graph_auth(settings, redis)
+    graph_client = get_graph_client(auth)
     try:
         await subscription_service.reconcile_all_mailboxes(
             redis=redis,
@@ -41,8 +39,8 @@ async def run_subscription_renewal() -> None:
         return
 
     redis = await get_redis()
-    auth = GraphAuth(settings, redis=redis)
-    graph_client = GraphClient(auth)
+    auth = await get_graph_auth(settings, redis)
+    graph_client = get_graph_client(auth)
     try:
         await subscription_service.renew_all_mailboxes(
             redis=redis,

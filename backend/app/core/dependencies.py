@@ -12,6 +12,7 @@ from app.graph.client import GraphClient
 
 _redis_client: Redis | None = None
 _graph_auth: GraphAuth | None = None
+_graph_client: GraphClient | None = None
 
 
 async def get_redis() -> Redis:
@@ -47,7 +48,19 @@ async def get_graph_auth(
 def get_graph_client(
     auth: Annotated[GraphAuth, Depends(get_graph_auth)],
 ) -> GraphClient:
-    return GraphClient(auth)
+    """Return the process-scoped GraphClient (persistent httpx pool)."""
+    global _graph_client
+    if _graph_client is None:
+        _graph_client = GraphClient(auth)
+    return _graph_client
+
+
+async def close_graph_client() -> None:
+    global _graph_client, _graph_auth
+    if _graph_client is not None:
+        await _graph_client.aclose()
+        _graph_client = None
+    _graph_auth = None
 
 
 # TODO: Wire Slack AsyncApp when SLACK_BOT_TOKEN is available.

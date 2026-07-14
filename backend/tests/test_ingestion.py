@@ -347,13 +347,10 @@ async def test_webhook_empty_payload_returns_202() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_invalid_payload_returns_502() -> None:
+async def test_webhook_invalid_payload_returns_202() -> None:
+    """Poison-pill payloads must be accepted so Graph does not retry for hours."""
     app = FastAPI()
     app.include_router(graph_router)
-
-    @app.exception_handler(GraphClientError)
-    async def _graph_error(_: object, exc: GraphClientError) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     settings = Settings(
         environment="local",
@@ -361,8 +358,6 @@ async def test_webhook_invalid_payload_returns_502() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
-    app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -371,7 +366,70 @@ async def test_webhook_invalid_payload_returns_502() -> None:
             json={"value": "not-a-list"},
         )
 
-    assert response.status_code == 502
+    assert response.status_code == 202
+
+
+@pytest.mark.asyncio
+async def test_webhook_enqueue_passes_only_payload_and_settings() -> None:
+    """Regression: request-scoped redis/graph_client must not be passed to BackgroundTasks."""
+    app = FastAPI()
+    app.include_router(graph_router)
+
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        target_mailboxes="user@example.com",
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    with patch(
+        "app.api.webhooks.graph._process_notifications",
+        new_callable=AsyncMock,
+    ) as process:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "secret",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+            )
+
+    assert response.status_code == 202
+    process.assert_awaited_once()
+    assert len(process.await_args.args) == 2
+    assert process.await_args.kwargs == {}
+    assert process.await_args.args[1] is settings
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_invalid_payload_returns_202() -> None:
+    app = FastAPI()
+    app.include_router(graph_router)
+
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        target_mailboxes="user@example.com",
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/lifecycle",
+            json={"value": {"not": "a list"}},
+        )
+
+    assert response.status_code == 202
 
 
 @pytest.mark.asyncio

@@ -8,6 +8,12 @@ Handles:
 Official docs:
 https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks
 https://learn.microsoft.com/en-us/graph/change-notifications-lifecycle-events
+
+Delivery contract (Microsoft Learn):
+- Return 2xx within ~3 seconds or Graph retries for up to 4 hours.
+- Prefer 202 Accepted after queueing async work.
+- Never return 4xx/5xx for an unparseable but received payload — that creates
+  retry storms and can mark the endpoint slow/drop.
 """
 
 from __future__ import annotations
@@ -17,10 +23,16 @@ from urllib.parse import unquote
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
+from pydantic import ValidationError
 from redis.asyncio import Redis
 
 from app.core.config import Settings
-from app.core.dependencies import GraphClientDep, RedisDep, SettingsDep
+from app.core.dependencies import (
+    SettingsDep,
+    get_graph_auth,
+    get_graph_client,
+    get_redis,
+)
 from app.core.exceptions import GraphClientError
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
@@ -73,12 +85,22 @@ def _notification_ids(
     return mailbox, message_id
 
 
+async def _app_scoped_graph_deps(settings: Settings) -> tuple[Redis, GraphClient]:
+    """Resolve process-scoped Redis/GraphClient (not request-tied yield deps)."""
+    redis = await get_redis()
+    auth = await get_graph_auth(settings, redis)
+    return redis, get_graph_client(auth)
+
+
 async def _process_notifications(
     payload: GraphNotificationSchema,
     settings: Settings,
-    redis: Redis,
-    graph_client: GraphClient,
+    redis: Redis | None = None,
+    graph_client: GraphClient | None = None,
 ) -> None:
+    if redis is None or graph_client is None:
+        redis, graph_client = await _app_scoped_graph_deps(settings)
+
     expected_state = _require_client_state(settings)
     session_factory = get_session_factory()
     fallback_mailbox = settings.mailbox_list[0] if settings.mailbox_list else None
@@ -122,9 +144,12 @@ async def _process_notifications(
 async def _process_lifecycle_notifications(
     payload: GraphNotificationSchema,
     settings: Settings,
-    redis: Redis,
-    graph_client: GraphClient,
+    redis: Redis | None = None,
+    graph_client: GraphClient | None = None,
 ) -> None:
+    if redis is None or graph_client is None:
+        redis, graph_client = await _app_scoped_graph_deps(settings)
+
     expected_state = _require_client_state(settings)
 
     for item in payload.value:
@@ -162,8 +187,6 @@ async def receive_graph_notifications(
     request: Request,
     background_tasks: BackgroundTasks,
     settings: SettingsDep,
-    redis: RedisDep,
-    graph_client: GraphClientDep,
     validation_token: str | None = Query(default=None, alias="validationToken"),
 ) -> Response:
     """Receive Graph subscription validation or change notifications."""
@@ -173,24 +196,28 @@ async def receive_graph_notifications(
     # Reject forged traffic when clientState is not configured.
     _require_client_state(settings)
 
-    body = await request.json()
     try:
+        body = await request.json()
         payload = GraphNotificationSchema.model_validate(body)
+    except (ValidationError, ValueError, TypeError) as exc:
+        # Sink poison pills: Graph retries non-2xx for up to 4 hours.
+        logger.critical("graph_notification_parse_failed", error=str(exc))
+        return Response(status_code=status.HTTP_202_ACCEPTED)
     except Exception as exc:
-        logger.error("graph_notification_parse_failed", error=str(exc))
-        raise GraphClientError(f"Invalid Graph notification payload: {exc}") from exc
+        logger.critical("graph_notification_parse_failed", error=str(exc))
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     if not payload.value:
         logger.info("graph_notification_empty")
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
+    # Background work resolves process-scoped Redis/GraphClient — never pass
+    # request-lifecycle dependencies into BackgroundTasks.
     enqueue(
         background_tasks,
         _process_notifications,
         payload,
         settings,
-        redis,
-        graph_client,
     )
     return Response(status_code=status.HTTP_202_ACCEPTED)
 
@@ -204,8 +231,6 @@ async def receive_graph_lifecycle(
     request: Request,
     background_tasks: BackgroundTasks,
     settings: SettingsDep,
-    redis: RedisDep,
-    graph_client: GraphClientDep,
     validation_token: str | None = Query(default=None, alias="validationToken"),
 ) -> Response:
     """Receive Graph lifecycle validation or lifecycle notifications."""
@@ -214,12 +239,15 @@ async def receive_graph_lifecycle(
 
     _require_client_state(settings)
 
-    body = await request.json()
     try:
+        body = await request.json()
         payload = GraphNotificationSchema.model_validate(body)
+    except (ValidationError, ValueError, TypeError) as exc:
+        logger.critical("graph_lifecycle_parse_failed", error=str(exc))
+        return Response(status_code=status.HTTP_202_ACCEPTED)
     except Exception as exc:
-        logger.error("graph_lifecycle_parse_failed", error=str(exc))
-        raise GraphClientError(f"Invalid Graph lifecycle payload: {exc}") from exc
+        logger.critical("graph_lifecycle_parse_failed", error=str(exc))
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     if not payload.value:
         logger.info("graph_lifecycle_empty")
@@ -230,7 +258,5 @@ async def receive_graph_lifecycle(
         _process_lifecycle_notifications,
         payload,
         settings,
-        redis,
-        graph_client,
     )
     return Response(status_code=status.HTTP_202_ACCEPTED)

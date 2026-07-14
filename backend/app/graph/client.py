@@ -8,10 +8,12 @@ Official docs:
 - https://learn.microsoft.com/en-us/graph/api/user-list-messages
 - https://learn.microsoft.com/en-us/graph/api/mailfolder-list-messages
 - https://learn.microsoft.com/en-us/graph/api/subscription-post-subscriptions
+- https://learn.microsoft.com/en-us/graph/throttling
 """
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
@@ -36,26 +38,42 @@ DEFAULT_MESSAGE_SELECT = (
 )
 MAX_SUBSCRIPTION_MINUTES = 4230
 
-ALLOWED_OPERATIONS: frozenset[str] = frozenset(
-    {
-        "GET /users/{id}/messages",
-        "GET /users/{id}/mailFolders/{id}/messages",
-        "GET /users/{id}/messages/{id}",
-        "GET /subscriptions",
-        "POST /subscriptions",
-        "PATCH /subscriptions/{id}",
-        "DELETE /subscriptions/{id}",
-        "GET /users/{id}/messages?$filter=...",
-    }
-)
+# Graph throttling: honor Retry-After; retry up to 3 times after the first failure.
+# https://learn.microsoft.com/en-us/graph/throttling
+MAX_THROTTLE_RETRIES = 3
+DEFAULT_RETRY_AFTER_SECONDS = 5.0
+_THROTTLE_STATUS_CODES = frozenset({429, 503})
+
+
+def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
+    """Parse Retry-After (seconds). Fall back to exponential backoff when absent."""
+    raw = response.headers.get("Retry-After") or response.headers.get("retry-after")
+    if raw is not None:
+        try:
+            parsed = float(str(raw).strip())
+        except ValueError:
+            logger.warning("graph_retry_after_unparseable", retry_after=raw)
+        else:
+            return parsed if parsed > 0.0 else 0.0
+    backoff = DEFAULT_RETRY_AFTER_SECONDS * float(2**attempt)
+    return backoff
 
 
 class GraphClient:
-    """Read-only Microsoft Graph client using httpx + MSAL auth."""
+    """Read-only Microsoft Graph client using a long-lived httpx session + MSAL auth."""
 
     def __init__(self, auth: GraphAuth, *, timeout: float = 30.0) -> None:
         self._auth = auth
         self._timeout = timeout
+        # Long-lived client for connection pooling (httpx docs: do not create per request).
+        self._http = httpx.AsyncClient(
+            timeout=timeout,
+            headers={"Accept": "application/json"},
+        )
+
+    async def aclose(self) -> None:
+        """Close the underlying HTTP connection pool."""
+        await self._http.aclose()
 
     async def _request(
         self,
@@ -70,7 +88,6 @@ class GraphClient:
         token = await self._auth.get_access_token()
         request_headers = {
             "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
         }
         if headers:
             request_headers.update(headers)
@@ -78,14 +95,32 @@ class GraphClient:
         url = absolute_url or f"{GRAPH_BASE_URL}{path}"
         logger.debug("graph_request", method=method, path=path or absolute_url)
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.request(
+        response: httpx.Response | None = None
+        for attempt in range(MAX_THROTTLE_RETRIES + 1):
+            response = await self._http.request(
                 method,
                 url,
                 params=params,
                 json=json_body,
                 headers=request_headers,
             )
+            if response.status_code not in _THROTTLE_STATUS_CODES:
+                break
+            if attempt >= MAX_THROTTLE_RETRIES:
+                break
+            delay = _retry_after_seconds(response, attempt)
+            logger.warning(
+                "graph_request_throttled",
+                method=method,
+                path=path or absolute_url,
+                status_code=response.status_code,
+                retry_after_seconds=delay,
+                attempt=attempt + 1,
+                max_retries=MAX_THROTTLE_RETRIES,
+            )
+            await asyncio.sleep(delay)
+
+        assert response is not None
 
         if response.status_code >= 400:
             logger.error(
