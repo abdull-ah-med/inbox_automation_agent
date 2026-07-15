@@ -28,3 +28,15 @@ class EntitiesSchema(BaseModel):
 class ClassificationResultSchema(BaseModel):
     classification: ClassificationSchema
     entities: EntitiesSchema
+
+
+class TriageResultSchema(BaseModel):
+    """Haiku triage output — spam / action items / needs-context."""
+
+    is_spam: bool
+    spam_reason: str | None = None
+    has_action_items: bool
+    action_items_summary: str | None = None
+    needs_context: bool
+    context_reason: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
