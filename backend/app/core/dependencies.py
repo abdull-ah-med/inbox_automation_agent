@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
+from anthropic import AsyncAnthropic
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +14,7 @@ from app.graph.client import GraphClient
 _redis_client: Redis | None = None
 _graph_auth: GraphAuth | None = None
 _graph_client: GraphClient | None = None
+_anthropic_client: AsyncAnthropic | None = None
 
 
 async def get_redis() -> Redis:
@@ -63,6 +65,22 @@ async def close_graph_client() -> None:
     _graph_auth = None
 
 
+def get_anthropic_client(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncAnthropic:
+    """Return a process-scoped AsyncAnthropic client (not created at import time)."""
+    global _anthropic_client
+    if _anthropic_client is None:
+        # Empty key is allowed at construction; live calls fail clearly if unset.
+        _anthropic_client = AsyncAnthropic(api_key=settings.anthropic_api_key or None)
+    return _anthropic_client
+
+
+def anthropic_client_from_settings(settings: Settings) -> AsyncAnthropic:
+    """Resolve Anthropic client outside FastAPI request DI (webhook/poll workers)."""
+    return get_anthropic_client(settings)
+
+
 # TODO: Wire Slack AsyncApp when SLACK_BOT_TOKEN is available.
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -70,3 +88,4 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
 GraphAuthDep = Annotated[GraphAuth, Depends(get_graph_auth)]
 GraphClientDep = Annotated[GraphClient, Depends(get_graph_client)]
+AnthropicClientDep = Annotated[AsyncAnthropic, Depends(get_anthropic_client)]
