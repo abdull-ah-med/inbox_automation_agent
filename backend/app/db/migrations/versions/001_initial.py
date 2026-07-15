@@ -1,4 +1,4 @@
-"""Initial schema: threads, messages, classifications, drafts, audit_events, email_embeddings."""
+"""Initial schema: threads, messages, classifications, drafts, audit, embeddings, links."""
 
 from collections.abc import Sequence
 
@@ -13,6 +13,7 @@ depends_on: Sequence[str] | None = None
 
 NOW = sa.text("now()")
 JSONB = sa.dialects.postgresql.JSONB
+ARRAY = sa.dialects.postgresql.ARRAY
 
 
 def upgrade() -> None:
@@ -35,9 +36,14 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("conversation_id"),
+        sa.UniqueConstraint(
+            "mailbox",
+            "conversation_id",
+            name="uq_threads_mailbox_conversation",
+        ),
     )
     op.create_index("ix_threads_mailbox", "threads", ["mailbox"])
+    op.create_index("ix_threads_conversation_id", "threads", ["conversation_id"])
 
     op.create_table(
         "messages",
@@ -85,6 +91,9 @@ def upgrade() -> None:
         sa.Column("recipients", JSONB(), nullable=False),
         sa.Column("teaching_note", sa.Text(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
+        sa.Column("urgency", sa.String(length=16), nullable=True),
+        sa.Column("urgency_reason", sa.Text(), nullable=True),
+        sa.Column("context_match_confidence", sa.Float(), nullable=True),
         sa.Column("edited_body", sa.Text(), nullable=True),
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("rejected_at", sa.DateTime(timezone=True), nullable=True),
@@ -121,18 +130,63 @@ def upgrade() -> None:
     op.create_table(
         "email_embeddings",
         sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("message_id", sa.UUID(), nullable=True),
         sa.Column("mailbox", sa.String(length=320), nullable=False),
         sa.Column("conversation_id", sa.String(length=255), nullable=False),
+        sa.Column("sender_email", sa.String(length=320), nullable=False),
+        sa.Column("recipient_emails", ARRAY(sa.String(length=320)), nullable=False),
+        sa.Column(
+            "cc_emails",
+            ARRAY(sa.String(length=320)),
+            nullable=False,
+            server_default=sa.text("'{}'::varchar(320)[]"),
+        ),
         sa.Column("embedding", Vector(1536), nullable=False),
         sa.Column("sent_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("body_preview", sa.Text(), nullable=False),
+        sa.ForeignKeyConstraint(["message_id"], ["messages.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_email_embeddings_mailbox", "email_embeddings", ["mailbox"])
     op.create_index("ix_email_embeddings_conversation_id", "email_embeddings", ["conversation_id"])
+    op.create_index("ix_email_embeddings_message_id", "email_embeddings", ["message_id"])
+    op.create_index("ix_email_embeddings_sender_email", "email_embeddings", ["sender_email"])
+
+    op.create_table(
+        "thread_links",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("source_message_id", sa.UUID(), nullable=False),
+        sa.Column("matched_embedding_id", sa.UUID(), nullable=False),
+        sa.Column("matched_conversation_id", sa.String(length=255), nullable=False),
+        sa.Column("similarity_score", sa.Float(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=NOW,
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(["source_message_id"], ["messages.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["matched_embedding_id"],
+            ["email_embeddings.id"],
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_thread_links_source_message_id", "thread_links", ["source_message_id"])
+    op.create_index(
+        "ix_thread_links_matched_embedding_id",
+        "thread_links",
+        ["matched_embedding_id"],
+    )
 
 
 def downgrade() -> None:
+    op.drop_index("ix_thread_links_matched_embedding_id", table_name="thread_links")
+    op.drop_index("ix_thread_links_source_message_id", table_name="thread_links")
+    op.drop_table("thread_links")
+    op.drop_index("ix_email_embeddings_sender_email", table_name="email_embeddings")
+    op.drop_index("ix_email_embeddings_message_id", table_name="email_embeddings")
     op.drop_index("ix_email_embeddings_conversation_id", table_name="email_embeddings")
     op.drop_index("ix_email_embeddings_mailbox", table_name="email_embeddings")
     op.drop_table("email_embeddings")
@@ -145,5 +199,6 @@ def downgrade() -> None:
     op.drop_table("classifications")
     op.drop_index("ix_messages_thread_id", table_name="messages")
     op.drop_table("messages")
+    op.drop_index("ix_threads_conversation_id", table_name="threads")
     op.drop_index("ix_threads_mailbox", table_name="threads")
     op.drop_table("threads")

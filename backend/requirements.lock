@@ -1,0 +1,27 @@
+# Known-good, exact runtime versions this codebase was built and verified against
+# (Python 3.14 dev venv, July 2026). Use this for reproducible CI and production
+# installs:  pip install -r requirements.lock  &&  pip install -e . --no-deps
+#
+# pyproject.toml holds human-facing version *ranges*; this file holds the frozen
+# point-in-time truth. Regenerate after an intentional upgrade with:
+#   pip install -e ".[dev]" --upgrade && pip freeze > requirements.freeze
+# then promote the reviewed subset here.
+#
+# Direct runtime dependencies (transitive pins are resolved by pip from these):
+alembic==1.18.5
+anthropic==0.116.0
+apscheduler==3.11.3
+asyncpg==0.31.0
+fastapi==0.139.0
+httpx==0.28.1
+msal==1.37.0
+pgvector==0.5.0
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+pyyaml==6.0.3
+redis[hiredis]==8.0.1
+slack-bolt[async]==1.29.0
+sqlalchemy[asyncio]==2.0.51
+structlog==26.1.0
+uvicorn[standard]==0.51.0

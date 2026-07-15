@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.db.base import Base, uuid_pk
@@ -9,10 +9,13 @@ from app.models.db.base import Base, uuid_pk
 
 class Thread(Base):
     __tablename__ = "threads"
+    __table_args__ = (
+        UniqueConstraint("mailbox", "conversation_id", name="uq_threads_mailbox_conversation"),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     mailbox: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
-    conversation_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    conversation_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject: Mapped[str] = mapped_column(String(998), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="NEW")
     urgency: Mapped[str | None] = mapped_column(String(16), nullable=True)
