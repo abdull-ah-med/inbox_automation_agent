@@ -22,6 +22,7 @@ from app.core.exceptions import (
     InboxTriageError,
     RuleEngineError,
     ThreadStateError,
+    TriageError,
 )
 from app.core.logging import configure_logging
 from app.db.session import dispose_engine
@@ -35,6 +36,7 @@ logger = structlog.get_logger(__name__)
 
 EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     ClassificationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    TriageError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     RuleEngineError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     GraphClientError: status.HTTP_502_BAD_GATEWAY,
     DraftGenerationError: status.HTTP_422_UNPROCESSABLE_CONTENT,

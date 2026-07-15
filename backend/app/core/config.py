@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     classification_model: str = "claude-haiku-4-5"
     draft_model: str = "claude-sonnet-4-6"
+    triage_max_tokens: int = Field(default=200, ge=64, le=1024)
+    triage_confidence_floor: float = Field(default=0.65, ge=0.0, le=1.0)
 
     @property
     def mailbox_list(self) -> list[str]:

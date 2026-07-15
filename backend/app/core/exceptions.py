@@ -6,6 +6,10 @@ class ClassificationError(InboxTriageError):
     """Raised when email classification fails."""
 
 
+class TriageError(InboxTriageError):
+    """Raised when Haiku triage parse/API fails after retry."""
+
+
 class RuleEngineError(InboxTriageError):
     """Raised when rule engine evaluation fails."""
 
