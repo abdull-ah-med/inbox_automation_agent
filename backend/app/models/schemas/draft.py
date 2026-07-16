@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -16,6 +17,8 @@ class DraftSchema(BaseModel):
     forward_to: str | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     teaching_note: str
+    urgency: Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
+    urgency_reason: str
 
 
 class DraftResponseSchema(DraftSchema):
