@@ -28,6 +28,8 @@ class EmailMessageSchema(BaseModel):
     body_preview: str | None = None
     received_at: datetime
     direction: EmailDirectionEnum = EmailDirectionEnum.INBOUND
+    to_recipients: list[str] = Field(default_factory=list)
+    cc_recipients: list[str] = Field(default_factory=list)
 
 
 class ThreadContextSchema(BaseModel):
