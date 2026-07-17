@@ -133,7 +133,7 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
         async def __aexit__(self, *args: object) -> None:
             return None
 
-        def begin(self) -> "_SessionCM":
+        def begin(self) -> _SessionCM:
             return self
 
     with (

@@ -57,7 +57,7 @@ async def test_get_message_calls_correct_url(client: GraphClient) -> None:
     assert message.id == "msg-1"
     args, kwargs = client._http.request.call_args
     assert args[0] == "GET"
-    assert args[1] == f"{GRAPH_BASE_URL}/users/user@example.com/messages/msg-1"
+    assert args[1] == (f"{GRAPH_BASE_URL}/users/user%40example.com/messages/msg-1")
     assert kwargs["headers"]["Authorization"] == "Bearer test-token"
     assert 'outlook.body-content-type="text"' in kwargs["headers"]["Prefer"]
 
@@ -74,7 +74,7 @@ async def test_list_messages_uses_mailfolders_path(client: GraphClient) -> None:
 
     assert messages == []
     args, kwargs = client._http.request.call_args
-    assert "/users/user@example.com/mailFolders('inbox')/messages" in args[1]
+    assert "/users/user%40example.com/mailFolders('inbox')/messages" in args[1]
     assert kwargs["params"]["$top"] == "5"
 
 
@@ -110,9 +110,7 @@ async def test_create_subscription_includes_client_state_and_resource(
     assert body["clientState"] == "secret-state"
     assert body["resource"] == "users/user@example.com/mailFolders('inbox')/messages"
     assert body["changeType"] == "created"
-    assert body["lifecycleNotificationUrl"] == (
-        "https://example.com/webhooks/graph/lifecycle"
-    )
+    assert body["lifecycleNotificationUrl"] == ("https://example.com/webhooks/graph/lifecycle")
     assert "/send" not in body["resource"]
 
 
@@ -136,25 +134,31 @@ async def test_list_thread_messages_filters_by_conversation_id(client: GraphClie
     response.json.return_value = {
         "value": [
             {
+                "id": "msg-2",
+                "subject": "Re: Hello",
+                "conversationId": "conv'id",
+                "bodyPreview": "Later",
+                "receivedDateTime": "2026-07-09T13:00:00Z",
+            },
+            {
                 "id": "msg-1",
                 "subject": "Hello",
                 "conversationId": "conv'id",
                 "bodyPreview": "Hi",
                 "receivedDateTime": "2026-07-09T12:00:00Z",
-            }
+            },
         ]
     }
     client._http.request = AsyncMock(return_value=response)
 
     messages = await client.list_thread_messages("user@example.com", "conv'id")
 
-    assert len(messages) == 1
-    assert messages[0].id == "msg-1"
+    assert [m.id for m in messages] == ["msg-1", "msg-2"]
     args, kwargs = client._http.request.call_args
     assert args[0] == "GET"
-    assert args[1] == f"{GRAPH_BASE_URL}/users/user@example.com/messages"
+    assert args[1] == f"{GRAPH_BASE_URL}/users/user%40example.com/messages"
     assert kwargs["params"]["$filter"] == "conversationId eq 'conv''id'"
-    assert kwargs["params"]["$orderby"] == "receivedDateTime asc"
+    assert "$orderby" not in kwargs["params"]
 
 
 @pytest.mark.asyncio
@@ -344,3 +348,85 @@ async def test_aclose_closes_http_client(auth: MagicMock) -> None:
     graph_client._http = mock_http
     await graph_client.aclose()
     mock_http.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_next_link_rejects_non_https_host(client: GraphClient) -> None:
+    first = MagicMock()
+    first.status_code = 200
+    first.content = b"{}"
+    first.json.return_value = {
+        "value": [],
+        "@odata.nextLink": "http://evil.example/steal",
+    }
+    client._http.request = AsyncMock(return_value=first)
+
+    with pytest.raises(GraphClientError, match="non-HTTPS|Refusing"):
+        await client.list_messages("user@example.com", follow_next_link=True)
+
+
+@pytest.mark.asyncio
+async def test_next_link_rejects_wrong_host(client: GraphClient) -> None:
+    first = MagicMock()
+    first.status_code = 200
+    first.content = b"{}"
+    first.json.return_value = {
+        "value": [],
+        "@odata.nextLink": "https://evil.example/v1.0/me/messages",
+    }
+    client._http.request = AsyncMock(return_value=first)
+
+    with pytest.raises(GraphClientError, match="host"):
+        await client.list_messages("user@example.com", follow_next_link=True)
+
+
+@pytest.mark.asyncio
+async def test_next_link_accepts_graph_host_unchanged(client: GraphClient) -> None:
+    next_url = "https://graph.microsoft.com/v1.0/users/user%40example.com/messages?$skiptoken=abc"
+    first = MagicMock()
+    first.status_code = 200
+    first.content = b"{}"
+    first.json.return_value = {"value": [], "@odata.nextLink": next_url}
+    second = MagicMock()
+    second.status_code = 200
+    second.content = b"{}"
+    second.json.return_value = {"value": []}
+    client._http.request = AsyncMock(side_effect=[first, second])
+
+    await client.list_messages("user@example.com", follow_next_link=True)
+
+    assert client._http.request.await_count == 2
+    assert client._http.request.await_args_list[1].args[1] == next_url
+
+
+@pytest.mark.asyncio
+async def test_get_message_encodes_slash_in_id(client: GraphClient) -> None:
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b'{"id":"a/b","conversationId":"c1"}'
+    response.json.return_value = {
+        "id": "a/b",
+        "subject": "Hello",
+        "conversationId": "c1",
+        "receivedDateTime": "2026-07-09T12:00:00Z",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    await client.get_message("user@example.com", "a/b")
+
+    assert "/messages/a%2Fb" in client._http.request.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_error_body_truncated_in_exception(client: GraphClient) -> None:
+    response = MagicMock()
+    response.status_code = 500
+    response.content = b"x"
+    response.text = "Z" * 2000
+    client._http.request = AsyncMock(return_value=response)
+
+    with pytest.raises(GraphClientError) as exc_info:
+        await client.get_message("user@example.com", "msg-1")
+
+    assert len(str(exc_info.value)) < 800
+    assert "truncated" in str(exc_info.value)

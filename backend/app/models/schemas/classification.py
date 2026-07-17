@@ -31,7 +31,7 @@ class ClassificationResultSchema(BaseModel):
 
 
 class TriageResultSchema(BaseModel):
-    """Haiku triage output — spam / action items / needs-context."""
+    """Haiku triage output — boolean flags only (no numeric score)."""
 
     is_spam: bool
     spam_reason: str | None = None
@@ -39,4 +39,3 @@ class TriageResultSchema(BaseModel):
     action_items_summary: str | None = None
     needs_context: bool
     context_reason: str | None = None
-    confidence: float = Field(ge=0.0, le=1.0)

@@ -59,12 +59,8 @@ def sample_graph_message() -> GraphMessageSchema:
             "subject": "Drug screen result",
             "bodyPreview": "Positive result for client",
             "body": {"contentType": "text", "content": "Positive result for client"},
-            "sender": {
-                "emailAddress": {"name": "Vendor", "address": "vendor@example.com"}
-            },
-            "from": {
-                "emailAddress": {"name": "Vendor", "address": "vendor@example.com"}
-            },
+            "sender": {"emailAddress": {"name": "Vendor", "address": "vendor@example.com"}},
+            "from": {"emailAddress": {"name": "Vendor", "address": "vendor@example.com"}},
             "receivedDateTime": "2026-07-09T12:00:00Z",
             "conversationId": "AAQkAGConversationId",
             "isRead": False,

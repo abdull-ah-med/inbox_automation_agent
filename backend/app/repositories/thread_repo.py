@@ -7,6 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.thread import Thread
@@ -63,30 +64,25 @@ async def upsert_thread(
     last_message_at: datetime | None = None,
     state: str = ThreadStateEnum.NEW.value,
 ) -> ThreadSchema:
-    """Insert a thread or update subject/last_message_at for mailbox+conversation_id."""
-    stmt = select(Thread).where(
-        Thread.mailbox == mailbox,
-        Thread.conversation_id == conversation_id,
-    )
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
+    """Insert a thread or update subject/last_message_at for mailbox+conversation_id.
 
-    if existing is not None:
-        existing.subject = subject
-        if last_message_at is not None:
-            existing.last_message_at = last_message_at
-        await session.flush()
-        await session.refresh(existing)
-        return ThreadSchema.model_validate(existing)
-
-    thread = Thread(
+    Uses Postgres ``ON CONFLICT`` so concurrent webhook+poll writers do not race.
+    """
+    insert_stmt = insert(Thread).values(
         mailbox=mailbox,
         conversation_id=conversation_id,
         subject=subject,
         state=state,
         last_message_at=last_message_at,
     )
-    session.add(thread)
+    upsert_stmt = insert_stmt.on_conflict_do_update(
+        constraint="uq_threads_mailbox_conversation",
+        set_={
+            "subject": subject,
+            "last_message_at": last_message_at,
+        },
+    ).returning(Thread)
+    result = await session.execute(upsert_stmt)
+    thread = result.scalar_one()
     await session.flush()
-    await session.refresh(thread)
     return ThreadSchema.model_validate(thread)

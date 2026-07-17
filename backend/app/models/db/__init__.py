@@ -5,6 +5,7 @@ from app.models.db.draft import Draft
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.db.message import Message
 from app.models.db.thread import Thread
+from app.models.db.thread_link import ThreadLink
 
 __all__ = [
     "AuditEvent",
@@ -14,4 +15,5 @@ __all__ = [
     "EmailEmbedding",
     "Message",
     "Thread",
+    "ThreadLink",
 ]
