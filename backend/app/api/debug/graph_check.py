@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, Header, HTTPException, status
 
 from app.core.dependencies import GraphAuthDep, GraphClientDep, SettingsDep
+from app.core.dev_access import require_local_dev_access
 from app.models.schemas.graph import GraphCheckResponseSchema
 
 router = APIRouter(prefix="/debug", tags=["debug"])
@@ -19,10 +22,10 @@ async def graph_check(
     settings: SettingsDep,
     graph_auth: GraphAuthDep,
     graph_client: GraphClientDep,
+    x_dev_api_key: Annotated[str | None, Header(alias="X-Dev-Api-Key")] = None,
 ) -> GraphCheckResponseSchema:
     """Verify MSAL auth and read-only message listing against the first mailbox."""
-    if settings.environment != "local":
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_local_dev_access(settings, x_dev_api_key=x_dev_api_key)
 
     if not settings.mailbox_list:
         raise HTTPException(

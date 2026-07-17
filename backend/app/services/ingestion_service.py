@@ -4,27 +4,33 @@ Does not call classification, rules, draft generation, or Slack.
 
 Dedup lifecycle (Redis SET NX EX):
 1. Claim ``processing`` with a short TTL before work starts.
-2. On success *after* the DB transaction commits, mark ``completed`` (24h TTL).
+2. On success *after* triage succeeds, mark ``completed`` (24h TTL).
 3. On failure, delete the claim so webhook/poll retries can proceed.
+4. If claim is ``in_flight`` but the message already exists in Postgres, return
+   ``retry_triage`` so callers can finish triage without re-fetching Graph.
 """
 
 from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from typing import Literal
 from urllib.parse import unquote
 
 import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
     DEDUP_PROCESSING_TTL_SECONDS,
     DEDUP_TTL_SECONDS,
     DEDUP_VALUE_COMPLETED,
     DEDUP_VALUE_PROCESSING,
+    TRIAGE_LOCK_TTL_SECONDS,
     dedup_key,
+    triage_lock_key,
 )
 from app.graph.client import GraphClient
 from app.models.schemas.email import (
@@ -35,12 +41,15 @@ from app.models.schemas.email import (
 from app.models.schemas.graph import (
     GraphMessageSchema,
     GraphNotificationItemSchema,
+    GraphRecipientSchema,
     IngestResultSchema,
     SimulateIngestRequestSchema,
 )
 from app.repositories import message_repo, thread_repo
 
 logger = structlog.get_logger(__name__)
+
+DedupClaim = Literal["claimed", "completed", "in_flight"]
 
 _MESSAGE_ID_FROM_RESOURCE = re.compile(
     r"/messages/([^/?]+)",
@@ -73,6 +82,16 @@ def _sender_address(message: GraphMessageSchema) -> str:
     return "unknown"
 
 
+def _recipient_addresses(
+    recipients: list[GraphRecipientSchema],
+) -> list[str]:
+    addresses: list[str] = []
+    for recipient in recipients:
+        if recipient.email_address and recipient.email_address.address:
+            addresses.append(recipient.email_address.address)
+    return addresses
+
+
 def _body_text(message: GraphMessageSchema) -> str:
     if message.body and message.body.content:
         return message.body.content
@@ -103,26 +122,35 @@ def _to_email_message_schema(
         body_preview=message.body_preview,
         received_at=received_at,
         direction=_direction_for_sender(mailbox, sender),
+        to_recipients=_recipient_addresses(message.to_recipients),
+        cc_recipients=_recipient_addresses(message.cc_recipients),
     )
 
 
-async def claim_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> bool:
-    """Acquire an in-flight dedup claim. False = already completed or in progress."""
+async def claim_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> DedupClaim:
+    """Acquire an in-flight dedup claim or report why it could not be claimed."""
     key = dedup_key(mailbox, message_id)
     existing = await redis.get(key)
-    if existing in (DEDUP_VALUE_COMPLETED, DEDUP_VALUE_PROCESSING):
-        return False
+    if existing == DEDUP_VALUE_COMPLETED:
+        return "completed"
+    if existing == DEDUP_VALUE_PROCESSING:
+        return "in_flight"
     created = await redis.set(
         key,
         DEDUP_VALUE_PROCESSING,
         nx=True,
         ex=DEDUP_PROCESSING_TTL_SECONDS,
     )
-    return bool(created)
+    if created:
+        return "claimed"
+    again = await redis.get(key)
+    if again == DEDUP_VALUE_COMPLETED:
+        return "completed"
+    return "in_flight"
 
 
 async def complete_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> None:
-    """Mark ingest as completed after a successful DB commit."""
+    """Mark ingest+triage as completed after a successful post-ingest pipeline."""
     await redis.set(
         dedup_key(mailbox, message_id),
         DEDUP_VALUE_COMPLETED,
@@ -135,6 +163,71 @@ async def release_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> N
     await redis.delete(dedup_key(mailbox, message_id))
 
 
+async def claim_triage_lock(redis: Redis, mailbox: str, message_id: str) -> bool:
+    """Acquire an exclusive lock for post-ingest Haiku triage (NX + TTL)."""
+    created = await redis.set(
+        triage_lock_key(mailbox, message_id),
+        "1",
+        nx=True,
+        ex=TRIAGE_LOCK_TTL_SECONDS,
+    )
+    return bool(created)
+
+
+async def release_triage_lock(redis: Redis, mailbox: str, message_id: str) -> None:
+    await redis.delete(triage_lock_key(mailbox, message_id))
+
+
+async def _thread_context_from_db(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    message_id: str,
+) -> IngestResultSchema | None:
+    """Rebuild triage inputs from Postgres when Redis says processing but rows exist."""
+    existing = await message_repo.get_by_graph_id(session, message_id)
+    if existing is None:
+        return None
+    thread = await thread_repo.get_by_id(session, existing.thread_id)
+    if thread is None:
+        return None
+    db_messages = await message_repo.list_by_thread(session, thread.id)
+    context_messages: list[EmailMessageSchema] = []
+    for row in db_messages:
+        context_messages.append(
+            EmailMessageSchema(
+                message_id=row.graph_message_id,
+                conversation_id=thread.conversation_id,
+                mailbox=mailbox,
+                sender=row.sender,
+                subject=thread.subject,
+                body_text=row.body_text,
+                body_preview=row.body_preview,
+                received_at=row.received_at,
+                direction=(
+                    EmailDirectionEnum(row.direction)
+                    if row.direction in {e.value for e in EmailDirectionEnum}
+                    else EmailDirectionEnum.INBOUND
+                ),
+                to_recipients=list(row.to_recipients or []),
+                cc_recipients=list(row.cc_recipients or []),
+            )
+        )
+    thread_context = ThreadContextSchema(
+        conversation_id=thread.conversation_id,
+        mailbox=mailbox,
+        subject=thread.subject,
+        messages=context_messages,
+    )
+    return IngestResultSchema(
+        message_id=message_id,
+        status="retry_triage",
+        thread_id=str(thread.id),
+        conversation_id=thread.conversation_id,
+        thread_context=thread_context,
+    )
+
+
 async def ingest_graph_message(
     *,
     session: AsyncSession,
@@ -145,12 +238,24 @@ async def ingest_graph_message(
 ) -> IngestResultSchema:
     """Fetch a Graph message, resolve its thread, and persist thread + messages.
 
-    Caller must call ``complete_ingest_dedup`` after a successful DB commit, or
-    ``release_ingest_dedup`` if the surrounding transaction fails.
+    Caller must call ``complete_ingest_dedup`` after successful post-ingest triage,
+    or ``release_ingest_dedup`` if ingest or triage fails so work can be retried.
     """
-    if not await claim_ingest_dedup(redis, mailbox, message_id):
+    claim = await claim_ingest_dedup(redis, mailbox, message_id)
+    if claim == "completed":
         logger.info("ingestion_duplicate", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="duplicate")
+    if claim == "in_flight":
+        retry = await _thread_context_from_db(session, mailbox=mailbox, message_id=message_id)
+        if retry is not None:
+            logger.info(
+                "ingestion_retry_triage",
+                mailbox=mailbox,
+                message_id=message_id,
+            )
+            return retry
+        logger.info("ingestion_in_flight", mailbox=mailbox, message_id=message_id)
+        return IngestResultSchema(message_id=message_id, status="in_flight")
 
     try:
         message = await graph_client.get_message(mailbox, message_id)
@@ -190,6 +295,8 @@ async def ingest_graph_message(
                 body_text=email_msg.body_text,
                 body_preview=email_msg.body_preview,
                 received_at=email_msg.received_at,
+                to_recipients=email_msg.to_recipients,
+                cc_recipients=email_msg.cc_recipients,
             )
 
         thread_context = ThreadContextSchema(
@@ -225,9 +332,13 @@ async def ingest_notification(
     redis: Redis,
     graph_client: GraphClient,
     notification: GraphNotificationItemSchema,
-    fallback_mailbox: str | None = None,
+    settings: Settings,
 ) -> IngestResultSchema:
-    """Process a single Graph change notification item."""
+    """Process a single Graph change notification item.
+
+    Requires an extractable mailbox that passes ``TARGET_MAILBOXES`` when configured.
+    No fallback to the first configured mailbox (forged resources must not redirect).
+    """
     message_id = None
     if notification.resource_data and notification.resource_data.id:
         message_id = notification.resource_data.id
@@ -238,11 +349,22 @@ async def ingest_notification(
             f"Could not extract message id from notification resource: {notification.resource}"
         )
 
-    mailbox = extract_mailbox_from_resource(notification.resource) or fallback_mailbox
+    mailbox = extract_mailbox_from_resource(notification.resource)
     if not mailbox:
-        raise GraphClientError(
-            f"Could not extract mailbox from notification resource: {notification.resource}"
+        logger.warning(
+            "ingestion_notification_mailbox_missing",
+            resource=notification.resource,
+            subscription_id=notification.subscription_id,
         )
+        return IngestResultSchema(message_id=message_id, status="skipped")
+
+    if not settings.mailbox_allowed(mailbox):
+        logger.warning(
+            "ingestion_notification_mailbox_not_allowed",
+            mailbox=mailbox,
+            subscription_id=notification.subscription_id,
+        )
+        return IngestResultSchema(message_id=message_id, status="skipped")
 
     return await ingest_graph_message(
         session=session,
@@ -261,15 +383,24 @@ async def ingest_simulated_message(
 ) -> IngestResultSchema:
     """Persist a simulated email without calling Graph (Phase 0 / local demo).
 
-    Caller must call ``complete_ingest_dedup`` after a successful DB commit.
+    Caller must call ``complete_ingest_dedup`` after successful post-ingest triage,
+    or ``release_ingest_dedup`` if triage fails so the same message_id can retry.
     """
-    if not await claim_ingest_dedup(redis, payload.mailbox, payload.message_id):
+    claim = await claim_ingest_dedup(redis, payload.mailbox, payload.message_id)
+    if claim == "completed":
         logger.info(
             "simulate_ingestion_duplicate",
             mailbox=payload.mailbox,
             message_id=payload.message_id,
         )
         return IngestResultSchema(message_id=payload.message_id, status="duplicate")
+    if claim == "in_flight":
+        retry = await _thread_context_from_db(
+            session, mailbox=payload.mailbox, message_id=payload.message_id
+        )
+        if retry is not None:
+            return retry
+        return IngestResultSchema(message_id=payload.message_id, status="in_flight")
 
     try:
         thread = await thread_repo.upsert_thread(
@@ -290,6 +421,8 @@ async def ingest_simulated_message(
             body_text=payload.body_text,
             body_preview=payload.body_preview,
             received_at=payload.received_at,
+            to_recipients=list(payload.to_recipients),
+            cc_recipients=list(payload.cc_recipients),
         )
 
         email_msg = EmailMessageSchema(
@@ -302,6 +435,8 @@ async def ingest_simulated_message(
             body_preview=payload.body_preview,
             received_at=payload.received_at,
             direction=direction,
+            to_recipients=list(payload.to_recipients),
+            cc_recipients=list(payload.cc_recipients),
         )
         thread_context = ThreadContextSchema(
             conversation_id=payload.conversation_id,

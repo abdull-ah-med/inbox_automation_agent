@@ -100,6 +100,9 @@ async def triage_email(
     thread_context: ThreadContextSchema,
 ) -> TriageCallResult:
     """Call Haiku once (retry once on parse/API failure) and return structured triage."""
+    if not settings.anthropic_api_key.strip():
+        raise TriageError("ANTHROPIC_API_KEY is not set; cannot run Haiku triage")
+
     model = settings.classification_model
     max_tokens = settings.triage_max_tokens
     # Scrub copies only — originals in Postgres stay intact for human review.
@@ -147,8 +150,9 @@ async def triage_email(
                 prompt_version=PROMPT_VERSION,
                 attempt=attempt + 1,
                 error_type=type(exc).__name__,
+                error=str(exc)[:300],
             )
 
     raise TriageError(
-        f"Haiku triage failed after retry: {type(last_error).__name__}"
+        f"Haiku triage failed after retry: {type(last_error).__name__}: {last_error}"
     ) from last_error

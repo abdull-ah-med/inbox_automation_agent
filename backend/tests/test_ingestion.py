@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 from httpx import ASGITransport, AsyncClient
 
 from app.api.webhooks.graph import router as graph_router
@@ -31,6 +30,16 @@ from app.services.ingestion_service import (
 )
 
 
+def _webhook_redis(**overrides: object) -> AsyncMock:
+    redis = AsyncMock()
+    redis.incr = AsyncMock(return_value=1)
+    redis.expire = AsyncMock(return_value=True)
+    redis.get = AsyncMock(return_value=None)
+    for key, value in overrides.items():
+        setattr(redis, key, value)
+    return redis
+
+
 @pytest.fixture
 def sample_message() -> GraphMessageSchema:
     return GraphMessageSchema.model_validate(
@@ -44,6 +53,61 @@ def sample_message() -> GraphMessageSchema:
             "conversationId": "AAQkAGConversationId",
         }
     )
+
+
+@pytest.mark.asyncio
+async def test_thread_context_from_db_includes_recipients() -> None:
+    """retry_triage rebuild must restore To/CC for Haiku PoI rules."""
+    from app.services.ingestion_service import _thread_context_from_db
+
+    thread_id = uuid.uuid4()
+    message_id = "msg-1"
+    session = AsyncMock()
+    msg_row = MagicMock(
+        graph_message_id=message_id,
+        thread_id=thread_id,
+        sender="vendor@example.com",
+        body_text="Body",
+        body_preview="Body",
+        received_at=datetime.now(UTC),
+        direction="inbound",
+        to_recipients=["user@example.com"],
+        cc_recipients=["cc@example.com"],
+    )
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="user@example.com",
+        conversation_id="conv-1",
+        subject="Hello",
+        state="NEW",
+        last_message_at=datetime.now(UTC),
+        last_updated_at=datetime.now(UTC),
+    )
+
+    with (
+        patch(
+            "app.services.ingestion_service.message_repo.get_by_graph_id",
+            AsyncMock(return_value=msg_row),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.ingestion_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[msg_row]),
+        ),
+    ):
+        result = await _thread_context_from_db(
+            session, mailbox="user@example.com", message_id=message_id
+        )
+
+    assert result is not None
+    assert result.status == "retry_triage"
+    assert result.thread_context is not None
+    rebuilt = result.thread_context.messages[0]
+    assert rebuilt.to_recipients == ["user@example.com"]
+    assert rebuilt.cc_recipients == ["cc@example.com"]
 
 
 def test_extract_message_id_from_resource() -> None:
@@ -292,6 +356,10 @@ async def test_ingest_notification_extracts_ids_and_ingests(
             redis=redis,
             graph_client=graph_client,
             notification=notification,
+            settings=Settings(
+                environment="local",
+                target_mailboxes="user@example.com",
+            ),
         )
 
     assert result.status == "ingested"
@@ -299,6 +367,62 @@ async def test_ingest_notification_extracts_ids_and_ingests(
         "user@example.com",
         "AAMkAGMessageId",
     )
+
+
+@pytest.mark.asyncio
+async def test_ingest_notification_skips_mailbox_outside_allowlist() -> None:
+    from app.services.ingestion_service import ingest_notification
+
+    notification = GraphNotificationItemSchema.model_validate(
+        {
+            "subscriptionId": "sub-1",
+            "clientState": "secret",
+            "changeType": "created",
+            "resource": "users/other@tenant.com/messages/msg-1",
+            "resourceData": {"id": "msg-1"},
+        }
+    )
+    graph_client = MagicMock()
+    graph_client.get_message = AsyncMock()
+
+    result = await ingest_notification(
+        session=AsyncMock(),
+        redis=AsyncMock(),
+        graph_client=graph_client,
+        notification=notification,
+        settings=Settings(
+            environment="local",
+            target_mailboxes="user@example.com",
+        ),
+    )
+
+    assert result.status == "skipped"
+    graph_client.get_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ingest_notification_skips_when_mailbox_missing_from_resource() -> None:
+    from app.services.ingestion_service import ingest_notification
+
+    notification = GraphNotificationItemSchema.model_validate(
+        {
+            "subscriptionId": "sub-1",
+            "clientState": "secret",
+            "changeType": "created",
+            "resource": "messages/msg-1",
+            "resourceData": {"id": "msg-1"},
+        }
+    )
+
+    result = await ingest_notification(
+        session=AsyncMock(),
+        redis=AsyncMock(),
+        graph_client=MagicMock(),
+        notification=notification,
+        settings=Settings(environment="local", target_mailboxes="user@example.com"),
+    )
+
+    assert result.status == "skipped"
 
 
 @pytest.mark.asyncio
@@ -319,6 +443,7 @@ async def test_ingest_notification_raises_without_message_id() -> None:
             redis=AsyncMock(),
             graph_client=MagicMock(),
             notification=notification,
+            settings=Settings(environment="local", target_mailboxes="user@example.com"),
         )
 
 
@@ -333,7 +458,7 @@ async def test_webhook_empty_payload_returns_202() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     transport = ASGITransport(app=app)
@@ -358,6 +483,7 @@ async def test_webhook_invalid_payload_returns_202() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -421,6 +547,7 @@ async def test_lifecycle_invalid_payload_returns_202() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -485,15 +612,87 @@ async def test_process_notifications_ingests_and_completes_dedup(
             "app.services.ingestion_service.complete_ingest_dedup",
             new_callable=AsyncMock,
         ) as complete,
+        patch(
+            "app.api.webhooks.graph.pipeline_service.run_post_ingest_triage",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ) as triage,
     ):
         await _process_notifications(payload, settings, redis, graph_client)
 
+    triage.assert_awaited_once()
     complete.assert_awaited_once_with(redis, "user@example.com", "AAMkAGMessageId")
 
 
 @pytest.mark.asyncio
+async def test_webhook_releases_dedup_when_triage_fails() -> None:
+    from app.api.webhooks.graph import _process_notifications
+    from app.models.schemas.graph import GraphNotificationSchema, IngestResultSchema
+
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        target_mailboxes="user@example.com",
+    )
+    redis = AsyncMock()
+    graph_client = MagicMock()
+    payload = GraphNotificationSchema.model_validate(
+        {
+            "value": [
+                {
+                    "subscriptionId": "sub-1",
+                    "clientState": "secret",
+                    "changeType": "created",
+                    "resource": "users/user@example.com/messages/AAMkAGMessageId",
+                    "resourceData": {"id": "AAMkAGMessageId"},
+                }
+            ]
+        }
+    )
+
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    begin = AsyncMock()
+    begin.__aenter__ = AsyncMock(return_value=None)
+    begin.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin)
+    session_factory = MagicMock(return_value=session)
+
+    with (
+        patch("app.api.webhooks.graph.get_session_factory", return_value=session_factory),
+        patch(
+            "app.services.ingestion_service.ingest_notification",
+            new_callable=AsyncMock,
+            return_value=IngestResultSchema(
+                message_id="AAMkAGMessageId",
+                status="ingested",
+                conversation_id="AAQkAGConversationId",
+            ),
+        ),
+        patch(
+            "app.services.ingestion_service.complete_ingest_dedup",
+            new_callable=AsyncMock,
+        ) as complete,
+        patch(
+            "app.services.ingestion_service.release_ingest_dedup",
+            new_callable=AsyncMock,
+        ) as release,
+        patch(
+            "app.api.webhooks.graph.pipeline_service.run_post_ingest_triage",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        await _process_notifications(payload, settings, redis, graph_client)
+
+    complete.assert_not_awaited()
+    release.assert_awaited_once_with(redis, "user@example.com", "AAMkAGMessageId")
+
+
+@pytest.mark.asyncio
 async def test_webhook_accepts_but_skips_forged_client_state() -> None:
-    """Wrong clientState still returns 202; background processing must not ingest."""
+    """Wrong clientState still returns 202 and must not enqueue background work."""
     app = FastAPI()
     app.include_router(graph_router)
 
@@ -502,8 +701,11 @@ async def test_webhook_accepts_but_skips_forged_client_state() -> None:
         graph_webhook_client_state="expected-secret",
         target_mailboxes="user@example.com",
     )
+    redis = AsyncMock()
+    redis.incr = AsyncMock(return_value=1)
+    redis.expire = AsyncMock(return_value=True)
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: redis
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     with patch(
@@ -528,9 +730,7 @@ async def test_webhook_accepts_but_skips_forged_client_state() -> None:
             )
 
     assert response.status_code == 202
-    process.assert_awaited_once()
-    payload = process.await_args.args[0]
-    assert payload.value[0].client_state == "forged-secret"
+    process.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -572,41 +772,46 @@ async def test_process_notifications_skips_mismatched_client_state() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_rejects_when_client_state_unconfigured() -> None:
+async def test_webhook_acks_when_client_state_unconfigured() -> None:
+    """Missing GRAPH_WEBHOOK_CLIENT_STATE must ACK 202 (not 502) per Graph delivery contract."""
     app = FastAPI()
     app.include_router(graph_router)
-
-    @app.exception_handler(GraphClientError)
-    async def _graph_error(_: object, exc: GraphClientError) -> JSONResponse:
-        return JSONResponse(status_code=502, content={"detail": str(exc)})
 
     settings = Settings(
         environment="local",
         graph_webhook_client_state="",
         target_mailboxes="user@example.com",
     )
+    redis = AsyncMock()
+    redis.incr = AsyncMock(return_value=1)
+    redis.expire = AsyncMock(return_value=True)
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: redis
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/webhooks/graph/notifications",
-            json={
-                "value": [
-                    {
-                        "subscriptionId": "sub-1",
-                        "clientState": "anything",
-                        "changeType": "created",
-                        "resource": "users/user@example.com/messages/msg-1",
-                        "resourceData": {"id": "msg-1"},
-                    }
-                ]
-            },
-        )
+    with patch(
+        "app.api.webhooks.graph._process_notifications",
+        new_callable=AsyncMock,
+    ) as process:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "anything",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+            )
 
-    assert response.status_code == 502
+    assert response.status_code == 202
+    process.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -672,9 +877,11 @@ async def test_webhook_validation_handshake_returns_plain_text() -> None:
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="1")
 
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: redis
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     transport = ASGITransport(app=app)
@@ -690,13 +897,41 @@ async def test_webhook_validation_handshake_returns_plain_text() -> None:
 
 
 @pytest.mark.asyncio
+async def test_webhook_validation_rejected_without_pending_window() -> None:
+    app = FastAPI()
+    app.include_router(graph_router)
+
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        target_mailboxes="user@example.com",
+    )
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+    app.dependency_overrides[get_graph_client] = lambda: MagicMock()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/notifications",
+            params={"validationToken": "test%20123"},
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_validation_handshake_returns_plain_text() -> None:
     app = FastAPI()
     app.include_router(graph_router)
 
     settings = Settings(environment="local", graph_webhook_client_state="secret")
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="1")
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: redis
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     transport = ASGITransport(app=app)
@@ -721,7 +956,7 @@ async def test_webhook_notification_returns_202() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     with patch(
@@ -759,7 +994,7 @@ async def test_lifecycle_notification_returns_202() -> None:
         target_mailboxes="user@example.com",
     )
     app.dependency_overrides[get_settings] = lambda: settings
-    app.dependency_overrides[get_redis] = lambda: AsyncMock()
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
     app.dependency_overrides[get_graph_client] = lambda: MagicMock()
 
     with patch(

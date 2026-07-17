@@ -21,9 +21,7 @@ TOKEN_ID = "[REDACTED_ID]"
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # SSN with separators (XXX-XX-XXXX or XXX XX XXXX)
     (
-        re.compile(
-            r"(?<!\d)(?!000|666|9\d{2})\d{3}[-\s](?!00)\d{2}[-\s](?!0000)\d{4}(?!\d)"
-        ),
+        re.compile(r"(?<!\d)(?!000|666|9\d{2})\d{3}[-\s](?!00)\d{2}[-\s](?!0000)\d{4}(?!\d)"),
         TOKEN_SSN,
     ),
     # Labeled SSN / SS# → 9 digits (with or without separators)
@@ -97,9 +95,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 # Payment-card candidates: 13–19 digits with optional separators; validated by Luhn.
-_CARD_CANDIDATE = re.compile(
-    r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)"
-)
+_CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")
 
 
 def _luhn_ok(digits: str) -> bool:
