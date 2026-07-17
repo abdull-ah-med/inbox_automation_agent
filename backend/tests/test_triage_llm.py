@@ -135,3 +135,23 @@ async def test_triage_email_double_failure_raises_triage_error() -> None:
             thread_context=_context(email),
         )
     assert client.messages.parse.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_triage_email_missing_api_key_raises_clear_error() -> None:
+    email = _email()
+    client = AsyncMock()
+    settings = Settings(
+        classification_model="claude-haiku-4-5",
+        triage_max_tokens=200,
+        anthropic_api_key="",
+    )
+
+    with pytest.raises(TriageError, match="ANTHROPIC_API_KEY is not set"):
+        await triage_llm.triage_email(
+            client=client,
+            settings=settings,
+            email=email,
+            thread_context=_context(email),
+        )
+    client.messages.parse.assert_not_awaited()

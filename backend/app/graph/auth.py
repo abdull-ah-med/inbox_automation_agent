@@ -10,6 +10,9 @@ Token cache is an MSAL SerializableTokenCache persisted in Redis so multi-worker
 processes share tokens. Per MSAL distributed-cache guidance, reload from Redis
 before every acquire and persist only when has_state_changed is True.
 serialize() resets has_state_changed (do not clear it manually).
+
+Outside local, the Redis blob is Fernet-encrypted (MSAL_CACHE_ENCRYPTION_KEY).
+See: https://learn.microsoft.com/en-us/entra/msal/python/advanced/msal-python-token-cache-serialization
 """
 
 from __future__ import annotations
@@ -24,6 +27,11 @@ from redis.asyncio import Redis
 from app.core.config import Settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import MSAL_TOKEN_CACHE_KEY
+from app.core.security import (
+    CacheEncryptionError,
+    decrypt_cache_blob,
+    encrypt_cache_blob,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -59,22 +67,54 @@ class GraphAuth:
             token_cache=cache,
         )
 
+    def _encryption_key(self) -> str | None:
+        key = self._settings.msal_cache_encryption_key.strip()
+        return key or None
+
+    def _decode_cache_payload(self, raw: str) -> str | None:
+        """Decrypt if a key is configured; otherwise treat Redis value as plaintext."""
+        key = self._encryption_key()
+        if key is None:
+            return raw
+        try:
+            decrypted = decrypt_cache_blob(raw, key)
+        except CacheEncryptionError:
+            logger.exception("graph_token_cache_encryption_key_invalid")
+            raise GraphClientError("MSAL_CACHE_ENCRYPTION_KEY is invalid") from None
+        if decrypted is not None:
+            return decrypted
+        # Migration path: plaintext blob written before encryption was enabled.
+        logger.warning("graph_token_cache_plaintext_fallback")
+        return raw
+
+    def _encode_cache_payload(self, serialized: str) -> str:
+        key = self._encryption_key()
+        if key is None:
+            return serialized
+        try:
+            return encrypt_cache_blob(serialized, key)
+        except CacheEncryptionError as exc:
+            raise GraphClientError(str(exc)) from exc
+
     async def _load_cache_from_redis(self) -> None:
         """Deserialize the latest shared MSAL cache before token acquisition."""
         if self._redis is None:
             return
         raw = await self._redis.get(MSAL_TOKEN_CACHE_KEY)
         if isinstance(raw, str) and raw:
-            self._cache.deserialize(raw)
-            logger.debug("graph_token_cache_loaded_from_redis")
+            decoded = self._decode_cache_payload(raw)
+            if decoded:
+                self._cache.deserialize(decoded)
+                logger.debug("graph_token_cache_loaded_from_redis")
 
     async def _persist_cache_if_changed(self) -> None:
         """Persist only when MSAL mutated the cache; serialize() clears has_state_changed."""
         if self._redis is None or not self._cache.has_state_changed:
             return
         serialized = self._cache.serialize()
-        await self._redis.set(MSAL_TOKEN_CACHE_KEY, serialized)
-        logger.debug("graph_token_cache_persisted_to_redis")
+        payload = self._encode_cache_payload(serialized)
+        await self._redis.set(MSAL_TOKEN_CACHE_KEY, payload)
+        logger.debug("graph_token_cache_persisted_to_redis", encrypted=bool(self._encryption_key()))
 
     def _acquire_token_sync(self) -> dict[str, Any]:
         result = self._app.acquire_token_silent(GRAPH_SCOPES, account=None)

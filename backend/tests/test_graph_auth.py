@@ -12,12 +12,17 @@ from app.core.redis_keys import MSAL_TOKEN_CACHE_KEY
 from app.graph.auth import GRAPH_SCOPES, GraphAuth
 
 
-def _settings() -> Settings:
-    return Settings(
-        graph_client_id="client-id",
-        graph_client_secret="client-secret",
-        graph_tenant_id="tenant-id",
-    )
+def _settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "graph_client_id": "client-id",
+        "graph_client_secret": "client-secret",
+        "graph_tenant_id": "tenant-id",
+        # Keep unit tests deterministic even if backend/.env has a Fernet key.
+        "msal_cache_encryption_key": "",
+        "environment": "local",
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
 
 
 def test_graph_scopes_are_list_with_default_scope() -> None:

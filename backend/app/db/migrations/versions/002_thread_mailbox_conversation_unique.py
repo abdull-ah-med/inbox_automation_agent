@@ -9,7 +9,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "002_thread_mailbox_conversation_unique"
+# Must stay ≤32 chars — alembic_version.version_num is VARCHAR(32).
+revision: str = "002_mailbox_conversation_uq"
 down_revision: str | None = "001_initial"
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None

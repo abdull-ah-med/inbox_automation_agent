@@ -17,6 +17,8 @@ from app.core.config import Settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
     SUBSCRIPTION_RENEW_BEFORE_SECONDS,
+    VALIDATION_PENDING_TTL_SECONDS,
+    WEBHOOK_VALIDATION_PENDING_KEY,
     subscription_key,
 )
 from app.graph.client import GraphClient
@@ -32,11 +34,41 @@ def _inbox_resource(mailbox: str) -> str:
     return f"users/{mailbox}/mailFolders('inbox')/messages"
 
 
+def _normalize_resource(resource: str) -> str:
+    return resource.strip().lower().replace(" ", "")
+
+
 def _subscription_matches_mailbox(sub: GraphSubscriptionSchema, mailbox: str) -> bool:
-    resource = sub.resource.lower().replace(" ", "")
-    expected = _inbox_resource(mailbox).lower()
-    # Graph may return users/{guid}@tenant/... — match mailbox UPN substring or exact.
-    return expected in resource or mailbox.lower() in resource
+    """Match a subscription to a mailbox without substring false positives.
+
+    Uses the mailbox path segment extracted from ``resource`` (exact, case-insensitive)
+    or an exact normalized equality against the inbox resource we create.
+    Never uses ``mailbox in resource`` — that matches ``test@`` inside ``contest@``.
+    """
+    from app.services.ingestion_service import extract_mailbox_from_resource
+
+    extracted = extract_mailbox_from_resource(sub.resource)
+    if extracted is not None and extracted.strip().lower() == mailbox.strip().lower():
+        return True
+    return _normalize_resource(sub.resource) == _normalize_resource(_inbox_resource(mailbox))
+
+
+async def begin_webhook_validation_window(redis: Redis) -> None:
+    """Allow Graph validationToken echoes while create_subscription is in flight."""
+    await redis.set(
+        WEBHOOK_VALIDATION_PENDING_KEY,
+        "1",
+        ex=VALIDATION_PENDING_TTL_SECONDS,
+    )
+
+
+async def end_webhook_validation_window(redis: Redis) -> None:
+    await redis.delete(WEBHOOK_VALIDATION_PENDING_KEY)
+
+
+async def webhook_validation_window_open(redis: Redis) -> bool:
+    raw = await redis.get(WEBHOOK_VALIDATION_PENDING_KEY)
+    return isinstance(raw, str) and bool(raw)
 
 
 def _is_expired_or_near_expiry(
@@ -163,12 +195,16 @@ async def reconcile_mailbox_subscription(
         )
         return keep
 
-    created = await graph_client.create_subscription(
-        mailbox,
-        notification_url,
-        client_state,
-        lifecycle_notification_url=lifecycle_url,
-    )
+    await begin_webhook_validation_window(redis)
+    try:
+        created = await graph_client.create_subscription(
+            mailbox,
+            notification_url,
+            client_state,
+            lifecycle_notification_url=lifecycle_url,
+        )
+    finally:
+        await end_webhook_validation_window(redis)
     await _store_subscription(redis, mailbox, created)
     logger.info(
         "subscription_reconcile_created",
@@ -275,10 +311,8 @@ def _mailbox_from_subscription(
     from app.services.ingestion_service import extract_mailbox_from_resource
 
     extracted = extract_mailbox_from_resource(resource)
-    if extracted:
+    if extracted and settings.mailbox_allowed(extracted):
         return extracted
-    if settings.mailbox_list:
-        return settings.mailbox_list[0]
     return None
 
 
@@ -297,10 +331,10 @@ async def handle_lifecycle_event(
         return
 
     redis_lookup: dict[str, str] = {}
-    for mailbox in settings.mailbox_list:
-        cached = await _load_cached_subscription_id(redis, mailbox)
+    for configured_mailbox in settings.mailbox_list:
+        cached = await _load_cached_subscription_id(redis, configured_mailbox)
         if cached:
-            redis_lookup[mailbox] = cached
+            redis_lookup[configured_mailbox] = cached
 
     mailbox = _mailbox_from_subscription(
         settings=settings,
@@ -316,6 +350,15 @@ async def handle_lifecycle_event(
         )
         return
 
+    if not settings.mailbox_allowed(mailbox):
+        logger.warning(
+            "lifecycle_mailbox_not_allowed",
+            mailbox=mailbox,
+            subscription_id=notification.subscription_id,
+            lifecycle_event=event,
+        )
+        return
+
     logger.info(
         "lifecycle_event_received",
         lifecycle_event=event,
@@ -324,8 +367,6 @@ async def handle_lifecycle_event(
     )
 
     if event == "reauthorizationRequired":
-        # Always PATCH-renew: Graph may pause delivery until we respond, even
-        # when expiration is outside the normal renew-before window.
         await renew_mailbox_subscription(
             redis=redis,
             graph_client=graph_client,

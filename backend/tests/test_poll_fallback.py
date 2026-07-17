@@ -54,6 +54,10 @@ async def test_poll_mailbox_ingests_and_updates_cursor() -> None:
             "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
             AsyncMock(),
         ) as complete,
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ) as triage,
     ):
         await poll_mailbox(
             "user@example.com",
@@ -61,11 +65,14 @@ async def test_poll_mailbox_ingests_and_updates_cursor() -> None:
             graph_client=graph_client,
         )
 
-    graph_client.list_messages.assert_awaited_once()
-    kwargs = graph_client.list_messages.await_args.kwargs
+    assert graph_client.list_messages.await_count == 2
+    folders = [c.kwargs["folder"] for c in graph_client.list_messages.await_args_list]
+    assert folders == ["inbox", "junkemail"]
+    kwargs = graph_client.list_messages.await_args_list[0].kwargs
     assert "receivedDateTime ge " in kwargs["filter_query"]
     assert kwargs["follow_next_link"] is True
     ingest.assert_awaited_once()
+    triage.assert_awaited_once()
     complete.assert_awaited_once_with(redis, "user@example.com", "msg-1")
     redis.set.assert_awaited()
     assert redis.set.await_args.args[0] == poll_cursor_key("user@example.com")
@@ -131,6 +138,14 @@ async def test_poll_mailbox_does_not_advance_cursor_past_failure() -> None:
             "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
             AsyncMock(),
         ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.release_ingest_dedup",
+            AsyncMock(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ),
     ):
         await poll_mailbox(
             "user@example.com",
@@ -168,8 +183,72 @@ async def test_poll_mailbox_uses_existing_cursor() -> None:
             graph_client=graph_client,
         )
 
-    filter_query = graph_client.list_messages.await_args.kwargs["filter_query"]
-    assert filter_query == "receivedDateTime ge 2026-07-09T10:00:00Z"
+    assert graph_client.list_messages.await_count == 2
+    for call in graph_client.list_messages.await_args_list:
+        assert call.kwargs["filter_query"] == "receivedDateTime ge 2026-07-09T10:00:00Z"
+    folders = [c.kwargs["folder"] for c in graph_client.list_messages.await_args_list]
+    assert folders == ["inbox", "junkemail"]
+
+
+@pytest.mark.asyncio
+async def test_poll_mailbox_ingests_junk_only_messages() -> None:
+    """Junk-folder mail must be ingested even when Inbox is empty."""
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.set = AsyncMock(return_value=True)
+
+    junk_msg = GraphMessageSchema.model_validate(
+        {
+            "id": "junk-1",
+            "subject": "Spammy",
+            "receivedDateTime": "2026-07-09T12:00:00Z",
+            "conversationId": "conv-junk",
+            "from": {"emailAddress": {"address": "spam@b.com"}},
+        }
+    )
+
+    async def _list_messages(*_args: object, folder: str = "inbox", **_kwargs: object):
+        if folder == "junkemail":
+            return [junk_msg]
+        return []
+
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(side_effect=_list_messages)
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.ingest_graph_message",
+            AsyncMock(return_value=IngestResultSchema(message_id="junk-1", status="ingested")),
+        ) as ingest,
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
+            AsyncMock(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ),
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+        )
+
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["message_id"] == "junk-1"
+    assert redis.set.await_args.args[1] == "2026-07-09T12:00:01Z"
 
 
 @pytest.mark.asyncio
@@ -223,6 +302,14 @@ async def test_poll_mailbox_partial_failure_same_second_does_not_skip_retry() ->
             "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
             AsyncMock(),
         ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.release_ingest_dedup",
+            AsyncMock(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ),
     ):
         await poll_mailbox(
             "user@example.com",
@@ -270,12 +357,87 @@ async def test_poll_full_success_cursor_excludes_last_message_on_next_ge() -> No
             "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
             AsyncMock(),
         ),
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ),
     ):
         await poll_mailbox("user@example.com", redis=redis, graph_client=graph_client)
 
     written = redis.set.await_args.args[1]
     assert written == "2026-07-09T12:00:01Z"
     assert written != "2026-07-09T12:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_poll_mailbox_empty_keeps_existing_cursor() -> None:
+    """Empty Graph page must not jump watermark to now (message-loss risk)."""
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="2026-07-09T10:00:00Z")
+    redis.set = AsyncMock(return_value=True)
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(return_value=[])
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with patch(
+        "app.workers.poll_fallback_worker.get_session_factory",
+        return_value=lambda: _CM(),
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+        )
+
+    assert redis.set.await_args.args[1] == "2026-07-09T10:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_poll_mailbox_in_flight_does_not_advance_cursor() -> None:
+    """processing claim without completed triage must not move the watermark."""
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="2026-07-09T10:00:00Z")
+    redis.set = AsyncMock(return_value=True)
+    msg = GraphMessageSchema.model_validate(
+        {
+            "id": "msg-1",
+            "receivedDateTime": "2026-07-09T12:00:00Z",
+            "conversationId": "conv-1",
+        }
+    )
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(return_value=[msg])
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.ingest_graph_message",
+            AsyncMock(return_value=IngestResultSchema(message_id="msg-1", status="in_flight")),
+        ),
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+        )
+
+    assert redis.set.await_args.args[1] == "2026-07-09T10:00:00Z"
 
 
 @pytest.mark.asyncio
@@ -289,8 +451,13 @@ async def test_run_poll_all_mailboxes_skips_empty() -> None:
 
 @pytest.mark.asyncio
 async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
-    settings = MagicMock(mailbox_list=["a@example.com", "b@example.com"])
+    settings = MagicMock(
+        mailbox_list=["a@example.com", "b@example.com"],
+        poll_concurrency=3,
+        poll_interval_seconds=300,
+    )
     redis = AsyncMock()
+    redis.set = AsyncMock(return_value=True)
     auth = MagicMock()
     graph_client = MagicMock()
 
@@ -321,3 +488,32 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
     assert poll.await_count == 2
     mailboxes = {call.kwargs.get("mailbox") or call.args[0] for call in poll.await_args_list}
     assert mailboxes == {"a@example.com", "b@example.com"}
+
+
+@pytest.mark.asyncio
+async def test_run_poll_all_mailboxes_skips_when_not_leader() -> None:
+    settings = MagicMock(
+        mailbox_list=["a@example.com"],
+        poll_concurrency=3,
+        poll_interval_seconds=300,
+    )
+    redis = AsyncMock()
+    redis.set = AsyncMock(return_value=False)
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_settings",
+            return_value=settings,
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_redis",
+            AsyncMock(return_value=redis),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.poll_mailbox",
+            new_callable=AsyncMock,
+        ) as poll,
+    ):
+        await run_poll_all_mailboxes()
+
+    poll.assert_not_awaited()
