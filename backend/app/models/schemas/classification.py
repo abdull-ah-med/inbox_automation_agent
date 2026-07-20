@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ClassificationSchema(BaseModel):
@@ -8,7 +8,6 @@ class ClassificationSchema(BaseModel):
     intent: Literal["REPLY_NEEDED", "FORWARD", "DOCUMENT_REQUEST", "FYI", "ESCALATE"]
     urgency: Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
     urgency_reason: str
-    confidence: float = Field(ge=0.0, le=1.0)
     rule_hint: str | None = None
 
 

@@ -93,3 +93,19 @@ def test_draft_prompt_requires_teaching_note() -> None:
 def test_draft_prompt_requires_urgency_fields() -> None:
     assert "urgency" in DRAFT_SYSTEM_PROMPT
     assert "urgency_reason" in DRAFT_SYSTEM_PROMPT
+
+
+def test_draft_prompt_documents_output_fields_without_confidence() -> None:
+    for field in (
+        "subject_line",
+        "reply_body",
+        "suggested_recipients",
+        "forward_to",
+        "teaching_note",
+        "urgency",
+        "urgency_reason",
+    ):
+        assert field in DRAFT_SYSTEM_PROMPT
+    assert "confidence" not in DRAFT_SYSTEM_PROMPT.lower()
+    assert "confidence" not in DraftSchema.model_fields
+    assert "confidence" not in ClassificationSchema.model_fields

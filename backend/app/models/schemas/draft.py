@@ -15,7 +15,6 @@ class DraftSchema(BaseModel):
     reply_body: str
     suggested_recipients: list[SuggestedRecipientSchema] = Field(default_factory=list)
     forward_to: str | None = None
-    confidence: float = Field(ge=0.0, le=1.0)
     teaching_note: str
     urgency: Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
     urgency_reason: str
