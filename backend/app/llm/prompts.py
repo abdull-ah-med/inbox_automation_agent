@@ -14,7 +14,7 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-07-16.2"
+PROMPT_VERSION = "2026-07-20.1"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
@@ -98,11 +98,14 @@ a broader exchange that started in a different thread.
 DRAFT_SYSTEM_PROMPT = f"""\
 You draft suggested email replies for a human reviewer who will send them manually.
 You never send email yourself. Given the thread, triage result, any cross-thread
-context, and up to three similar past replies for tone, produce JSON:
+context, and up to three similar past replies for tone, produce JSON only
+(no preamble, no markdown fences) with these fields:
   subject_line, reply_body, suggested_recipients (list of {{role, rationale}}),
-  forward_to (or null), confidence (0.0-1.0), teaching_note,
+  forward_to (or null), teaching_note,
   urgency (one of {" | ".join(URGENCY_LEVELS)}),
   urgency_reason (short string naming the specific trigger you matched below).
+
+Do not invent or return any numeric certainty score or percentage.
 
 {URGENCY_TAXONOMY}
 
