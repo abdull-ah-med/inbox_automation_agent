@@ -1,4 +1,4 @@
-"""Phase 0 mock email ingestion endpoint — persist + Haiku triage (no drafts/Slack)."""
+"""Local mock email ingestion — persist + triage + draft (no Slack / Graph)."""
 
 from __future__ import annotations
 
@@ -30,10 +30,10 @@ async def simulate_ingest(
     anthropic: AnthropicClientDep,
     x_dev_api_key: Annotated[str | None, Header(alias="X-Dev-Api-Key")] = None,
 ) -> IngestResultSchema:
-    """Accept a simulated email, persist it, then run Haiku triage.
+    """Accept a simulated email, persist it, then run triage and draft when needed.
 
-    Local-only (ENABLE_DEV_ROUTES + X-Dev-Api-Key). Does not call Graph, drafts, or Slack.
-    Duplicates skip triage and return ingest status only.
+    Local-only (ENABLE_DEV_ROUTES + X-Dev-Api-Key). Does not call Graph or Slack.
+    Duplicates skip triage/draft and return ingest status only.
     """
     require_local_dev_access(settings, x_dev_api_key=x_dev_api_key)
 
@@ -71,6 +71,7 @@ async def simulate_ingest(
             return result.model_copy(
                 update={
                     "triage": None,
+                    "draft": state.draft,
                     "draft_status": state.draft_status,
                     "prompt_version": PROMPT_VERSION,
                 }
@@ -81,6 +82,7 @@ async def simulate_ingest(
         return result.model_copy(
             update={
                 "triage": state.triage,
+                "draft": state.draft,
                 "draft_status": state.draft_status,
                 "prompt_version": PROMPT_VERSION,
             }

@@ -4,6 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import ThreadContextSchema
 from app.models.schemas.email_triage_state import DraftStatus
 
@@ -153,6 +154,7 @@ class IngestResultSchema(BaseModel):
     conversation_id: str | None = None
     thread_context: ThreadContextSchema | None = None
     triage: TriageResultSchema | None = None
+    draft: DraftSchema | None = None
     draft_status: DraftStatus | None = None
     prompt_version: str | None = None
 

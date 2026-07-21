@@ -18,11 +18,11 @@ class Draft(Base):
         nullable=False,
         index=True,
     )
+    message_id: Mapped[str] = mapped_column(String(512), nullable=False, unique=True)
     subject: Mapped[str] = mapped_column(String(998), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     recipients: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     teaching_note: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[float] = mapped_column(Float, nullable=False)
     urgency: Mapped[str | None] = mapped_column(String(16), nullable=True)
     urgency_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     context_match_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
