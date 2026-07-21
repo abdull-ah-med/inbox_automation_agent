@@ -10,6 +10,7 @@ import pytest
 from app.core.config import Settings
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
@@ -38,10 +39,11 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
         subject=email.subject,
         messages=[email],
     )
+    thread_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     ingest = IngestResultSchema(
         message_id="m1",
         status="ingested",
-        thread_id="t1",
+        thread_id=thread_uuid,
         conversation_id="c1",
         thread_context=context,
     )
@@ -57,10 +59,104 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
         state.draft_status = "PENDING"
         return state
 
+    async def _run_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="Re: Need docs",
+            reply_body="Here is the packet.",
+            teaching_note="Reply with the docs.",
+            urgency="HIGH",
+            urgency_reason="Client waiting",
+        )
+        return state
+
     with (
         patch(
             "app.services.pipeline_service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_run_draft),
+        ) as draft_mock,
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ) as audit,
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(),
+            client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.draft_status == "DRAFTED"
+    assert state.triage == triage
+    assert state.draft is not None
+    assert state.draft.urgency == "HIGH"
+    draft_mock.assert_awaited_once()
+    assert audit.await_count == 2
+    assert audit.await_args_list[0].kwargs["event_type"] == "triage.action_needed"
+    assert audit.await_args_list[1].kwargs["event_type"] == "draft.generated"
+    triage_payload = audit.await_args_list[0].kwargs["payload"]
+    assert triage_payload["prompt_version"] == PROMPT_VERSION
+    assert triage_payload["is_spam"] is False
+    assert triage_payload["has_action_items"] is True
+    assert triage_payload["needs_context"] is False
+    assert "confidence" not in triage_payload
+    assert "spam_reason" not in triage_payload
+    assert "action_items_summary" not in triage_payload
+    assert "context_reason" not in triage_payload
+    assert "body" not in triage_payload
+    draft_payload = audit.await_args_list[1].kwargs["payload"]
+    assert draft_payload["urgency"] == "HIGH"
+    assert draft_payload["prompt_version"] == PROMPT_VERSION
+    assert "reply_body" not in draft_payload
+    assert "body" not in draft_payload
+
+
+@pytest.mark.asyncio
+async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
+    email = _email()
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=email.mailbox,
+        subject=email.subject,
+        messages=[email],
+    )
+    ingest = IngestResultSchema(
+        message_id="m1",
+        status="ingested",
+        thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        conversation_id="c1",
+        thread_context=context,
+    )
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=False,
+        )
+        state.draft_status = "PENDING"
+        return state
+
+    async def _fail_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "REQUIRES_HUMAN"
+        state.error_logs.append("draft_failed:DraftGenerationError")
+        return state
+
+    with (
+        patch(
+            "app.services.pipeline_service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_fail_draft),
         ),
         patch(
             "app.services.pipeline_service.audit_service.log_event",
@@ -75,20 +171,8 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
             ingest_result=ingest,
         )
 
-    assert state.draft_status == "PENDING"
-    assert state.triage == triage
-    audit.assert_awaited_once()
-    assert audit.await_args.kwargs["event_type"] == "triage.action_needed"
-    payload = audit.await_args.kwargs["payload"]
-    assert payload["prompt_version"] == PROMPT_VERSION
-    assert payload["is_spam"] is False
-    assert payload["has_action_items"] is True
-    assert payload["needs_context"] is False
-    assert "confidence" not in payload
-    assert "spam_reason" not in payload
-    assert "action_items_summary" not in payload
-    assert "context_reason" not in payload
-    assert "body" not in payload
+    assert state.draft_status == "REQUIRES_HUMAN"
+    assert audit.await_args_list[1].kwargs["event_type"] == "draft.requires_human"
 
 
 @pytest.mark.asyncio
