@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.core.dependencies import get_anthropic_client, get_db, get_redis, get_settings
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
@@ -106,7 +107,14 @@ async def test_simulate_ingest_happy_path_includes_triage(
             original_email=email,
             thread_context=context,
             triage=triage,
-            draft_status="PENDING",
+            draft=DraftSchema(
+                subject_line="Re: Hello",
+                reply_body="Thanks for reaching out.",
+                teaching_note="Acknowledge and offer next steps.",
+                urgency="NORMAL",
+                urgency_reason="Routine inbound request",
+            ),
+            draft_status="DRAFTED",
         )
 
     from app.services import ingestion_service
@@ -146,9 +154,12 @@ async def test_simulate_ingest_happy_path_includes_triage(
     body = response.json()
     assert body["status"] == "ingested"
     assert body["message_id"] == "sim-1"
-    assert body["draft_status"] == "PENDING"
+    assert body["draft_status"] == "DRAFTED"
     assert body["prompt_version"] == PROMPT_VERSION
     assert body["triage"]["has_action_items"] is True
+    assert body["draft"]["subject_line"] == "Re: Hello"
+    assert body["draft"]["urgency"] == "NORMAL"
+    assert "confidence" not in body["draft"]
     triage_mock.assert_awaited_once()
     complete_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1")
 
