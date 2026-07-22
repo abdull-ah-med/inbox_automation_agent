@@ -113,12 +113,14 @@ def test_validate_production_security_requires_hardening() -> None:
         graph_webhook_client_state="short",
         redis_url="redis://localhost:6379/0",
         msal_cache_encryption_key="",
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage",
     )
     errors = settings.validate_production_security()
     assert any("TARGET_MAILBOXES" in e for e in errors)
     assert any("GRAPH_WEBHOOK_CLIENT_STATE" in e for e in errors)
     assert any("REDIS_URL" in e for e in errors)
     assert any("MSAL_CACHE_ENCRYPTION_KEY" in e for e in errors)
+    assert any("DATABASE_URL" in e for e in errors)
 
 
 def test_validate_production_security_passes_when_hardened() -> None:
@@ -128,6 +130,7 @@ def test_validate_production_security_passes_when_hardened() -> None:
         graph_webhook_client_state="x" * 32,
         redis_url="rediss://:secret@redis.example:6380/0",
         msal_cache_encryption_key="e0xmjKk-RnBXRjYz-Tsvjar3_Glouxk2n5tNImpxYLc=",
+        database_url="postgresql+asyncpg://app:secret@db.example:5432/inbox_triage",
         enable_dev_routes=False,
     )
     assert settings.validate_production_security() == []

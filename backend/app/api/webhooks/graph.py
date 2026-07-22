@@ -19,6 +19,7 @@ Delivery contract (Microsoft Learn):
 
 from __future__ import annotations
 
+import json
 from urllib.parse import unquote
 
 import structlog
@@ -87,12 +88,25 @@ def _notification_ids(
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip() or "unknown"
+    """Peer address only — do not trust client-supplied X-Forwarded-For.
+
+    Spoofable XFF lets attackers rotate rate-limit buckets. Terminate TLS at a
+    reverse proxy and key limits on the TCP peer (the proxy), or set a global
+    limit. See Redis security network guidance: untrusted clients must not
+    choose their own quota identity.
+    """
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
+
+
+_RATE_LIMIT_INCR_EXPIRE = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return count
+"""
 
 
 async def _enforce_webhook_guards(
@@ -104,26 +118,26 @@ async def _enforce_webhook_guards(
 
     Oversized / abusive traffic is rejected with 413/429 (not from Graph under
     normal operation). Graph notifications stay well under the body cap.
+
+    Body size is enforced by reading at most ``webhook_max_body_bytes + 1`` bytes
+    (Content-Length alone is insufficient for chunked / missing-length requests).
+    The buffered body is stashed on ``request.state`` for the handler to parse.
     """
-    content_length = request.headers.get("content-length")
-    if content_length is not None:
-        try:
-            length = int(content_length)
-        except ValueError:
-            length = -1
-        if length > settings.webhook_max_body_bytes:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > settings.webhook_max_body_bytes:
             logger.warning(
                 "graph_webhook_body_too_large",
-                content_length=length,
+                content_length=len(body),
                 max_bytes=settings.webhook_max_body_bytes,
             )
             return Response(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
+    request.state.webhook_body = bytes(body)
 
     ip = _client_ip(request)
     key = webhook_rate_limit_key(ip)
-    count = await redis.incr(key)
-    if count == 1:
-        await redis.expire(key, 60)
+    count = int(await redis.eval(_RATE_LIMIT_INCR_EXPIRE, 1, key, "60"))
     if count > settings.webhook_rate_limit_per_minute:
         logger.warning(
             "graph_webhook_rate_limited",
@@ -133,6 +147,14 @@ async def _enforce_webhook_guards(
         )
         return Response(status_code=status.HTTP_429_TOO_MANY_REQUESTS)
     return None
+
+
+async def _parse_webhook_json(request: Request) -> object:
+    """Parse JSON from the body buffered by ``_enforce_webhook_guards``."""
+    raw: bytes = getattr(request.state, "webhook_body", b"")
+    if not raw:
+        return await request.json()
+    return json.loads(raw)
 
 
 async def _app_scoped_graph_deps(settings: Settings) -> tuple[Redis, GraphClient]:
@@ -324,7 +346,7 @@ async def receive_graph_notifications(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     try:
-        body = await request.json()
+        body = await _parse_webhook_json(request)
         payload = GraphNotificationSchema.model_validate(body)
     except (ValidationError, ValueError, TypeError) as exc:
         logger.critical("graph_notification_parse_failed", error=str(exc))
@@ -377,7 +399,7 @@ async def receive_graph_lifecycle(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     try:
-        body = await request.json()
+        body = await _parse_webhook_json(request)
         payload = GraphNotificationSchema.model_validate(body)
     except (ValidationError, ValueError, TypeError) as exc:
         logger.critical("graph_lifecycle_parse_failed", error=str(exc))

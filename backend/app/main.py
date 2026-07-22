@@ -14,7 +14,13 @@ from app.api.simulate.send_confirm import router as simulate_send_confirm_router
 from app.api.webhooks.graph import router as graph_webhook_router
 from app.api.webhooks.slack_actions import router as slack_actions_router
 from app.core.config import get_settings
-from app.core.dependencies import close_graph_client, close_redis, get_redis
+from app.core.dependencies import (
+    close_graph_client,
+    close_redis,
+    close_slack_app,
+    get_redis,
+    get_slack_app,
+)
 from app.core.exceptions import (
     AuditError,
     ClassificationError,
@@ -72,6 +78,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     await _ping_redis()
 
+    # Construct once at startup (or resolve None when Slack env vars are unset).
+    get_slack_app(settings)
+
     if not settings.anthropic_api_key.strip():
         logger.warning(
             "anthropic_api_key_missing",
@@ -109,6 +118,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
+    await close_slack_app()
     await close_graph_client()
     await close_redis()
     await dispose_engine()

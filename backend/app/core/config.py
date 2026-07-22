@@ -148,6 +148,12 @@ class Settings(BaseSettings):
             )
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
+        db_host = (urlparse(self.database_url).hostname or "").lower()
+        if db_host in {"", "localhost", "127.0.0.1", "::1"}:
+            errors.append(
+                "DATABASE_URL must not point at localhost outside local "
+                f"(got host={db_host!r})"
+            )
         return errors
 
 

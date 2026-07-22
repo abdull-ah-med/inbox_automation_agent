@@ -1,4 +1,4 @@
-"""Central Redis key patterns for dedup, subscriptions, poll cursors, and MSAL cache."""
+"""Central Redis key patterns for dedup, subscriptions, poll cursors, MSAL cache, and Slack."""
 
 from __future__ import annotations
 
@@ -19,6 +19,8 @@ MISSED_POLL_LOOKBACK_SECONDS = 2 * 3600
 VALIDATION_PENDING_TTL_SECONDS = 120
 
 MSAL_TOKEN_CACHE_KEY = "msal:token_cache"
+MSAL_TOKEN_CACHE_LOCK_KEY = "msal:token_cache:lock"
+MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS = 30
 
 SCHEDULER_POLL_LOCK_KEY = "scheduler:lock:poll"
 SCHEDULER_RENEW_LOCK_KEY = "scheduler:lock:renew"
@@ -44,3 +46,11 @@ def poll_cursor_key(mailbox: str) -> str:
 
 def webhook_rate_limit_key(client_ip: str) -> str:
     return f"ratelimit:webhook:{client_ip}"
+
+
+# Idempotent Slack review-card posts (one card per mailbox+message).
+SLACK_POSTED_TTL_SECONDS = 86_400
+
+
+def slack_posted_key(mailbox: str, message_id: str) -> str:
+    return f"slack:posted:{mailbox}:{message_id}"

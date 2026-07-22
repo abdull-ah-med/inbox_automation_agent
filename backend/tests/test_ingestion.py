@@ -32,6 +32,7 @@ from app.services.ingestion_service import (
 
 def _webhook_redis(**overrides: object) -> AsyncMock:
     redis = AsyncMock()
+    redis.eval = AsyncMock(return_value=1)
     redis.incr = AsyncMock(return_value=1)
     redis.expire = AsyncMock(return_value=True)
     redis.get = AsyncMock(return_value=None)
@@ -261,6 +262,66 @@ async def test_ingest_missing_conversation_id_releases_dedup() -> None:
 
     redis.get.assert_awaited()
     redis.delete.assert_awaited_once_with("dedup:user@example.com:msg-1")
+
+
+@pytest.mark.asyncio
+async def test_ingest_includes_trigger_when_thread_list_omits_it(
+    sample_message: GraphMessageSchema,
+) -> None:
+    """Graph list can lag get_message — trigger must still be in thread_context."""
+    older = GraphMessageSchema.model_validate(
+        {
+            "id": "older-msg",
+            "subject": "Invoice received",
+            "bodyPreview": "Earlier",
+            "body": {"contentType": "text", "content": "Earlier"},
+            "from": {"emailAddress": {"name": "Vendor", "address": "vendor@example.com"}},
+            "receivedDateTime": "2026-07-08T15:00:00Z",
+            "conversationId": "AAQkAGConversationId",
+        }
+    )
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.set = AsyncMock(return_value=True)
+    session = AsyncMock()
+    graph_client = MagicMock()
+    graph_client.get_message = AsyncMock(return_value=sample_message)
+    # Lag: list returns older messages only, not the notified trigger.
+    graph_client.list_thread_messages = AsyncMock(return_value=[older])
+
+    thread = ThreadSchema(
+        id=uuid.uuid4(),
+        mailbox="user@example.com",
+        conversation_id="AAQkAGConversationId",
+        subject="Invoice received",
+        state="NEW",
+        last_message_at=datetime.now(UTC),
+        last_updated_at=datetime.now(UTC),
+    )
+
+    with (
+        patch(
+            "app.services.ingestion_service.thread_repo.upsert_thread",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.ingestion_service.message_repo.create_message",
+            AsyncMock(return_value=MagicMock(graph_message_id="AAMkAGMessageId")),
+        ) as create_msg,
+    ):
+        result = await ingest_graph_message(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox="user@example.com",
+            message_id="AAMkAGMessageId",
+        )
+
+    assert result.status == "ingested"
+    assert result.thread_context is not None
+    ids = {m.message_id for m in result.thread_context.messages}
+    assert ids == {"older-msg", "AAMkAGMessageId"}
+    assert create_msg.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -1047,3 +1108,64 @@ def test_lifecycle_item_schema_parses() -> None:
     )
     assert item.lifecycle_event == "reauthorizationRequired"
     assert item.change_type is None
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_oversized_body_without_content_length() -> None:
+    """Body cap must apply even when Content-Length is absent (chunked/missing)."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        webhook_max_body_bytes=1024,
+    )
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: _webhook_redis()
+
+    huge = b"x" * 2048
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/notifications",
+            content=huge,
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_uses_peer_not_xff() -> None:
+    """X-Forwarded-For must not create a new rate-limit bucket."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        webhook_rate_limit_per_minute=10,
+    )
+    redis = _webhook_redis()
+    # Simulate shared peer key already over limit.
+    redis.eval = AsyncMock(return_value=11)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/notifications",
+            json={"value": []},
+            headers={"X-Forwarded-For": "203.0.113.99"},
+        )
+
+    assert response.status_code == 429
+    # Rate key must be derived from peer (testclient), not spoofed XFF.
+    call_args = redis.eval.await_args
+    assert call_args is not None
+    rate_key = call_args.args[2]
+    assert "203.0.113.99" not in rate_key

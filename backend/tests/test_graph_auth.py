@@ -93,6 +93,7 @@ async def test_token_cache_reloaded_from_redis_on_every_acquire() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value='{"AccessToken":{}}')
     redis.set = AsyncMock(return_value=True)
+    redis.delete = AsyncMock(return_value=True)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = False
@@ -116,14 +117,20 @@ async def test_token_cache_reloaded_from_redis_on_every_acquire() -> None:
 
     assert redis.get.await_count == 2
     assert mock_cache.deserialize.call_count == 2
+    # Lock acquire (SET NX) once per get_access_token
+    assert redis.set.await_count == 2
+    assert redis.delete.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_token_cache_loaded_and_persisted_via_redis() -> None:
+    from app.core.redis_keys import MSAL_TOKEN_CACHE_LOCK_KEY
+
     settings = _settings()
     redis = AsyncMock()
     redis.get = AsyncMock(return_value='{"AccessToken":{}}')
     redis.set = AsyncMock(return_value=True)
+    redis.delete = AsyncMock(return_value=True)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = True
@@ -147,15 +154,25 @@ async def test_token_cache_loaded_and_persisted_via_redis() -> None:
     assert token == "fresh-token"
     redis.get.assert_awaited_once_with(MSAL_TOKEN_CACHE_KEY)
     mock_cache.deserialize.assert_called_once_with('{"AccessToken":{}}')
-    redis.set.assert_awaited_once_with(MSAL_TOKEN_CACHE_KEY, '{"AccessToken":{"t":1}}')
+    # First SET is the NX lock; second persists the cache blob.
+    assert redis.set.await_count == 2
+    assert redis.set.await_args_list[0].args[0] == MSAL_TOKEN_CACHE_LOCK_KEY
+    assert redis.set.await_args_list[1].args == (
+        MSAL_TOKEN_CACHE_KEY,
+        '{"AccessToken":{"t":1}}',
+    )
+    redis.delete.assert_awaited_once_with(MSAL_TOKEN_CACHE_LOCK_KEY)
 
 
 @pytest.mark.asyncio
 async def test_token_cache_not_persisted_when_unchanged() -> None:
+    from app.core.redis_keys import MSAL_TOKEN_CACHE_LOCK_KEY
+
     settings = _settings()
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=None)
     redis.set = AsyncMock(return_value=True)
+    redis.delete = AsyncMock(return_value=True)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = False
@@ -177,7 +194,10 @@ async def test_token_cache_not_persisted_when_unchanged() -> None:
 
     assert token == "cached-token"
     redis.get.assert_awaited_once_with(MSAL_TOKEN_CACHE_KEY)
-    redis.set.assert_not_awaited()
+    # Only the lock SET — no cache persist.
+    redis.set.assert_awaited_once()
+    assert redis.set.await_args.args[0] == MSAL_TOKEN_CACHE_LOCK_KEY
+    redis.delete.assert_awaited_once_with(MSAL_TOKEN_CACHE_LOCK_KEY)
 
 
 @pytest.mark.asyncio

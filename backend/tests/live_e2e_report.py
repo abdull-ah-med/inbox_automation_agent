@@ -95,24 +95,30 @@ def report_tech_box(title: str, rows: list[tuple[str, object]]) -> None:
 
 def report_run_header(
     *,
-    mailbox: str,
+    mailboxes: list[str],
     lookback_days: int,
-    max_messages: int,
+    max_messages: int | None,
     model: str,
     redis_url: str,
     database_hint: str,
     anthropic_configured: bool,
+    slack_configured: bool,
 ) -> None:
-    report_banner("EMAIL PIPELINE TEST REPORT  (through AI triage — before reply drafts)")
+    report_banner("EMAIL PIPELINE TEST REPORT  (ingest → triage → draft → Slack)")
     print()
-    print("  This report walks one real email through the system, step by step.")
-    print("  Each step has a plain-English summary, then optional technical detail.")
+    print("  This report walks real mailbox email through the system, step by step.")
+    print("  Slack review cards post for every action-needed draft")
+    print("  (same gate as production — includes an Outlook deep link).")
     _blank()
-    report_kv("Mailbox under test", mailbox)
+    report_kv("Mailboxes under test", ", ".join(mailboxes))
     report_kv("How far back we looked", f"{lookback_days} days")
-    report_kv("How many emails to process", max_messages)
+    report_kv(
+        "How many emails per mailbox",
+        "all (paginated)" if max_messages is None else max_messages,
+    )
     report_kv("AI model for sorting", model)
     report_kv("AI key configured", "yes" if anthropic_configured else "NO — Haiku will stop")
+    report_kv("Slack configured", "yes" if slack_configured else "NO — cards will be skipped")
     report_kv("Database", database_hint)
     report_kv("Fast memory store (Redis)", redis_url)
 
@@ -141,7 +147,7 @@ def report_fetch_summary(
 ) -> None:
     report_stage(
         1,
-        6,
+        7,
         "FETCH FROM MICROSOFT OUTLOOK",
         meaning="We downloaded the email and the rest of its conversation thread.",
     )
@@ -199,7 +205,7 @@ def report_redis_stage(
 ) -> None:
     report_stage(
         3,
-        6,
+        7,
         "REDIS TRACKING (do-not-repeat checklist)",
         meaning=(
             "Redis is a fast checklist so the same email is not processed twice. "
@@ -247,7 +253,7 @@ def report_database_stage(
 ) -> None:
     report_stage(
         2,
-        6,
+        7,
         "SAVE TO DATABASE",
         meaning=(
             "We stored the full original emails so people can review them later. "
@@ -310,7 +316,7 @@ def report_pii_stage(
 ) -> None:
     report_stage(
         4,
-        6,
+        7,
         "PRIVACY FILTER (before AI)",
         meaning=(
             "We hide sensitive numbers (SSN, bank account, card, etc.) before sending "
@@ -369,7 +375,7 @@ def report_haiku_stage(
 ) -> None:
     report_stage(
         5,
-        6,
+        7,
         "AI TRIAGE (Claude Haiku)",
         meaning=(
             "A small AI reads the privacy-filtered email and decides: spam or not, "
@@ -426,7 +432,7 @@ def report_haiku_stage(
 def report_audit_stage(*, audit_events: list[dict[str, object]]) -> None:
     report_stage(
         6,
-        6,
+        7,
         "AUDIT TRAIL",
         meaning="We write a short decision record so later we can see why the system acted.",
     )
@@ -458,7 +464,7 @@ def report_redis_final(snapshot: dict[str, str | None]) -> None:
 def report_haiku_blocked() -> None:
     report_stage(
         5,
-        6,
+        7,
         "AI TRIAGE BLOCKED",
         meaning="Everything above worked. The AI step cannot run without an API key.",
     )
@@ -476,11 +482,45 @@ def report_skip_triage(status: str) -> None:
     _rule("═")
 
 
-def report_finale(*, mailbox: str, poll_cursor_key: str) -> None:
+def report_slack_stage(
+    *,
+    posted: bool,
+    skipped_reason: str | None,
+    message_ts: str | None,
+) -> None:
+    report_stage(
+        7,
+        7,
+        "SLACK REVIEW CARD",
+        meaning=(
+            "When the draft is ready (DRAFTED), we post a human review card "
+            "with an Outlook link (same as production)."
+        ),
+    )
+    if posted:
+        report_kv("Posted to Slack", "yes")
+        report_kv("Slack message_ts", message_ts)
+    else:
+        report_kv("Posted to Slack", "no")
+        report_kv("Why skipped", skipped_reason or "(unknown)")
+
+
+def report_finale(
+    *,
+    mailboxes: list[str],
+    slack_posted_count: int,
+    json_path: str | None = None,
+) -> None:
     report_banner("TEST COMPLETE")
     print()
-    print("  Plain summary: Microsoft fetch → save to database → Redis checklist →")
-    print("  privacy filter → Haiku decision → audit log. (Reply drafts / Sonnet not yet.)")
+    print("  Plain summary: Microsoft fetch → save → Redis → privacy filter →")
+    print("  Haiku triage → Sonnet draft (when needed) → Slack card when")
+    print("  action-needed and draft_status=DRAFTED.")
+    report_kv("Mailboxes processed", ", ".join(mailboxes))
+    report_kv("Slack cards posted", slack_posted_count)
+    if json_path:
+        _blank()
+        print(f"  Full structured output (JSON): {json_path}")
     _blank()
     print("  How to inspect yourself:")
     print("    Database:")
@@ -488,6 +528,7 @@ def report_finale(*, mailbox: str, poll_cursor_key: str) -> None:
     print("      SELECT sender, direction, left(body_text,80) FROM messages;")
     print("      SELECT event_type, payload FROM audit_events ORDER BY created_at DESC LIMIT 20;")
     print("    Redis:")
-    print(f"      redis-cli -n 0 KEYS 'dedup:{mailbox}:*'")
-    print(f"      redis-cli -n 0 GET '{poll_cursor_key}'")
+    for mailbox in mailboxes:
+        print(f"      redis-cli -n 0 KEYS 'dedup:{mailbox}:*'")
+        print(f"      redis-cli -n 0 KEYS 'slack:posted:{mailbox}:*'")
     _blank()

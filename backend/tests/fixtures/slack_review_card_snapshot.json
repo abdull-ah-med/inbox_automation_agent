@@ -1,0 +1,83 @@
+[
+  {
+    "type": "header",
+    "text": {
+      "type": "plain_text",
+      "text": "\ud83d\udfe0 HIGH \u00b7 elise@sample-company.example.com \u00b7 Re: Need screening packet",
+      "emoji": true
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Thread summary*\nVendor needs the screening packet for County X."
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Open in Outlook*\n<https://outlook.office365.com/owa/?ItemID=AAMkAG-msg-001&exvsurl=1&viewmodel=ReadMessageItem|Open email in Outlook>"
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Proposed action*\nReply \u2014 suggested recipients: vendor"
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Teaching note*\nVendor asked for the screening packet; reply with the file attached."
+    }
+  },
+  {
+    "type": "section",
+    "text": {
+      "type": "mrkdwn",
+      "text": "*Draft*\n```Hi \u2014 attaching the screening packet. Let me know if you need anything else.```"
+    }
+  },
+  {
+    "type": "actions",
+    "block_id": "inbox_triage_review_actions",
+    "elements": [
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Approve",
+          "emoji": true
+        },
+        "style": "primary",
+        "action_id": "inbox_triage_approve",
+        "value": "elise@sample-company.example.com|AAMkAG-msg-001"
+      },
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Edit",
+          "emoji": true
+        },
+        "action_id": "inbox_triage_edit",
+        "value": "elise@sample-company.example.com|AAMkAG-msg-001"
+      },
+      {
+        "type": "button",
+        "text": {
+          "type": "plain_text",
+          "text": "Reject",
+          "emoji": true
+        },
+        "style": "danger",
+        "action_id": "inbox_triage_reject",
+        "value": "elise@sample-company.example.com|AAMkAG-msg-001"
+      }
+    ]
+  }
+]
