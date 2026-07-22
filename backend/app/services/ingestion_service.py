@@ -275,8 +275,10 @@ async def ingest_graph_message(
         )
 
         thread_messages = await graph_client.list_thread_messages(mailbox, conversation_id)
-        if not thread_messages:
-            thread_messages = [message]
+        # Graph list can lag get_message (replication). Always include the trigger.
+        by_id = {m.id: m for m in thread_messages}
+        by_id[message.id] = message
+        thread_messages = list(by_id.values())
 
         context_messages: list[EmailMessageSchema] = []
         for thread_msg in thread_messages:

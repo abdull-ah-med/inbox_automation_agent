@@ -77,6 +77,17 @@ async def simulate_ingest(
                 }
             )
 
+        if not pipeline_service.pipeline_ready_for_dedup(state):
+            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
+            return result.model_copy(
+                update={
+                    "triage": state.triage,
+                    "draft": state.draft,
+                    "draft_status": state.draft_status,
+                    "prompt_version": PROMPT_VERSION,
+                }
+            )
+
         await ingestion_service.complete_ingest_dedup(redis, payload.mailbox, payload.message_id)
 
         return result.model_copy(

@@ -37,6 +37,7 @@ SENSITIVE_LOG_KEYS: frozenset[str] = frozenset(
         "reply_body",
         "edited_body",
         "sender",
+        "subject",
         "from_address",
         "to_recipients",
         "cc_recipients",

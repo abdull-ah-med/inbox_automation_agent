@@ -6,6 +6,7 @@ import structlog
 from anthropic import AsyncAnthropic
 from fastapi import Depends
 from redis.asyncio import Redis
+from slack_bolt.async_app import AsyncApp
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -19,6 +20,8 @@ _redis_client: Redis | None = None
 _graph_auth: GraphAuth | None = None
 _graph_client: GraphClient | None = None
 _anthropic_client: AsyncAnthropic | None = None
+_slack_app: AsyncApp | None = None
+_slack_app_resolved: bool = False
 
 
 async def get_redis() -> Redis:
@@ -108,9 +111,61 @@ def anthropic_client_from_settings(settings: Settings) -> AsyncAnthropic:
     return get_anthropic_client(settings)
 
 
+def get_slack_app(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncApp | None:
+    """Return process-scoped Slack Bolt ``AsyncApp``, or ``None`` if unconfigured.
+
+    Per Slack Bolt async docs
+    (https://docs.slack.dev/tools/bolt-python/concepts/async):
+    ``AsyncApp(token=..., signing_secret=...)``. Missing token or signing secret
+    → warn once and skip construction so local/offline runs never crash.
+    """
+    global _slack_app, _slack_app_resolved
+    if _slack_app_resolved:
+        return _slack_app
+
+    token = settings.slack_bot_token.strip()
+    signing_secret = settings.slack_signing_secret.strip()
+    if not token or not signing_secret:
+        logger.warning(
+            "slack_unconfigured",
+            hint="Set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET — review cards skipped",
+        )
+        _slack_app = None
+        _slack_app_resolved = True
+        return None
+
+    _slack_app = AsyncApp(token=token, signing_secret=signing_secret)
+    _slack_app_resolved = True
+    logger.info("slack_app_initialized")
+    return _slack_app
+
+
+def slack_app_from_settings(settings: Settings) -> AsyncApp | None:
+    """Resolve Slack app outside FastAPI request DI (pipeline / workers)."""
+    return get_slack_app(settings)
+
+
+async def close_slack_app() -> None:
+    """Drop the process-scoped Slack app; close aiohttp session if one was opened.
+
+    ``AsyncWebClient`` has no public ``close()``; when a session was created it is
+    exposed as ``client.session`` (aiohttp ``ClientSession``) — close that on shutdown.
+    """
+    global _slack_app, _slack_app_resolved
+    if _slack_app is not None:
+        session = getattr(_slack_app.client, "session", None)
+        if session is not None and not session.closed:
+            await session.close()
+    _slack_app = None
+    _slack_app_resolved = False
+
+
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db)]
 RedisDep = Annotated[Redis, Depends(get_redis)]
 GraphAuthDep = Annotated[GraphAuth, Depends(get_graph_auth)]
 GraphClientDep = Annotated[GraphClient, Depends(get_graph_client)]
 AnthropicClientDep = Annotated[AsyncAnthropic, Depends(get_anthropic_client)]
+SlackAppDep = Annotated[AsyncApp | None, Depends(get_slack_app)]

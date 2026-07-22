@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.config import Settings
+from app.core.exceptions import DraftGenerationError
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftSchema
@@ -220,6 +221,9 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
         def begin(self) -> _SessionCM:
             return self
 
+        async def commit(self) -> None:
+            return None
+
     with (
         patch(
             "app.services.pipeline_service.triage_service.run_triage",
@@ -245,6 +249,111 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
         )
 
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -> None:
+    """Draft failure must release dedup (return None) so poll can retry."""
+    email = _email()
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=email.mailbox,
+        subject=email.subject,
+        messages=[email],
+    )
+    ingest = IngestResultSchema(
+        message_id="m1",
+        status="ingested",
+        thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        conversation_id="c1",
+        thread_context=context,
+    )
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=False,
+        )
+        state.draft_status = "PENDING"
+        return state
+
+    class _SessionCM:
+        async def __aenter__(self) -> object:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        def begin(self) -> _SessionCM:
+            return self
+
+        async def commit(self) -> None:
+            return None
+
+    with (
+        patch(
+            "app.services.pipeline_service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_repo.get_draft_by_message",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_llm.generate_draft",
+            new=AsyncMock(side_effect=DraftGenerationError("boom")),
+        ),
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.db.session.get_session_factory",
+            return_value=lambda: _SessionCM(),
+        ),
+        patch(
+            "app.core.dependencies.anthropic_client_from_settings",
+            return_value=AsyncMock(),
+        ),
+    ):
+        result = await pipeline_service.run_post_ingest_triage(
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            ingest_result=ingest,
+        )
+
+    assert result is None
+
+
+def test_pipeline_ready_for_dedup() -> None:
+    email = _email()
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=email.mailbox,
+        subject=email.subject,
+        messages=[email],
+    )
+    base = EmailTriageState(original_email=email, thread_context=context)
+    triage = TriageResultSchema(
+        is_spam=False,
+        has_action_items=True,
+        action_items_summary="x",
+        needs_context=False,
+    )
+
+    skipped = base.model_copy(update={"triage": triage, "draft_status": "SKIPPED"})
+    drafted = base.model_copy(update={"triage": triage, "draft_status": "DRAFTED"})
+    needs_human = base.model_copy(
+        update={"triage": triage, "draft_status": "REQUIRES_HUMAN"}
+    )
+    failed = base.model_copy(update={"triage": None, "draft_status": "REQUIRES_HUMAN"})
+
+    assert pipeline_service.pipeline_ready_for_dedup(skipped) is True
+    assert pipeline_service.pipeline_ready_for_dedup(drafted) is True
+    assert pipeline_service.pipeline_ready_for_dedup(needs_human) is False
+    assert pipeline_service.pipeline_ready_for_dedup(failed) is False
 
 
 def test_select_original_email_requires_exact_message_id() -> None:

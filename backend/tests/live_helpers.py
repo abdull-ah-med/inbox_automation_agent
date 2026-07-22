@@ -16,14 +16,31 @@ def env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
-def max_messages(default: int = 3) -> int:
-    raw = os.environ.get("LIVE_MAX_MESSAGES", "").strip()
+def max_messages(default: int | None = 3) -> int | None:
+    """Max messages to process. ``None`` / env ``all`` means no cap (paginate Graph)."""
+    raw = os.environ.get("LIVE_MAX_MESSAGES", "").strip().lower()
     if not raw:
         return default
+    if raw in {"0", "all", "*"}:
+        return None
     try:
-        return max(1, min(int(raw), 20))
+        return max(1, min(int(raw), 200))
     except ValueError:
         return default
+
+
+def resolve_e2e_mailboxes(settings: Settings) -> list[str]:
+    """Mailboxes for live E2E: ``TEST_MAILBOXES`` if set, else ``TARGET_MAILBOXES``."""
+    raw = os.environ.get("TEST_MAILBOXES", "").strip()
+    if raw:
+        mailboxes = [m.strip() for m in raw.split(",") if m.strip()]
+        if mailboxes:
+            return mailboxes
+    if not settings.mailbox_list:
+        raise RuntimeError(
+            "TEST_MAILBOXES or TARGET_MAILBOXES required in .env for live mailbox tests"
+        )
+    return list(settings.mailbox_list)
 
 
 def require_graph_settings() -> Settings:
@@ -32,8 +49,8 @@ def require_graph_settings() -> Settings:
         raise RuntimeError(
             "GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET / GRAPH_TENANT_ID required in .env"
         )
-    if not settings.mailbox_list:
-        raise RuntimeError("TARGET_MAILBOXES required in .env")
+    if not settings.mailbox_list and not os.environ.get("TEST_MAILBOXES", "").strip():
+        raise RuntimeError("TARGET_MAILBOXES or TEST_MAILBOXES required in .env")
     return settings
 
 
