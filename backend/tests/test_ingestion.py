@@ -244,7 +244,7 @@ async def test_ingest_missing_conversation_id_releases_dedup() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=None)
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=1)
+    redis.eval = AsyncMock(return_value=1)
     session = AsyncMock()
     graph_client = MagicMock()
     graph_client.get_message = AsyncMock(
@@ -261,7 +261,10 @@ async def test_ingest_missing_conversation_id_releases_dedup() -> None:
         )
 
     redis.get.assert_awaited()
-    redis.delete.assert_awaited_once_with("dedup:user@example.com:msg-1")
+    # compare_delete only removes when value is still "processing"
+    redis.eval.assert_awaited_once()
+    assert redis.eval.await_args.args[2] == "dedup:user@example.com:msg-1"
+    assert redis.eval.await_args.args[3] == "processing"
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ dependencies = [
     "apscheduler>=3.11,<4.0",
     "msal>=1.37,<2.0",
     "cryptography>=44,<50",
+    "openai>=1.0,<3.0",
 ]
 
 [project.optional-dependencies]

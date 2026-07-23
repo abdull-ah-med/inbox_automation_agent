@@ -16,6 +16,7 @@ from app.api.webhooks.slack_actions import router as slack_actions_router
 from app.core.config import get_settings
 from app.core.dependencies import (
     close_graph_client,
+    close_openai_client,
     close_redis,
     close_slack_app,
     get_redis,
@@ -86,6 +87,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             "anthropic_api_key_missing",
             hint="Set ANTHROPIC_API_KEY in backend/.env — triage will fail until set",
         )
+    if not settings.openai_api_key.strip():
+        logger.warning(
+            "openai_api_key_missing",
+            hint="Set OPENAI_API_KEY in backend/.env — email embeddings will fail until set",
+        )
     try:
         await run_subscription_reconcile()
     except Exception:
@@ -119,6 +125,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         _scheduler.shutdown(wait=False)
         _scheduler = None
     await close_slack_app()
+    await close_openai_client()
     await close_graph_client()
     await close_redis()
     await dispose_engine()

@@ -8,7 +8,8 @@ Action handlers are intentionally out of scope here.
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 from urllib.parse import quote
 
 import structlog
@@ -18,13 +19,43 @@ from slack_bolt.async_app import AsyncApp
 from app.core.config import Settings
 from app.core.redis_keys import SLACK_POSTED_TTL_SECONDS, slack_posted_key
 from app.models.schemas.draft import DraftSchema
-from app.models.schemas.email_triage_state import EmailTriageState
+from app.models.schemas.email_triage_state import EmailTriageState, SlackDelivery
 
 logger = structlog.get_logger(__name__)
 
 ACTION_ID_APPROVE = "inbox_triage_approve"
 ACTION_ID_EDIT = "inbox_triage_edit"
 ACTION_ID_REJECT = "inbox_triage_reject"
+
+SlackPostStatus = Literal[
+    "posted",
+    "already_posted",
+    "skipped_unconfigured",
+    "skipped_no_draft",
+    "failed",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SlackPostResult:
+    """Outcome of ``post_review_card`` — drives ingest dedup completion."""
+
+    status: SlackPostStatus
+    message_ts: str | None = None
+
+    @property
+    def slack_delivery(self) -> SlackDelivery:
+        if self.status == "posted":
+            return "posted"
+        if self.status == "already_posted":
+            return "already_posted"
+        if self.status == "skipped_unconfigured":
+            return "skipped_unconfigured"
+        return "failed"
+
+    @property
+    def ok_for_dedup(self) -> bool:
+        return self.status in {"posted", "already_posted", "skipped_unconfigured"}
 
 _URGENCY_BADGE: dict[str, str] = {
     "CRITICAL": "🔴 CRITICAL",
@@ -41,8 +72,7 @@ def outlook_web_link(message_id: str) -> str:
     """OWA deep link for a Graph message id (matches Graph ``message.webLink`` shape)."""
     encoded = quote(message_id, safe="")
     return (
-        "https://outlook.office365.com/owa/"
-        f"?ItemID={encoded}&exvsurl=1&viewmodel=ReadMessageItem"
+        f"https://outlook.office365.com/owa/?ItemID={encoded}&exvsurl=1&viewmodel=ReadMessageItem"
     )
 
 
@@ -188,12 +218,12 @@ async def post_review_card(
     redis: Redis,
     slack_app: AsyncApp | None,
     settings: Settings,
-) -> str | None:
+) -> SlackPostResult:
     """Post a review card once per ``(mailbox, message_id)``.
 
-    Returns the Slack ``message_ts``, or ``None`` when Slack is unconfigured,
-    the draft is missing, or this message was already posted within the TTL.
     Never logs email body or draft text — metadata only.
+    On API failure or missing ``ts``, the idempotency key is released so poll
+    can retry. ``already_posted`` / ``skipped_unconfigured`` are OK for dedup.
     """
     if not _slack_configured(settings, slack_app):
         logger.warning(
@@ -201,7 +231,7 @@ async def post_review_card(
             mailbox=state.original_email.mailbox,
             message_id=state.original_email.message_id,
         )
-        return None
+        return SlackPostResult(status="skipped_unconfigured")
 
     if state.draft is None or state.draft_status != "DRAFTED":
         logger.warning(
@@ -210,7 +240,7 @@ async def post_review_card(
             message_id=state.original_email.message_id,
             draft_status=state.draft_status,
         )
-        return None
+        return SlackPostResult(status="skipped_no_draft")
 
     assert slack_app is not None  # narrowed by _slack_configured
     email = state.original_email
@@ -222,7 +252,7 @@ async def post_review_card(
             mailbox=email.mailbox,
             message_id=email.message_id,
         )
-        return None
+        return SlackPostResult(status="already_posted")
 
     blocks = build_review_card(state)
     channel = settings.slack_review_channel_id.strip()
@@ -247,20 +277,21 @@ async def post_review_card(
             message_id=email.message_id,
             block_count=len(blocks),
         )
-        raise
+        return SlackPostResult(status="failed")
 
     message_ts = response.get("ts") if hasattr(response, "get") else None
     if not message_ts and isinstance(response, dict):
         message_ts = response.get("ts")
     if not message_ts:
-        # Unexpected shape — keep the lock to avoid duplicate spam; surface None.
+        # Unknown success shape — release lock so poll can retry cleanly.
+        await redis.delete(lock_key)
         logger.error(
             "slack_post_missing_ts",
             mailbox=email.mailbox,
             message_id=email.message_id,
             block_count=len(blocks),
         )
-        return None
+        return SlackPostResult(status="failed")
 
     logger.info(
         "slack_card_posted",
@@ -270,4 +301,4 @@ async def post_review_card(
         message_ts=message_ts,
         channel=channel,
     )
-    return str(message_ts)
+    return SlackPostResult(status="posted", message_ts=str(message_ts))

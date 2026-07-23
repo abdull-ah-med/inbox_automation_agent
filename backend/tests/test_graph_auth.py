@@ -93,7 +93,7 @@ async def test_token_cache_reloaded_from_redis_on_every_acquire() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value='{"AccessToken":{}}')
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=True)
+    redis.eval = AsyncMock(return_value=1)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = False
@@ -117,9 +117,9 @@ async def test_token_cache_reloaded_from_redis_on_every_acquire() -> None:
 
     assert redis.get.await_count == 2
     assert mock_cache.deserialize.call_count == 2
-    # Lock acquire (SET NX) once per get_access_token
+    # Lock acquire (SET NX) once per get_access_token; release via Lua eval
     assert redis.set.await_count == 2
-    assert redis.delete.await_count == 2
+    assert redis.eval.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -130,7 +130,7 @@ async def test_token_cache_loaded_and_persisted_via_redis() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value='{"AccessToken":{}}')
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=True)
+    redis.eval = AsyncMock(return_value=1)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = True
@@ -157,11 +157,14 @@ async def test_token_cache_loaded_and_persisted_via_redis() -> None:
     # First SET is the NX lock; second persists the cache blob.
     assert redis.set.await_count == 2
     assert redis.set.await_args_list[0].args[0] == MSAL_TOKEN_CACHE_LOCK_KEY
+    assert isinstance(redis.set.await_args_list[0].args[1], str)
+    assert redis.set.await_args_list[0].kwargs.get("nx") is True
     assert redis.set.await_args_list[1].args == (
         MSAL_TOKEN_CACHE_KEY,
         '{"AccessToken":{"t":1}}',
     )
-    redis.delete.assert_awaited_once_with(MSAL_TOKEN_CACHE_LOCK_KEY)
+    redis.eval.assert_awaited_once()
+    assert redis.eval.await_args.args[2] == MSAL_TOKEN_CACHE_LOCK_KEY
 
 
 @pytest.mark.asyncio
@@ -172,7 +175,7 @@ async def test_token_cache_not_persisted_when_unchanged() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=None)
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=True)
+    redis.eval = AsyncMock(return_value=1)
 
     mock_cache = MagicMock()
     mock_cache.has_state_changed = False
@@ -197,7 +200,31 @@ async def test_token_cache_not_persisted_when_unchanged() -> None:
     # Only the lock SET — no cache persist.
     redis.set.assert_awaited_once()
     assert redis.set.await_args.args[0] == MSAL_TOKEN_CACHE_LOCK_KEY
-    redis.delete.assert_awaited_once_with(MSAL_TOKEN_CACHE_LOCK_KEY)
+    redis.eval.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_token_cache_lock_timeout_raises_without_persist() -> None:
+    settings = _settings()
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.set = AsyncMock(return_value=False)  # never acquires NX lock
+    redis.eval = AsyncMock(return_value=0)
+
+    mock_app = MagicMock()
+
+    with (
+        patch("app.graph.auth.msal.ConfidentialClientApplication", return_value=mock_app),
+        patch("app.graph.auth._LOCK_RETRY_ATTEMPTS", 2),
+        patch("app.graph.auth._LOCK_RETRY_DELAY_SECONDS", 0),
+    ):
+        auth = GraphAuth(settings, redis=redis)
+        with pytest.raises(GraphClientError, match="token cache lock"):
+            await auth.get_access_token()
+
+    redis.get.assert_not_awaited()
+    mock_app.acquire_token_silent.assert_not_called()
+    mock_app.acquire_token_for_client.assert_not_called()
 
 
 @pytest.mark.asyncio
