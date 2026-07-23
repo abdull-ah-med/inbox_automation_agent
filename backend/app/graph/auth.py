@@ -12,8 +12,9 @@ before every acquire and persist only when has_state_changed is True.
 serialize() resets has_state_changed (do not clear it manually).
 
 Outside local, the Redis blob is Fernet-encrypted (MSAL_CACHE_ENCRYPTION_KEY).
-A Redis NX lock serializes load→acquire→persist across Uvicorn workers so
-concurrent refreshes cannot last-write-wins overwrite each other.
+A Redis NX lock with owner token serializes load→acquire→persist across Uvicorn
+workers so concurrent refreshes cannot last-write-wins overwrite each other.
+Lock timeout fails closed — never mutate the shared blob without holding the lock.
 
 See: https://learn.microsoft.com/en-us/entra/msal/python/advanced/msal-python-token-cache-serialization
 """
@@ -34,6 +35,7 @@ from app.core.redis_keys import (
     MSAL_TOKEN_CACHE_LOCK_KEY,
     MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS,
 )
+from app.core.redis_lock import acquire_lock_with_retry, release_lock
 from app.core.security import (
     CacheEncryptionError,
     decrypt_cache_blob,
@@ -126,27 +128,32 @@ class GraphAuth:
         await self._redis.set(MSAL_TOKEN_CACHE_KEY, payload)
         logger.debug("graph_token_cache_persisted_to_redis", encrypted=bool(self._encryption_key()))
 
-    async def _acquire_cache_lock(self) -> bool:
-        """NX lock so only one worker mutates the shared MSAL Redis blob at a time."""
-        if self._redis is None:
-            return True
-        for _ in range(_LOCK_RETRY_ATTEMPTS):
-            acquired = await self._redis.set(
-                MSAL_TOKEN_CACHE_LOCK_KEY,
-                "1",
-                nx=True,
-                ex=MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS,
-            )
-            if acquired:
-                return True
-            await asyncio.sleep(_LOCK_RETRY_DELAY_SECONDS)
-        logger.warning("graph_token_cache_lock_timeout")
-        return False
+    async def _acquire_cache_lock(self) -> str | None:
+        """NX lock so only one worker mutates the shared MSAL Redis blob at a time.
 
-    async def _release_cache_lock(self) -> None:
+        Returns the owner token, or None when Redis is unset. Raises when Redis is
+        configured but the lock cannot be acquired (fail closed — do not persist).
+        """
         if self._redis is None:
+            return None
+        token = await acquire_lock_with_retry(
+            self._redis,
+            MSAL_TOKEN_CACHE_LOCK_KEY,
+            ttl_seconds=MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS,
+            attempts=_LOCK_RETRY_ATTEMPTS,
+            delay_seconds=_LOCK_RETRY_DELAY_SECONDS,
+        )
+        if token is None:
+            logger.warning("graph_token_cache_lock_timeout")
+            raise GraphClientError(
+                "Could not acquire MSAL token cache lock — refusing to mutate shared cache"
+            )
+        return token
+
+    async def _release_cache_lock(self, token: str | None) -> None:
+        if self._redis is None or token is None:
             return
-        await self._redis.delete(MSAL_TOKEN_CACHE_LOCK_KEY)
+        await release_lock(self._redis, MSAL_TOKEN_CACHE_LOCK_KEY, token)
 
     def _acquire_token_sync(self) -> dict[str, Any]:
         result = self._app.acquire_token_silent(GRAPH_SCOPES, account=None)
@@ -162,14 +169,13 @@ class GraphAuth:
 
     async def get_access_token(self) -> str:
         """Return a valid Graph API bearer token."""
-        locked = await self._acquire_cache_lock()
+        lock_token = await self._acquire_cache_lock()
         try:
             await self._load_cache_from_redis()
             result = await asyncio.to_thread(self._acquire_token_sync)
             await self._persist_cache_if_changed()
         finally:
-            if locked:
-                await self._release_cache_lock()
+            await self._release_cache_lock(lock_token)
 
         access_token = result.get("access_token")
         if isinstance(access_token, str) and access_token:

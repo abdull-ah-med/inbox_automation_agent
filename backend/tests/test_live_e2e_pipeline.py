@@ -522,12 +522,14 @@ async def _process_one_message(
         report_slack_stage(posted=False, skipped_reason=reason, message_ts=None)
         return record
 
-    from app.services import slack_service
     from slack_sdk.errors import SlackApiError
+
+    from app.core.exceptions import AuditError
+    from app.services import audit_service, slack_service
 
     slack_app = get_slack_app(live_settings)
     try:
-        message_ts = await slack_service.post_review_card(
+        post_result = await slack_service.post_review_card(
             state,
             redis=redis,
             slack_app=slack_app,
@@ -547,15 +549,17 @@ async def _process_one_message(
                 f"(or add the app via channel integrations). Then re-run."
             )
         pytest.fail(f"Slack chat.postMessage failed for channel {channel!r}: {err or exc}")
-    if message_ts is None:
-        reason = "Slack post skipped (idempotent lock or API returned no ts)"
+    if post_result.status != "posted" or not post_result.message_ts:
+        reason = (
+            f"Slack post not completed (status={post_result.status})"
+            if post_result.status != "posted"
+            else "Slack post skipped (idempotent lock or API returned no ts)"
+        )
         record["slack_skip_reason"] = reason
         report_slack_stage(posted=False, skipped_reason=reason, message_ts=None)
         return record
 
-    # Mirror production audit after a successful card post (outside Slack I/O).
-    from app.core.exceptions import AuditError
-    from app.services import audit_service
+    message_ts = post_result.message_ts
 
     try:
         async with session_factory() as session, session.begin():
@@ -694,9 +698,7 @@ async def test_live_e2e_graph_ingest_redis_db_pii_haiku_slack(
 
         if access_denied:
             run_payload["mailboxes_access_denied"] = access_denied
-            print(
-                f"\n  Mailboxes skipped (Graph AccessDenied): {', '.join(access_denied)}"
-            )
+            print(f"\n  Mailboxes skipped (Graph AccessDenied): {', '.join(access_denied)}")
 
         if not any_inbox:
             if access_denied and len(access_denied) == len(live_mailboxes):

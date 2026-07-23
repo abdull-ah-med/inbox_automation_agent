@@ -58,6 +58,14 @@ class Settings(BaseSettings):
     draft_model: str = "claude-sonnet-4-6"
     triage_max_tokens: int = Field(default=200, ge=64, le=1024)
 
+    # OpenAI embeddings (official: text-embedding-3-small defaults to 1536 dims).
+    # Docs: https://platform.openai.com/docs/guides/embeddings
+    openai_api_key: str = ""
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimension: int = Field(default=1536, ge=1, le=3072)
+    embedding_min_similarity: float = Field(default=0.78, ge=0.0, le=1.0)
+    embedding_top_k: int = Field(default=3, ge=1, le=20)
+
     @field_validator("enable_dev_routes", mode="before")
     @classmethod
     def _coerce_bool(cls, value: object) -> object:
@@ -146,13 +154,18 @@ class Settings(BaseSettings):
                 "MSAL_CACHE_ENCRYPTION_KEY must be set outside local "
                 "(Fernet key from cryptography.fernet.Fernet.generate_key())"
             )
+        if not self.slack_bot_token.strip():
+            errors.append("SLACK_BOT_TOKEN must be set when ENVIRONMENT is not local")
+        if not self.slack_signing_secret.strip():
+            errors.append("SLACK_SIGNING_SECRET must be set when ENVIRONMENT is not local")
+        if not self.slack_review_channel_id.strip():
+            errors.append("SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local")
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
         db_host = (urlparse(self.database_url).hostname or "").lower()
         if db_host in {"", "localhost", "127.0.0.1", "::1"}:
             errors.append(
-                "DATABASE_URL must not point at localhost outside local "
-                f"(got host={db_host!r})"
+                f"DATABASE_URL must not point at localhost outside local (got host={db_host!r})"
             )
         return errors
 

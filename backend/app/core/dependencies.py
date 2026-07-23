@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 import structlog
 from anthropic import AsyncAnthropic
 from fastapi import Depends
+from openai import AsyncOpenAI
 from redis.asyncio import Redis
 from slack_bolt.async_app import AsyncApp
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +21,7 @@ _redis_client: Redis | None = None
 _graph_auth: GraphAuth | None = None
 _graph_client: GraphClient | None = None
 _anthropic_client: AsyncAnthropic | None = None
+_openai_client: AsyncOpenAI | None = None
 _slack_app: AsyncApp | None = None
 _slack_app_resolved: bool = False
 
@@ -111,6 +113,33 @@ def anthropic_client_from_settings(settings: Settings) -> AsyncAnthropic:
     return get_anthropic_client(settings)
 
 
+def get_openai_client(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AsyncOpenAI:
+    """Return a process-scoped AsyncOpenAI client for embeddings.
+
+    Per OpenAI Python SDK: ``AsyncOpenAI(api_key=...)`` then
+    ``await client.embeddings.create(...)``.
+    Docs: https://platform.openai.com/docs/guides/embeddings
+    """
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key or None)
+    return _openai_client
+
+
+def openai_client_from_settings(settings: Settings) -> AsyncOpenAI:
+    """Resolve OpenAI client outside FastAPI request DI (pipeline / workers)."""
+    return get_openai_client(settings)
+
+
+async def close_openai_client() -> None:
+    global _openai_client
+    if _openai_client is not None:
+        await _openai_client.close()
+        _openai_client = None
+
+
 def get_slack_app(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AsyncApp | None:
@@ -168,4 +197,5 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 GraphAuthDep = Annotated[GraphAuth, Depends(get_graph_auth)]
 GraphClientDep = Annotated[GraphClient, Depends(get_graph_client)]
 AnthropicClientDep = Annotated[AsyncAnthropic, Depends(get_anthropic_client)]
+OpenAIClientDep = Annotated[AsyncOpenAI, Depends(get_openai_client)]
 SlackAppDep = Annotated[AsyncApp | None, Depends(get_slack_app)]
