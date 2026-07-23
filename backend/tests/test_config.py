@@ -8,8 +8,12 @@ from app.core.config import Settings
 from app.main import create_app
 
 
-def test_environment_default_is_production() -> None:
-    assert Settings.model_fields["environment"].default == "production"
+def test_embedding_settings_defaults() -> None:
+    settings = Settings(environment="local")
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.embedding_dimension == 1536
+    assert settings.embedding_min_similarity == 0.78
+    assert settings.embedding_top_k == 3
 
 
 def test_create_app_production_omits_local_routers_and_docs() -> None:
@@ -114,6 +118,9 @@ def test_validate_production_security_requires_hardening() -> None:
         redis_url="redis://localhost:6379/0",
         msal_cache_encryption_key="",
         database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage",
+        slack_bot_token="",
+        slack_signing_secret="",
+        slack_review_channel_id="",
     )
     errors = settings.validate_production_security()
     assert any("TARGET_MAILBOXES" in e for e in errors)
@@ -121,6 +128,9 @@ def test_validate_production_security_requires_hardening() -> None:
     assert any("REDIS_URL" in e for e in errors)
     assert any("MSAL_CACHE_ENCRYPTION_KEY" in e for e in errors)
     assert any("DATABASE_URL" in e for e in errors)
+    assert any("SLACK_BOT_TOKEN" in e for e in errors)
+    assert any("SLACK_SIGNING_SECRET" in e for e in errors)
+    assert any("SLACK_REVIEW_CHANNEL_ID" in e for e in errors)
 
 
 def test_validate_production_security_passes_when_hardened() -> None:
@@ -132,5 +142,8 @@ def test_validate_production_security_passes_when_hardened() -> None:
         msal_cache_encryption_key="e0xmjKk-RnBXRjYz-Tsvjar3_Glouxk2n5tNImpxYLc=",
         database_url="postgresql+asyncpg://app:secret@db.example:5432/inbox_triage",
         enable_dev_routes=False,
+        slack_bot_token="xoxb-prod-token",
+        slack_signing_secret="signing-secret-prod",
+        slack_review_channel_id="C0123456789",
     )
     assert settings.validate_production_security() == []

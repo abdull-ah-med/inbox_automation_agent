@@ -159,23 +159,44 @@ async def complete_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> 
 
 
 async def release_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> None:
-    """Drop an in-flight claim so failed work can be retried."""
-    await redis.delete(dedup_key(mailbox, message_id))
+    """Drop an in-flight claim so failed work can be retried.
+
+    Only deletes when the value is still ``processing`` — never wipes a
+    concurrent ``completed`` mark.
+    """
+    from app.core.redis_lock import compare_delete
+
+    await compare_delete(redis, dedup_key(mailbox, message_id), DEDUP_VALUE_PROCESSING)
 
 
-async def claim_triage_lock(redis: Redis, mailbox: str, message_id: str) -> bool:
-    """Acquire an exclusive lock for post-ingest Haiku triage (NX + TTL)."""
-    created = await redis.set(
+async def claim_triage_lock(redis: Redis, mailbox: str, message_id: str) -> str | None:
+    """Acquire an exclusive lock for post-ingest Haiku triage (NX + TTL).
+
+    Returns the owner token on success, or ``None`` if the lock is held.
+    """
+    from app.core.redis_lock import acquire_lock
+
+    return await acquire_lock(
+        redis,
         triage_lock_key(mailbox, message_id),
-        "1",
-        nx=True,
-        ex=TRIAGE_LOCK_TTL_SECONDS,
+        ttl_seconds=TRIAGE_LOCK_TTL_SECONDS,
     )
-    return bool(created)
 
 
-async def release_triage_lock(redis: Redis, mailbox: str, message_id: str) -> None:
-    await redis.delete(triage_lock_key(mailbox, message_id))
+async def release_triage_lock(
+    redis: Redis,
+    mailbox: str,
+    message_id: str,
+    token: str | None = None,
+) -> None:
+    """Release the triage lock. Prefer token-safe release when token is known."""
+    from app.core.redis_lock import release_lock
+
+    key = triage_lock_key(mailbox, message_id)
+    if token:
+        await release_lock(redis, key, token)
+    else:
+        await redis.delete(key)
 
 
 async def _thread_context_from_db(

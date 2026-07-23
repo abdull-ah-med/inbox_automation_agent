@@ -195,7 +195,7 @@ async def _run_triage_after_ingest(
         else:
             await ingestion_service.release_ingest_dedup(redis, mailbox, message_id)
     finally:
-        await ingestion_service.release_triage_lock(redis, mailbox, message_id)
+        await ingestion_service.release_triage_lock(redis, mailbox, message_id, claimed)
 
 
 async def _process_notifications(

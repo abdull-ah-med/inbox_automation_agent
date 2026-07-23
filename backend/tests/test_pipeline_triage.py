@@ -17,6 +17,12 @@ from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
+_EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
+
+
+def _patch_embed() -> object:
+    return patch(_EMBED_SAFE, new=AsyncMock(return_value=None))
+
 
 def _email() -> EmailMessageSchema:
     return EmailMessageSchema(
@@ -84,12 +90,14 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
             "app.services.pipeline_service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
+        _patch_embed() as embed_mock,
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
             redis=AsyncMock(),
-            settings=Settings(),
+            settings=Settings(environment="local"),
             client=AsyncMock(),
+            openai_client=AsyncMock(),
             ingest_result=ingest,
         )
 
@@ -98,6 +106,7 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
     assert state.draft is not None
     assert state.draft.urgency == "HIGH"
     draft_mock.assert_awaited_once()
+    embed_mock.assert_awaited_once()
     assert audit.await_count == 2
     assert audit.await_args_list[0].kwargs["event_type"] == "triage.action_needed"
     assert audit.await_args_list[1].kwargs["event_type"] == "draft.generated"
@@ -163,12 +172,14 @@ async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
             "app.services.pipeline_service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
+        _patch_embed(),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
             redis=AsyncMock(),
-            settings=Settings(),
+            settings=Settings(environment="local"),
             client=AsyncMock(),
+            openai_client=AsyncMock(),
             ingest_result=ingest,
         )
 
@@ -241,6 +252,11 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
             "app.core.dependencies.anthropic_client_from_settings",
             return_value=AsyncMock(),
         ),
+        patch(
+            "app.core.dependencies.openai_client_from_settings",
+            return_value=AsyncMock(),
+        ),
+        _patch_embed(),
     ):
         result = await pipeline_service.run_post_ingest_triage(
             redis=AsyncMock(),
@@ -317,6 +333,11 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
             "app.core.dependencies.anthropic_client_from_settings",
             return_value=AsyncMock(),
         ),
+        patch(
+            "app.core.dependencies.openai_client_from_settings",
+            return_value=AsyncMock(),
+        ),
+        _patch_embed() as embed_mock,
     ):
         result = await pipeline_service.run_post_ingest_triage(
             redis=AsyncMock(),
@@ -325,6 +346,7 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
         )
 
     assert result is None
+    embed_mock.assert_awaited()
 
 
 def test_pipeline_ready_for_dedup() -> None:
@@ -344,14 +366,34 @@ def test_pipeline_ready_for_dedup() -> None:
     )
 
     skipped = base.model_copy(update={"triage": triage, "draft_status": "SKIPPED"})
-    drafted = base.model_copy(update={"triage": triage, "draft_status": "DRAFTED"})
-    needs_human = base.model_copy(
-        update={"triage": triage, "draft_status": "REQUIRES_HUMAN"}
+    drafted_ok = base.model_copy(
+        update={
+            "triage": triage,
+            "draft_status": "DRAFTED",
+            "slack_delivery": "posted",
+        }
     )
+    drafted_slack_failed = base.model_copy(
+        update={
+            "triage": triage,
+            "draft_status": "DRAFTED",
+            "slack_delivery": "failed",
+        }
+    )
+    drafted_not_attempted = base.model_copy(
+        update={
+            "triage": triage,
+            "draft_status": "DRAFTED",
+            "slack_delivery": "not_attempted",
+        }
+    )
+    needs_human = base.model_copy(update={"triage": triage, "draft_status": "REQUIRES_HUMAN"})
     failed = base.model_copy(update={"triage": None, "draft_status": "REQUIRES_HUMAN"})
 
     assert pipeline_service.pipeline_ready_for_dedup(skipped) is True
-    assert pipeline_service.pipeline_ready_for_dedup(drafted) is True
+    assert pipeline_service.pipeline_ready_for_dedup(drafted_ok) is True
+    assert pipeline_service.pipeline_ready_for_dedup(drafted_slack_failed) is False
+    assert pipeline_service.pipeline_ready_for_dedup(drafted_not_attempted) is False
     assert pipeline_service.pipeline_ready_for_dedup(needs_human) is False
     assert pipeline_service.pipeline_ready_for_dedup(failed) is False
 
