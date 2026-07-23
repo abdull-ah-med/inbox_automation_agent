@@ -115,6 +115,7 @@ async def test_simulate_ingest_happy_path_includes_triage(
                 urgency_reason="Routine inbound request",
             ),
             draft_status="DRAFTED",
+            slack_delivery="not_required",
         )
 
     from app.services import ingestion_service
