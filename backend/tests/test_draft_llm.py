@@ -14,6 +14,7 @@ from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
+from app.models.schemas.email_triage_state import CrossThreadContextSchema
 
 
 def _email() -> EmailMessageSchema:
@@ -73,16 +74,34 @@ def _ok_draft() -> DraftSchema:
 
 def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     email = _email()
+    prior = EmailMessageSchema(
+        message_id="prior-1",
+        conversation_id="conv-matched",
+        mailbox=email.mailbox,
+        sender="vendor@example.com",
+        subject="Onboarding kickoff",
+        body_text="Related prior thread about onboarding.",
+        body_preview="Related prior thread about onboarding.",
+        received_at=datetime(2026, 7, 1, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+    )
+    cross = CrossThreadContextSchema(
+        matched_conversation_id="conv-matched",
+        similarity_score=0.9,
+        thread_messages=[prior],
+    )
     content = draft_llm._build_user_content(
         email,
         _context(email),
         _triage(),
-        cross_thread_context="Related prior thread about onboarding.",
+        cross_thread_context=cross,
         tone_references=["Thanks — sending the packet now."],
     )
     assert "To: elise@example.com" in content
     assert "has_action_items: True" in content
     assert "Send intake packet" in content
+    assert "Related prior conversation" in content
+    assert "conv-matched" in content
     assert "Related prior thread about onboarding." in content
     assert "Thanks — sending the packet now." in content
 

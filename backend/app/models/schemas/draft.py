@@ -27,3 +27,5 @@ class DraftResponseSchema(DraftSchema):
     approved_at: datetime | None = None
     rejected_at: datetime | None = None
     edited_body: str | None = None
+    # Retrieval similarity when Flow B injected a related thread (not LLM confidence).
+    context_match_confidence: float | None = None

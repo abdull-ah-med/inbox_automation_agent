@@ -14,7 +14,7 @@ from app.llm.draft_generator import DraftCallResult
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftResponseSchema, DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
-from app.models.schemas.email_triage_state import EmailTriageState
+from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.services import draft_service
 
 
@@ -151,7 +151,62 @@ async def test_run_draft_generation_failure_requires_human() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_draft_reuses_existing_without_llm() -> None:
+async def test_run_draft_persists_context_match_confidence() -> None:
+    thread_id = uuid.uuid4()
+    draft = _draft()
+    call = DraftCallResult(
+        draft=draft,
+        prompt_version="v-draft",
+        model="claude-sonnet-4-6",
+        input_tokens=10,
+        output_tokens=20,
+        latency_ms=50,
+    )
+    prior = EmailMessageSchema(
+        message_id="prior-1",
+        conversation_id="conv-matched",
+        mailbox="elise@example.com",
+        sender="vendor@example.com",
+        subject="Prior",
+        body_text="Earlier",
+        received_at=datetime(2026, 7, 1, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+    )
+    cross = CrossThreadContextSchema(
+        matched_conversation_id="conv-matched",
+        similarity_score=0.84,
+        thread_messages=[prior],
+    )
+
+    with (
+        patch(
+            "app.services.draft_service.draft_repo.get_draft_by_message",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_service.draft_llm.generate_draft",
+            new=AsyncMock(return_value=call),
+        ) as generate,
+        patch(
+            "app.services.draft_service.draft_repo.create_draft",
+            new=AsyncMock(return_value=_persisted(draft, thread_id=thread_id)),
+        ) as create,
+    ):
+        state = await draft_service.run_draft(
+            _state(),
+            session=AsyncMock(),
+            client=AsyncMock(),
+            settings=Settings(anthropic_api_key="test-key"),
+            thread_id=thread_id,
+            cross_thread_context=cross,
+        )
+
+    assert state.draft_status == "DRAFTED"
+    generate.assert_awaited_once()
+    assert generate.await_args.kwargs["cross_thread_context"] is cross
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["context_match_confidence"] == 0.84
+
     thread_id = uuid.uuid4()
     draft = _draft()
     existing = _persisted(draft, thread_id=thread_id)

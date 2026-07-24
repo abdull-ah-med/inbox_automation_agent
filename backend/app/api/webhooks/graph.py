@@ -244,9 +244,11 @@ async def _process_notifications(
                 message_id=message_id,
             )
         except Exception:
+            # Triage lock is owned only inside ``_run_triage_after_ingest`` and
+            # released there with the owner token — never unconditional DEL here
+            # (https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/).
             if mailbox and message_id:
                 await ingestion_service.release_ingest_dedup(redis, mailbox, message_id)
-                await ingestion_service.release_triage_lock(redis, mailbox, message_id)
             logger.exception(
                 "graph_notification_processing_failed",
                 subscription_id=item.subscription_id,
