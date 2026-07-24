@@ -6,7 +6,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, HTTPException, status
 
-from app.core.dependencies import AnthropicClientDep, DbSessionDep, RedisDep, SettingsDep
+from app.core.dependencies import DbSessionDep, RedisDep, SettingsDep
 from app.core.dev_access import require_local_dev_access
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.graph import IngestResultSchema, SimulateIngestRequestSchema
@@ -27,12 +27,14 @@ async def simulate_ingest(
     settings: SettingsDep,
     session: DbSessionDep,
     redis: RedisDep,
-    anthropic: AnthropicClientDep,
     x_dev_api_key: Annotated[str | None, Header(alias="X-Dev-Api-Key")] = None,
 ) -> IngestResultSchema:
     """Accept a simulated email, persist it, then run triage and draft when needed.
 
     Local-only (ENABLE_DEV_ROUTES + X-Dev-Api-Key). Does not call Graph or Slack.
+
+    Uses the phased pipeline (LLM/Graph outside DB transactions) and the same
+    triage lock as webhook/poll so concurrent retries cannot overlap Haiku work.
     Duplicates skip triage/draft and return ingest status only.
     """
     require_local_dev_access(settings, x_dev_api_key=x_dev_api_key)
@@ -53,21 +55,33 @@ async def simulate_ingest(
         if result.status not in _TRIAGE_ELIGIBLE:
             return result
 
+        claimed = await ingestion_service.claim_triage_lock(
+            redis, payload.mailbox, payload.message_id
+        )
+        if not claimed:
+            return result
+
         try:
-            async with session.begin():
-                state = await pipeline_service.run_after_ingest(
-                    session=session,
-                    redis=redis,
-                    settings=settings,
-                    client=anthropic,
-                    ingest_result=result,
-                )
+            state = await pipeline_service.run_phased_after_ingest(
+                redis=redis,
+                settings=settings,
+                ingest_result=result,
+                post_slack=False,
+            )
         except Exception:
-            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
+            await ingestion_service.release_ingest_dedup(
+                redis, payload.mailbox, payload.message_id
+            )
             raise
+        finally:
+            await ingestion_service.release_triage_lock(
+                redis, payload.mailbox, payload.message_id, claimed
+            )
 
         if state.triage is None:
-            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
+            await ingestion_service.release_ingest_dedup(
+                redis, payload.mailbox, payload.message_id
+            )
             return result.model_copy(
                 update={
                     "triage": None,
@@ -78,7 +92,9 @@ async def simulate_ingest(
             )
 
         if not pipeline_service.pipeline_ready_for_dedup(state):
-            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
+            await ingestion_service.release_ingest_dedup(
+                redis, payload.mailbox, payload.message_id
+            )
             return result.model_copy(
                 update={
                     "triage": state.triage,
@@ -88,7 +104,9 @@ async def simulate_ingest(
                 }
             )
 
-        await ingestion_service.complete_ingest_dedup(redis, payload.mailbox, payload.message_id)
+        await ingestion_service.complete_ingest_dedup(
+            redis, payload.mailbox, payload.message_id
+        )
 
         return result.model_copy(
             update={

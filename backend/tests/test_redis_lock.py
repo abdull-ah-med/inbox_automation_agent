@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -44,3 +44,22 @@ async def test_compare_delete_processing_value() -> None:
     redis = AsyncMock()
     redis.eval = AsyncMock(return_value=0)
     assert await compare_delete(redis, "dedup:m:1", "processing") is False
+
+
+@pytest.mark.asyncio
+async def test_release_triage_lock_requires_owner_token() -> None:
+    """Owner-safe release only — never unconditional DEL (Redis lock docs)."""
+    from app.services import ingestion_service
+
+    redis = AsyncMock()
+    with patch(
+        "app.core.redis_lock.release_lock",
+        new=AsyncMock(return_value=True),
+    ) as release:
+        await ingestion_service.release_triage_lock(
+            redis, "box@example.com", "msg-1", "owner-token"
+        )
+    release.assert_awaited_once()
+    assert release.await_args.args[1].endswith("msg-1")
+    assert release.await_args.args[2] == "owner-token"
+    redis.delete.assert_not_called()

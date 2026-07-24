@@ -19,6 +19,7 @@ from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
+from app.models.schemas.email_triage_state import CrossThreadContextSchema
 
 logger = structlog.get_logger(__name__)
 
@@ -35,21 +36,43 @@ class DraftCallResult:
     latency_ms: int
 
 
+def _format_message_line(msg: EmailMessageSchema) -> str:
+    preview = msg.body_preview or msg.body_text[:240]
+    return (
+        f"- [{msg.direction.value}] from={msg.sender} "
+        f"at={msg.received_at.isoformat()} subject={msg.subject!r} preview={preview!r}"
+    )
+
+
+def _format_cross_thread_block(
+    cross_thread_context: CrossThreadContextSchema | str | None,
+) -> str:
+    """Render related-thread messages (scrubbed upstream) for the Sonnet user turn."""
+    if cross_thread_context is None:
+        return "(none)"
+    if isinstance(cross_thread_context, str):
+        return cross_thread_context.strip() or "(none)"
+
+    lines = [_format_message_line(msg) for msg in cross_thread_context.thread_messages]
+    body = "\n".join(lines) if lines else "(no messages in matched thread)"
+    return (
+        f"Related prior conversation "
+        f"(conversation_id={cross_thread_context.matched_conversation_id}, "
+        f"similarity={cross_thread_context.similarity_score:.4f}, "
+        f"{len(cross_thread_context.thread_messages)} messages, oldest first):\n"
+        f"{body}"
+    )
+
+
 def _build_user_content(
     email: EmailMessageSchema,
     thread_context: ThreadContextSchema,
     triage: TriageResultSchema,
     *,
-    cross_thread_context: str | None = None,
+    cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
 ) -> str:
-    thread_lines: list[str] = []
-    for msg in thread_context.messages:
-        preview = msg.body_preview or msg.body_text[:240]
-        thread_lines.append(
-            f"- [{msg.direction.value}] from={msg.sender} "
-            f"at={msg.received_at.isoformat()} preview={preview!r}"
-        )
+    thread_lines = [_format_message_line(msg) for msg in thread_context.messages]
     thread_block = "\n".join(thread_lines) if thread_lines else "(no prior messages)"
     to_list = ", ".join(email.to_recipients) if email.to_recipients else "(none)"
     cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else "(none)"
@@ -58,7 +81,7 @@ def _build_user_content(
     spam_reason = triage.spam_reason or "(none)"
     context_reason = triage.context_reason or "(none)"
 
-    cross_block = cross_thread_context.strip() if cross_thread_context else "(none)"
+    cross_block = _format_cross_thread_block(cross_thread_context)
     if tone_references:
         tone_block = "\n".join(f"- {ref}" for ref in tone_references if ref.strip())
         if not tone_block:
@@ -120,6 +143,15 @@ async def _parse_once(
     return parsed, input_tokens, output_tokens
 
 
+def _scrub_cross_thread(
+    cross_thread_context: CrossThreadContextSchema | str | None,
+) -> CrossThreadContextSchema | str | None:
+    if cross_thread_context is None or isinstance(cross_thread_context, str):
+        return cross_thread_context
+    scrubbed_messages = [scrub_email_for_llm(msg) for msg in cross_thread_context.thread_messages]
+    return cross_thread_context.model_copy(update={"thread_messages": scrubbed_messages})
+
+
 async def generate_draft(
     email: EmailMessageSchema,
     thread_context: ThreadContextSchema,
@@ -127,7 +159,7 @@ async def generate_draft(
     *,
     client: AsyncAnthropic,
     settings: Settings,
-    cross_thread_context: str | None = None,
+    cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
 ) -> DraftCallResult:
     """Call Sonnet once (retry once on parse/API failure) and return a structured draft."""
@@ -141,7 +173,7 @@ async def generate_draft(
         scrub_email_for_llm(email),
         scrub_thread_for_llm(thread_context),
         triage,
-        cross_thread_context=cross_thread_context,
+        cross_thread_context=_scrub_cross_thread(cross_thread_context),
         tone_references=tone_references,
     )
     started = time.perf_counter()
