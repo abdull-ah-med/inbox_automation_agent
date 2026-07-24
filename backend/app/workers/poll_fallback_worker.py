@@ -188,8 +188,9 @@ async def poll_mailbox(
                 advance_cursor = False
                 continue
         except Exception:
+            # Triage lock (if claimed) is released in the inner ``finally`` with
+            # the owner token — do not unconditional DEL here.
             await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
-            await ingestion_service.release_triage_lock(redis, mailbox, message.id)
             logger.exception(
                 "poll_ingest_failed",
                 mailbox=mailbox,

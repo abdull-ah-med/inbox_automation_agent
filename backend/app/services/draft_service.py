@@ -12,7 +12,7 @@ from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.draft import DraftSchema
-from app.models.schemas.email_triage_state import EmailTriageState
+from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.repositories import draft_repo
 
 logger = structlog.get_logger(__name__)
@@ -25,7 +25,7 @@ async def run_draft(
     client: AsyncAnthropic,
     settings: Settings,
     thread_id: uuid.UUID,
-    cross_thread_context: str | None = None,
+    cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
 ) -> EmailTriageState:
     """Generate and persist a draft when ``draft_status`` is PENDING.
@@ -77,12 +77,17 @@ async def run_draft(
         state.error_logs.append(f"draft_failed:{type(exc).__name__}")
         return state
 
+    confidence: float | None = None
+    if isinstance(cross_thread_context, CrossThreadContextSchema):
+        confidence = cross_thread_context.similarity_score
+
     persisted = await draft_repo.create_draft(
         session,
         thread_id=thread_id,
         message_id=message_id,
         draft=result.draft,
         prompt_version=result.prompt_version,
+        context_match_confidence=confidence,
     )
     state.draft = DraftSchema.model_validate(
         persisted.model_dump(include=set(DraftSchema.model_fields))
@@ -97,5 +102,6 @@ async def run_draft(
         urgency=result.draft.urgency,
         model=result.model,
         latency_ms=result.latency_ms,
+        context_match_confidence=confidence,
     )
     return state

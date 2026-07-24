@@ -65,6 +65,7 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         teaching_note=row.teaching_note,
         urgency=cast(Urgency, urgency_raw),
         urgency_reason=row.urgency_reason or "",
+        context_match_confidence=row.context_match_confidence,
     )
 
 
@@ -88,10 +89,12 @@ async def create_draft(
     message_id: str,
     draft: DraftSchema,
     prompt_version: str,
+    context_match_confidence: float | None = None,
 ) -> DraftResponseSchema:
     """Insert a draft or return the existing row on ``message_id`` conflict.
 
     ``prompt_version`` is accepted for callers/audit; not stored on the drafts row.
+    ``context_match_confidence`` is retrieval similarity when Flow B matched a thread.
     """
     _ = prompt_version
 
@@ -104,6 +107,7 @@ async def create_draft(
         teaching_note=draft.teaching_note,
         urgency=draft.urgency,
         urgency_reason=draft.urgency_reason,
+        context_match_confidence=context_match_confidence,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["message_id"],

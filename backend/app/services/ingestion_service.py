@@ -187,16 +187,17 @@ async def release_triage_lock(
     redis: Redis,
     mailbox: str,
     message_id: str,
-    token: str | None = None,
+    token: str,
 ) -> None:
-    """Release the triage lock. Prefer token-safe release when token is known."""
+    """Release the triage lock only when ``token`` still owns it.
+
+    Per Redis distributed-lock guidance, never unconditional ``DEL`` — a slow
+    holder must not delete a lock another worker acquired after TTL expiry.
+    https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
+    """
     from app.core.redis_lock import release_lock
 
-    key = triage_lock_key(mailbox, message_id)
-    if token:
-        await release_lock(redis, key, token)
-    else:
-        await redis.delete(key)
+    await release_lock(redis, triage_lock_key(mailbox, message_id), token)
 
 
 async def _thread_context_from_db(
