@@ -28,3 +28,23 @@ class ThreadStateError(InboxTriageError):
 
 class AuditError(InboxTriageError):
     """Raised when audit logging fails."""
+
+
+class AuthError(InboxTriageError):
+    """Base exception for authentication failures."""
+
+
+class InvalidCredentialsError(AuthError):
+    """Raised when email/password login fails."""
+
+
+class InvalidTokenError(AuthError):
+    """Raised when a refresh or access token is invalid or expired."""
+
+
+class ReusedRefreshTokenError(AuthError):
+    """Raised when a revoked refresh token is presented (theft signal)."""
+
+
+class InvalidCursorError(InboxTriageError):
+    """Raised when a pagination cursor is malformed."""

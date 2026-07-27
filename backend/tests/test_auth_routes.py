@@ -1,0 +1,181 @@
+"""Auth route integration tests with mocked auth_service."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from app.core.config import Settings, get_settings
+from app.core.dependencies import get_db, get_redis
+from app.core.security.csrf import mint_csrf
+from app.main import create_app
+from app.models.schemas.auth import TokenResponse, UserMe
+from app.services.auth_service import AuthResult
+
+
+@pytest.fixture
+def local_settings() -> Settings:
+    return Settings(
+        environment="local",
+        jwt_secret="b" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        enable_dev_routes=False,
+        refresh_cookie_name="itr_refresh",
+        csrf_cookie_name="itr_csrf",
+        csrf_header_name="X-CSRF-Token",
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+
+
+@pytest.fixture
+def app(local_settings: Settings):
+    get_settings.cache_clear()
+    with (
+        patch("app.main.get_settings", return_value=local_settings),
+        patch("app.main._ping_redis", AsyncMock()),
+        patch("app.main.get_slack_app", return_value=None),
+        patch("app.main.run_subscription_reconcile", AsyncMock()),
+        patch("app.main.AsyncIOScheduler") as sched,
+    ):
+        sched.return_value.start = lambda: None
+        sched.return_value.shutdown = lambda wait=False: None
+        application = create_app()
+        application.dependency_overrides[get_settings] = lambda: local_settings
+        application.dependency_overrides[get_redis] = lambda: AsyncMock()
+        yield application
+        application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+
+def _origin_headers(settings: Settings) -> dict[str, str]:
+    return {"Origin": settings.frontend_origin}
+
+
+def _token_result() -> AuthResult:
+    user = UserMe(
+        id=uuid.uuid4(),
+        email="elise@example.com",
+        role="user",
+        created_at=datetime.now(UTC),
+    )
+    return AuthResult(
+        response=TokenResponse(
+            access_token="access.jwt.token",
+            expires_in=900,
+            user=user,
+        ),
+        refresh_plaintext="opaque-refresh-token-value",
+    )
+
+
+@pytest.mark.asyncio
+async def test_login_sets_cookies(app, local_settings: Settings) -> None:
+    """Login returns access token and sets HttpOnly refresh + CSRF cookies."""
+    result = _token_result()
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    with patch("app.api.auth.routes.auth_service.login", AsyncMock(return_value=result)):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/auth/login",
+                json={"email": "elise@example.com", "password": "CorrectHorseBattery1!"},
+                headers=_origin_headers(local_settings),
+            )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["access_token"] == "access.jwt.token"
+    assert body["token_type"] == "Bearer"
+    refresh = resp.cookies.get(local_settings.refresh_cookie_name)
+    assert refresh == "opaque-refresh-token-value"
+    assert local_settings.csrf_cookie_name in resp.cookies
+
+
+@pytest.mark.asyncio
+async def test_refresh_requires_csrf(app, local_settings: Settings) -> None:
+    """Refresh without CSRF header is forbidden."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.cookies.set(local_settings.refresh_cookie_name, "opaque", path="/auth")
+        resp = await client.post(
+            "/auth/refresh",
+            headers=_origin_headers(local_settings),
+        )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_csrf(app, local_settings: Settings) -> None:
+    """Refresh with matching CSRF cookie/header succeeds."""
+    result = _token_result()
+    csrf = mint_csrf(local_settings.jwt_secret)
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    with patch("app.api.auth.routes.auth_service.refresh", AsyncMock(return_value=result)):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(local_settings.refresh_cookie_name, "opaque", path="/auth")
+            client.cookies.set(local_settings.csrf_cookie_name, csrf, path="/")
+            resp = await client.post(
+                "/auth/refresh",
+                headers={
+                    **_origin_headers(local_settings),
+                    local_settings.csrf_header_name: csrf,
+                },
+            )
+    assert resp.status_code == 200
+    assert resp.json()["access_token"] == "access.jwt.token"
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_wrong_origin(app, local_settings: Settings) -> None:
+    """Cookie-mutating auth routes reject a foreign Origin."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/login",
+            json={"email": "elise@example.com", "password": "CorrectHorseBattery1!"},
+            headers={"Origin": "https://evil.example"},
+        )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight(app, local_settings: Settings) -> None:
+    """CORS preflight allows the configured frontend origin."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.options(
+            "/auth/login",
+            headers={
+                "Origin": local_settings.frontend_origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+    assert resp.status_code in {200, 204}
+    assert resp.headers.get("access-control-allow-origin") == local_settings.frontend_origin
+    assert resp.headers.get("access-control-allow-credentials") == "true"
