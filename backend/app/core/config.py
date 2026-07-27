@@ -66,7 +66,34 @@ class Settings(BaseSettings):
     embedding_min_similarity: float = Field(default=0.78, ge=0.0, le=1.0)
     embedding_top_k: int = Field(default=3, ge=1, le=20)
 
-    @field_validator("enable_dev_routes", mode="before")
+    # Web auth (JWT access + rotating refresh cookie).
+    jwt_secret: str = ""
+    jwt_algorithm: Literal["HS256"] = "HS256"
+    jwt_issuer: str = "inbox-triage-automation"
+    jwt_audience: str = "inbox-triage-web"
+    access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
+    refresh_token_ttl_seconds: int = Field(default=604_800, ge=3600)  # 7 days
+    refresh_cookie_name: str = "itr_refresh"
+    csrf_cookie_name: str = "itr_csrf"
+    csrf_header_name: str = "X-CSRF-Token"
+    frontend_origin: str = "http://localhost:3000"
+    cookie_domain: str = ""
+    cookie_secure: bool = True
+    api_host: str = "localhost"
+    auth_login_rate_limit: str = "5/minute"
+    auth_refresh_rate_limit: str = "30/minute"
+    api_default_rate_limit: str = "120/minute"
+    # Only enable behind a reverse proxy that sets/overwrites X-Forwarded-For.
+    trust_x_forwarded_for: bool = False
+    # Concurrent refresh grace window (Auth0-style) to avoid false reuse detection.
+    refresh_rotation_grace_seconds: int = Field(default=10, ge=0, le=60)
+
+    @field_validator(
+        "enable_dev_routes",
+        "cookie_secure",
+        "trust_x_forwarded_for",
+        mode="before",
+    )
     @classmethod
     def _coerce_bool(cls, value: object) -> object:
         if isinstance(value, str):
@@ -167,6 +194,12 @@ class Settings(BaseSettings):
             errors.append(
                 f"DATABASE_URL must not point at localhost outside local (got host={db_host!r})"
             )
+        if len(self.jwt_secret.strip()) < 64:
+            errors.append("JWT_SECRET must be at least 64 characters outside local")
+        if not self.cookie_secure:
+            errors.append("COOKIE_SECURE must be true outside local")
+        if not self.frontend_origin.strip().lower().startswith("https://"):
+            errors.append("FRONTEND_ORIGIN must be an https:// URL outside local")
         return errors
 
 

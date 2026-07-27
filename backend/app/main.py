@@ -4,13 +4,22 @@ from contextlib import asynccontextmanager
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from app.api.auth.routes import router as auth_router
 from app.api.debug.graph_check import router as debug_graph_check_router
 from app.api.simulate.ingest import router as simulate_ingest_router
 from app.api.simulate.send_confirm import router as simulate_send_confirm_router
+from app.api.web.dashboard import router as dashboard_router
+from app.api.web.mailboxes import router as mailboxes_router
+from app.api.web.threads import router as threads_router
 from app.api.webhooks.graph import router as graph_webhook_router
 from app.api.webhooks.slack_actions import router as slack_actions_router
 from app.core.config import get_settings
@@ -24,15 +33,22 @@ from app.core.dependencies import (
 )
 from app.core.exceptions import (
     AuditError,
+    AuthError,
     ClassificationError,
     DraftGenerationError,
     GraphClientError,
     InboxTriageError,
+    InvalidCredentialsError,
+    InvalidCursorError,
+    InvalidTokenError,
+    ReusedRefreshTokenError,
     RuleEngineError,
     ThreadStateError,
     TriageError,
 )
 from app.core.logging import configure_logging
+from app.core.middleware.security_headers import SecurityHeadersMiddleware
+from app.core.rate_limit import limiter
 from app.db.session import dispose_engine, get_session_factory
 from app.workers.graph_subscription_worker import (
     run_subscription_reconcile,
@@ -50,6 +66,11 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     DraftGenerationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ThreadStateError: status.HTTP_409_CONFLICT,
     AuditError: status.HTTP_500_INTERNAL_SERVER_ERROR,
+    InvalidCredentialsError: status.HTTP_401_UNAUTHORIZED,
+    InvalidTokenError: status.HTTP_401_UNAUTHORIZED,
+    ReusedRefreshTokenError: status.HTTP_401_UNAUTHORIZED,
+    AuthError: status.HTTP_401_UNAUTHORIZED,
+    InvalidCursorError: status.HTTP_400_BAD_REQUEST,
 }
 
 _scheduler: AsyncIOScheduler | None = None
@@ -148,8 +169,29 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json" if is_local else None,
     )
 
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # Middleware order: last added = outermost. CORS outermost for preflight.
+    app.add_middleware(SecurityHeadersMiddleware, settings=settings)
+    app.add_middleware(SlowAPIMiddleware)
+    if not is_local:
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=[settings.api_host, f"*.{settings.api_host}"],
+        )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[settings.frontend_origin],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
+        expose_headers=[],
+    )
+
     @app.get("/health", status_code=status.HTTP_200_OK, response_model=None)
-    async def health_check() -> JSONResponse:
+    @limiter.limit(settings.api_default_rate_limit)
+    async def health_check(request: Request) -> JSONResponse:
         redis_status = "error"
         db_status = "error"
         try:
@@ -177,6 +219,10 @@ def create_app() -> FastAPI:
             content=body,
         )
 
+    app.include_router(auth_router)
+    app.include_router(dashboard_router)
+    app.include_router(mailboxes_router)
+    app.include_router(threads_router)
     app.include_router(graph_webhook_router)
     app.include_router(slack_actions_router)
     if mount_dev_routes:
@@ -197,6 +243,8 @@ def create_app() -> FastAPI:
         status_code = EXCEPTION_STATUS_MAP.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(exc, GraphClientError):
             detail = "Upstream Microsoft Graph request failed"
+        elif isinstance(exc, AuthError):
+            detail = str(exc) or "Authentication failed"
         else:
             detail = str(exc)
         return JSONResponse(

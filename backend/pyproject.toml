@@ -29,6 +29,10 @@ dependencies = [
     "msal>=1.37,<2.0",
     "cryptography>=44,<50",
     "openai>=1.0,<3.0",
+    "argon2-cffi>=25.1.0",
+    "pyjwt[crypto]>=2.13.0",
+    "slowapi>=0.1.10",
+    "email-validator>=2.3.0",
 ]
 
 [project.optional-dependencies]
