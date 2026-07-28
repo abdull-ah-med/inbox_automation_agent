@@ -124,6 +124,7 @@ def _to_email_message_schema(
         direction=_direction_for_sender(mailbox, sender),
         to_recipients=_recipient_addresses(message.to_recipients),
         cc_recipients=_recipient_addresses(message.cc_recipients),
+        has_attachments=bool(message.has_attachments),
     )
 
 
@@ -233,6 +234,7 @@ async def _thread_context_from_db(
                 ),
                 to_recipients=list(row.to_recipients or []),
                 cc_recipients=list(row.cc_recipients or []),
+                has_attachments=bool(row.has_attachments),
             )
         )
     thread_context = ThreadContextSchema(
@@ -321,6 +323,7 @@ async def ingest_graph_message(
                 received_at=email_msg.received_at,
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
+                has_attachments=email_msg.has_attachments,
             )
 
         thread_context = ThreadContextSchema(
@@ -447,6 +450,7 @@ async def ingest_simulated_message(
             received_at=payload.received_at,
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),
+            has_attachments=payload.has_attachments,
         )
 
         email_msg = EmailMessageSchema(
@@ -461,6 +465,7 @@ async def ingest_simulated_message(
             direction=direction,
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),
+            has_attachments=payload.has_attachments,
         )
         thread_context = ThreadContextSchema(
             conversation_id=payload.conversation_id,

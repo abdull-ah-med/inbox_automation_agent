@@ -328,6 +328,76 @@ async def test_flow_a_skips_context_resolution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_flow_b_skips_graph_and_context_when_openai_unconfigured() -> None:
+    """No OPENAI_API_KEY: skip Graph auth + context search entirely, draft plain.
+
+    Cross-thread search cannot run without an embedding client, so standing up
+    a Graph client for it is wasted I/O. The email should still get triaged
+    and drafted — just without cross-thread context.
+    """
+    ingest = _ingest()
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=True,
+            context_reason="maybe prior thread",
+        )
+        state.draft_status = "PENDING"
+        return state
+
+    async def _run_draft(state: EmailTriageState, **kwargs: object) -> EmailTriageState:
+        assert kwargs.get("cross_thread_context") is None
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="Re: As discussed — need docs",
+            reply_body="Happy to help — could you clarify which packet?",
+            teaching_note="No OpenAI key configured; drafted without context search.",
+            urgency="NORMAL",
+            urgency_reason="Routine follow-up",
+        )
+        return state
+
+    with (
+        patch(
+            "app.services.pipeline_service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_run_draft),
+        ),
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ) as audit,
+        patch(_RESOLVE, new=AsyncMock()) as resolve,
+        patch(_GRAPH, new=AsyncMock()) as resolve_graph,
+        patch(_EMBED_SAFE, new=AsyncMock(return_value=None)) as embed_mock,
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=None,
+            graph_client=MagicMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.draft_status == "DRAFTED"
+    assert state.cross_thread_context is None
+    resolve_graph.assert_not_awaited()
+    resolve.assert_not_awaited()
+    embed_mock.assert_not_awaited()
+    event_types = [c.kwargs["event_type"] for c in audit.await_args_list]
+    assert "context.match" not in event_types
+    assert "context.no_match" not in event_types
+
+
+@pytest.mark.asyncio
 async def test_resolve_graph_client_awaits_auth_with_redis() -> None:
     """Regression: sync call to async get_graph_auth broke Flow B in production."""
     settings = Settings(environment="local")

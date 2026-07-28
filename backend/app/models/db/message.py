@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -35,3 +35,5 @@ class Message(Base):
         nullable=False,
         default=list,
     )
+    # Graph ``hasAttachments`` — flag only; attachment bytes are never stored.
+    has_attachments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import quote
 
 import structlog
 from redis.asyncio import Redis
 from slack_bolt.async_app import AsyncApp
 
 from app.core.config import Settings
+from app.core.outlook_links import outlook_web_link
 from app.core.redis_keys import SLACK_POSTED_TTL_SECONDS, slack_posted_key
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email_triage_state import EmailTriageState, SlackDelivery
@@ -66,14 +66,6 @@ _URGENCY_BADGE: dict[str, str] = {
 
 _HEADER_MAX_LEN = 150
 _SECTION_MAX_LEN = 2900
-
-
-def outlook_web_link(message_id: str) -> str:
-    """OWA deep link for a Graph message id (matches Graph ``message.webLink`` shape)."""
-    encoded = quote(message_id, safe="")
-    return (
-        f"https://outlook.office365.com/owa/?ItemID={encoded}&exvsurl=1&viewmodel=ReadMessageItem"
-    )
 
 
 def _truncate(text: str, max_len: int) -> str:

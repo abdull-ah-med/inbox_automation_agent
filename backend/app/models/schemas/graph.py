@@ -145,6 +145,7 @@ class SimulateIngestRequestSchema(BaseModel):
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list, max_length=50)
     cc_recipients: list[str] = Field(default_factory=list, max_length=50)
+    has_attachments: bool = False
 
 
 class IngestResultSchema(BaseModel):

@@ -1,0 +1,196 @@
+"""Unit tests for mailbox key inference and dashboard service assembly."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.core.config import Settings
+from app.core.mailbox_keys import infer_mailbox_key, resolve_mailbox_email
+from app.models.schemas.dashboard import AuditEntry, ThreadSummary
+from app.services import dashboard_service, thread_view_service
+
+
+def test_infer_mailbox_key() -> None:
+    assert infer_mailbox_key("clientrelations@example.com") == "client-relations"
+    assert infer_mailbox_key("sales@example.com") == "sales"
+    assert infer_mailbox_key("vendors@example.com") == "vendor"
+    assert infer_mailbox_key("intermediary@example.com") == "intermediary"
+    assert infer_mailbox_key("inquiries@sample-site.example.com") == "inquiries"
+    assert infer_mailbox_key("support@sample-site.example.com") == "support"
+
+
+def test_resolve_mailbox_email() -> None:
+    emails = [
+        "clientrelations@example.com",
+        "sales@example.com",
+        "vendors@example.com",
+        "intermediary@example.com",
+        "inquiries@sample-site.example.com",
+    ]
+    assert resolve_mailbox_email("sales", emails) == "sales@example.com"
+    assert resolve_mailbox_email("inquiries", emails) == "inquiries@sample-site.example.com"
+    assert resolve_mailbox_email("missing", emails) is None
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_assembles_configured_mailboxes() -> None:
+    settings = Settings(
+        environment="local",
+        target_mailboxes=(
+            "inquiries@example.com,support@example.com,"
+            "info@example.com,sampleagent@example.com"
+        ),
+        staleness_threshold_hours=24,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.dashboard_service.thread_repo.aggregate_overview",
+            AsyncMock(
+                return_value=[
+                    {
+                        "mailbox": "inquiries@example.com",
+                        "thread_count": 3,
+                        "awaiting_action_count": 1,
+                        "stale_count": 0,
+                        "urgency_breakdown": {"HIGH": 1, "NORMAL": 2, "CRITICAL": 0, "LOW": 0},
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "app.services.dashboard_service.thread_repo.list_recent_for_mailboxes",
+            AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.dashboard_service.thread_repo.list_needs_attention",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.dashboard_service.audit_repo.list_recent",
+            AsyncMock(
+                return_value=[
+                    AuditEntry(
+                        timestamp=datetime.now(UTC),
+                        event="email_received",
+                        detail="test",
+                        source="system",
+                    )
+                ]
+            ),
+        ),
+    ):
+        overview = await dashboard_service.get_overview(session, settings)
+
+    assert len(overview.mailboxes) == 4
+    inquiries = next(m for m in overview.mailboxes if m.mailbox == "inquiries")
+    assert inquiries.thread_count == 3
+    assert inquiries.email_address == "inquiries@example.com"
+    assert overview.total_threads == 3
+    assert len(overview.recent_activity) == 1
+
+
+@pytest.mark.asyncio
+async def test_thread_view_404_when_missing() -> None:
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    session = AsyncMock()
+    with patch(
+        "app.services.thread_view_service.thread_repo.get_by_id",
+        AsyncMock(return_value=None),
+    ):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc:
+            await thread_view_service.get_thread_detail(session, settings, uuid.uuid4())
+    assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_thread_view_assembles_detail() -> None:
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    thread_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-1",
+        subject="Hello",
+        state="NEW",
+        urgency="HIGH",
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sales@example.com",
+        mailbox_key="sales",
+        subject="Hello",
+        state="NEW",
+        urgency="HIGH",
+        last_message_at=now,
+        last_sender="a@b.com",
+        preview="hi",
+        staleness_hours=0,
+        message_count=1,
+        outlook_url="https://outlook.office365.com/owa/?ItemID=AAMkAG-msg-001&exvsurl=1&viewmodel=ReadMessageItem",
+    )
+    message = MessageSchema(
+        id=message_id,
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-msg-001",
+        direction="inbound",
+        sender="a@b.com",
+        body_text="hi",
+        body_preview="hi",
+        received_at=now,
+        to_recipients=["sales@example.com"],
+        cc_recipients=[],
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+    assert detail.thread.subject == "Hello"
+    assert detail.thread.outlook_url is not None
+    assert len(detail.messages) == 1
+    assert detail.messages[0].outlook_url is not None
+    assert "outlook.office365.com/owa/" in detail.messages[0].outlook_url
+    assert "ItemID=" in detail.messages[0].outlook_url
+    assert detail.classification is None
