@@ -26,6 +26,7 @@ class MessageSchema(BaseModel):
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
+    has_attachments: bool = False
 
 
 async def get_by_graph_id(
@@ -61,6 +62,7 @@ async def create_message(
     received_at: datetime,
     to_recipients: list[str] | None = None,
     cc_recipients: list[str] | None = None,
+    has_attachments: bool = False,
 ) -> MessageSchema:
     """Insert a message or return the existing row on ``graph_message_id`` conflict."""
     insert_stmt = insert(Message).values(
@@ -73,6 +75,7 @@ async def create_message(
         received_at=received_at,
         to_recipients=list(to_recipients or []),
         cc_recipients=list(cc_recipients or []),
+        has_attachments=has_attachments,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["graph_message_id"],

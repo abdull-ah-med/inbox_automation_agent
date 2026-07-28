@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -122,3 +122,47 @@ async def create_draft(
     if existing is None:
         raise RuntimeError(f"Draft insert conflicted but row missing for message_id={message_id}")
     return existing
+
+
+async def latest_teaching_notes_by_threads(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, str]:
+    """Bulk-fetch each thread's most recent non-empty teaching note.
+
+    Powers the Teaching Note preview on thread list/cards without an N+1 —
+    one query for every thread on the page, keyed by ``thread_id``.
+    """
+    if not thread_ids:
+        return {}
+    latest_id = (
+        select(Draft.thread_id, func.max(Draft.created_at).label("max_created_at"))
+        .where(Draft.thread_id.in_(thread_ids), Draft.teaching_note.is_not(None))
+        .group_by(Draft.thread_id)
+        .subquery()
+    )
+    stmt = select(Draft.thread_id, Draft.teaching_note).join(
+        latest_id,
+        (Draft.thread_id == latest_id.c.thread_id)
+        & (Draft.created_at == latest_id.c.max_created_at),
+    )
+    result = await session.execute(stmt)
+    return {row.thread_id: row.teaching_note for row in result if row.teaching_note}
+
+
+async def get_latest_by_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> DraftResponseSchema | None:
+    """Return the most recent draft for a thread, if any."""
+    stmt = (
+        select(Draft)
+        .where(Draft.thread_id == thread_id)
+        .order_by(Draft.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _to_response(row)

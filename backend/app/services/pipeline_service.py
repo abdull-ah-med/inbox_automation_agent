@@ -17,10 +17,10 @@ from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.draft import DraftSchema
-from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
+from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import draft_repo
+from app.repositories import draft_repo, thread_repo
 from app.services import (
     audit_service,
     context_service,
@@ -38,6 +38,76 @@ _OUTCOME_EVENT_TYPES = {
     "no_action_discarded": "triage.no_action_discarded",
     "action_needed": "triage.action_needed",
 }
+
+# Terminal triage outcomes that write straight to ``threads.state`` — the
+# ``action_needed`` outcome intentionally has no entry here: the thread only
+# moves to DRAFTED/REQUIRES_HUMAN once the draft step resolves further down.
+_OUTCOME_THREAD_STATE = {
+    "spam_discarded": ThreadStateEnum.SPAM.value,
+    "no_action_discarded": ThreadStateEnum.NO_ACTION.value,
+}
+
+
+async def _apply_triage_outcome_state(
+    session: AsyncSession,
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID | None,
+) -> None:
+    """Persist SPAM/NO_ACTION onto the thread so filtered views can exclude it.
+
+    Best-effort: a thread lookup miss (e.g. race with a concurrent delete)
+    must never fail the pipeline — triage/audit already succeeded.
+    """
+    if state.triage is None or thread_id is None:
+        return
+    outcome, _ = decide_triage_outcome(state.triage)
+    new_state = _OUTCOME_THREAD_STATE.get(outcome)
+    if new_state is None:
+        return
+    try:
+        await thread_repo.set_thread_outcome(session, thread_id, state=new_state)
+    except Exception:
+        logger.exception(
+            "thread_state_update_failed",
+            thread_id=str(thread_id),
+            conversation_id=state.original_email.conversation_id,
+            target_state=new_state,
+        )
+
+
+async def _apply_draft_outcome_state(
+    session: AsyncSession,
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID | None,
+) -> None:
+    """Persist DRAFTED (+ the draft's urgency) or REQUIRES_HUMAN onto the thread.
+
+    Only reached for messages that passed triage (``action_needed``) — the
+    counterpart to ``_apply_triage_outcome_state`` for the draft step.
+    """
+    if thread_id is None:
+        return
+    if state.draft_status == "DRAFTED":
+        urgency = state.draft.urgency if state.draft is not None else None
+        new_state = ThreadStateEnum.DRAFTED.value
+    elif state.draft_status == "REQUIRES_HUMAN":
+        urgency = None
+        new_state = ThreadStateEnum.REQUIRES_HUMAN.value
+    else:
+        return
+    try:
+        await thread_repo.set_thread_outcome(
+            session, thread_id, state=new_state, urgency=urgency
+        )
+    except Exception:
+        logger.exception(
+            "thread_state_update_failed",
+            thread_id=str(thread_id),
+            conversation_id=state.original_email.conversation_id,
+            target_state=new_state,
+        )
 
 # Spam / no-action skips are always terminal for dedup.
 # DRAFTED is terminal only when Slack delivery is in this set.
@@ -184,8 +254,10 @@ async def _safe_audit(
         )
 
 
-def _should_embed(state: EmailTriageState) -> bool:
-    """Embed every non-spam email that reached a triage result."""
+def _should_embed(state: EmailTriageState, openai_client: AsyncOpenAI | None) -> bool:
+    """Embed every non-spam email that reached a triage result — only when OpenAI is configured."""
+    if openai_client is None:
+        return False
     return state.triage is not None and not state.triage.is_spam
 
 
@@ -193,11 +265,12 @@ async def _embed_non_spam_safe(
     session: AsyncSession,
     *,
     state: EmailTriageState,
-    openai_client: AsyncOpenAI,
+    openai_client: AsyncOpenAI | None,
     settings: Settings,
 ) -> None:
-    if not _should_embed(state):
+    if not _should_embed(state, openai_client):
         return
+    assert openai_client is not None  # narrowed by _should_embed
     await embedding_service.embed_and_store_safe(
         session,
         email=state.original_email,
@@ -209,13 +282,14 @@ async def _embed_non_spam_safe(
 async def _embed_in_fresh_session(
     *,
     state: EmailTriageState,
-    openai_client: AsyncOpenAI,
+    openai_client: AsyncOpenAI | None,
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     """Embed in its own short transaction (safe to gather with draft work)."""
-    if not _should_embed(state):
+    if not _should_embed(state, openai_client):
         return
+    assert openai_client is not None  # narrowed by _should_embed
     async with session_factory() as session, session.begin():
         await embedding_service.embed_and_store_safe(
             session,
@@ -319,6 +393,7 @@ async def run_after_ingest(
         draft_status="PENDING",
     )
     state = await triage_service.run_triage(state, client=client, settings=settings)
+    parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     await _safe_audit(
         session,
@@ -326,6 +401,7 @@ async def run_after_ingest(
         event_type=_audit_event_type(state),
         payload=_audit_payload(state),
     )
+    await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
 
     from app.core.dependencies import openai_client_from_settings
     from app.db.session import get_session_factory
@@ -347,7 +423,10 @@ async def run_after_ingest(
         return state
 
     cross_thread: CrossThreadContextSchema | None = None
-    if needs_context:
+    if needs_context and embed_client is not None:
+        # Only stand up a Graph client when embedding is actually configured —
+        # cross-thread search cannot run without OpenAI, so there's no point
+        # authenticating Graph just to throw the result away.
         resolved_graph = await _resolve_graph_client(settings, graph_client)
         if resolved_graph is not None:
             cross_thread = await context_service.resolve_cross_thread_context(
@@ -364,7 +443,7 @@ async def run_after_ingest(
             event_type="context.match" if cross_thread is not None else "context.no_match",
             payload=_context_audit_payload(cross_thread),
         )
-        # Ensure Day-4 embed even when Flow B failed before store.
+        # Ensure Day-4 embed even when Flow B failed before store (or was skipped, unconfigured).
         if cross_thread is None:
             await _embed_non_spam_safe(
                 session,
@@ -372,6 +451,13 @@ async def run_after_ingest(
                 openai_client=embed_client,
                 settings=settings,
             )
+    elif needs_context:
+        logger.info(
+            "cross_thread_context_skipped_no_openai_key",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=email.message_id,
+        )
     else:
         await _embed_non_spam_safe(
             session,
@@ -407,6 +493,7 @@ async def run_after_ingest(
         event_type=draft_event,
         payload=_draft_audit_payload(state),
     )
+    await _apply_draft_outcome_state(session, state=state, thread_id=parsed_thread_id)
     if state.draft_status == "DRAFTED":
         # Simulate / in-session path does not post Slack.
         state.slack_delivery = "not_required"
@@ -460,7 +547,7 @@ async def _run_phased_post_ingest(
     redis: Redis,
     settings: Settings,
     client: AsyncAnthropic,
-    openai_client: AsyncOpenAI,
+    openai_client: AsyncOpenAI | None,
     ingest_result: IngestResultSchema,
     session_factory: async_sessionmaker[AsyncSession],
     graph_client: GraphClient | None = None,
@@ -483,6 +570,7 @@ async def _run_phased_post_ingest(
 
     # --- LLM: triage (no DB connection held) ---
     state = await triage_service.run_triage(state, client=client, settings=settings)
+    parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     async with session_factory() as session, session.begin():
         await _safe_audit(
@@ -491,6 +579,7 @@ async def _run_phased_post_ingest(
             event_type=_audit_event_type(state),
             payload=_audit_payload(state),
         )
+        await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
 
     if state.draft_status != "PENDING":
         await _embed_in_fresh_session(
@@ -526,8 +615,11 @@ async def _run_phased_post_ingest(
     needs_context = bool(state.triage and state.triage.needs_context)
 
     cross_thread: CrossThreadContextSchema | None = None
-    if needs_context:
+    if needs_context and openai_client is not None:
         # OpenAI + Graph run inside context_service without holding a DB txn.
+        # Only stand up a Graph client when embedding is actually configured —
+        # cross-thread search cannot run without OpenAI, so there's no point
+        # authenticating Graph just to throw the result away.
         resolved_graph = await _resolve_graph_client(settings, graph_client)
         if resolved_graph is not None:
             cross_thread = await context_service.resolve_cross_thread_context(
@@ -552,6 +644,13 @@ async def _run_phased_post_ingest(
                 settings=settings,
                 session_factory=session_factory,
             )
+    elif needs_context:
+        logger.info(
+            "cross_thread_context_skipped_no_openai_key",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=message_id,
+        )
 
     # --- Short read for draft idempotency, then release before Sonnet ---
     async with session_factory() as session:
@@ -650,6 +749,7 @@ async def _run_phased_post_ingest(
             event_type=draft_event,
             payload=_draft_audit_payload(state),
         )
+        await _apply_draft_outcome_state(session, state=state, thread_id=thread_id)
 
     # --- Slack only after draft row is committed ---
     if state.draft_status == "DRAFTED":

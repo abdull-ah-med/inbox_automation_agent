@@ -48,6 +48,11 @@ def webhook_rate_limit_key(client_ip: str) -> str:
     return f"ratelimit:webhook:{client_ip}"
 
 
+def refresh_grace_key(token_hash: str) -> str:
+    """Short-lived cache of the newly issued refresh pair after rotation."""
+    return f"auth:refresh_grace:{token_hash}"
+
+
 # Idempotent Slack review-card posts (one card per mailbox+message).
 SLACK_POSTED_TTL_SECONDS = 86_400
 

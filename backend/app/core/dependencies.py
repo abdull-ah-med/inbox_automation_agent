@@ -22,6 +22,7 @@ _graph_auth: GraphAuth | None = None
 _graph_client: GraphClient | None = None
 _anthropic_client: AsyncAnthropic | None = None
 _openai_client: AsyncOpenAI | None = None
+_openai_client_resolved: bool = False
 _slack_app: AsyncApp | None = None
 _slack_app_resolved: bool = False
 
@@ -115,29 +116,53 @@ def anthropic_client_from_settings(settings: Settings) -> AsyncAnthropic:
 
 def get_openai_client(
     settings: Annotated[Settings, Depends(get_settings)],
-) -> AsyncOpenAI:
-    """Return a process-scoped AsyncOpenAI client for embeddings.
+) -> AsyncOpenAI | None:
+    """Return a process-scoped AsyncOpenAI client for embeddings, or ``None``.
 
     Per OpenAI Python SDK: ``AsyncOpenAI(api_key=...)`` then
     ``await client.embeddings.create(...)``.
     Docs: https://platform.openai.com/docs/guides/embeddings
+
+    Embeddings are an optional enrichment (cross-thread context / tone
+    matching), never a requirement for triage or draft generation. Missing
+    ``OPENAI_API_KEY`` — or any error constructing the SDK client — must warn
+    once and return ``None`` so ingestion/triage/draft never crash. Mirrors
+    the ``get_slack_app`` unconfigured-service pattern above.
     """
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=settings.openai_api_key or None)
+    global _openai_client, _openai_client_resolved
+    if _openai_client_resolved:
+        return _openai_client
+
+    api_key = settings.openai_api_key.strip()
+    if not api_key:
+        logger.warning(
+            "openai_unconfigured",
+            hint="Set OPENAI_API_KEY — embeddings and cross-thread context skipped",
+        )
+        _openai_client = None
+        _openai_client_resolved = True
+        return None
+
+    try:
+        _openai_client = AsyncOpenAI(api_key=api_key)
+    except Exception:
+        logger.warning("openai_client_init_failed", exc_info=True)
+        _openai_client = None
+    _openai_client_resolved = True
     return _openai_client
 
 
-def openai_client_from_settings(settings: Settings) -> AsyncOpenAI:
+def openai_client_from_settings(settings: Settings) -> AsyncOpenAI | None:
     """Resolve OpenAI client outside FastAPI request DI (pipeline / workers)."""
     return get_openai_client(settings)
 
 
 async def close_openai_client() -> None:
-    global _openai_client
+    global _openai_client, _openai_client_resolved
     if _openai_client is not None:
         await _openai_client.close()
-        _openai_client = None
+    _openai_client = None
+    _openai_client_resolved = False
 
 
 def get_slack_app(
@@ -197,5 +222,5 @@ RedisDep = Annotated[Redis, Depends(get_redis)]
 GraphAuthDep = Annotated[GraphAuth, Depends(get_graph_auth)]
 GraphClientDep = Annotated[GraphClient, Depends(get_graph_client)]
 AnthropicClientDep = Annotated[AsyncAnthropic, Depends(get_anthropic_client)]
-OpenAIClientDep = Annotated[AsyncOpenAI, Depends(get_openai_client)]
+OpenAIClientDep = Annotated[AsyncOpenAI | None, Depends(get_openai_client)]
 SlackAppDep = Annotated[AsyncApp | None, Depends(get_slack_app)]
