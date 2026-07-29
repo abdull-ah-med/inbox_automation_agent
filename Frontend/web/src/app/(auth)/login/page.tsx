@@ -1,7 +1,7 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { Suspense, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuthState, useLogin } from "@/features/auth/use-auth"
-import { ApiError } from "@/lib/api-client"
+import { replaceAfterLogin } from "@/lib/auth-navigation"
+import { getErrorMessage } from "@/lib/error-messages"
 
 const schema = z.object({
   email: z.string().email("Enter a valid email"),
@@ -23,7 +24,6 @@ type FormValues = z.infer<typeof schema>
 const LoginForm = () => {
   const login = useLogin()
   const auth = useAuthState()
-  const router = useRouter()
   const searchParams = useSearchParams()
   const rawNext = searchParams.get("next") || "/dashboard"
   const destination =
@@ -40,18 +40,17 @@ const LoginForm = () => {
 
   useEffect(() => {
     if (auth.accessToken) {
-      router.replace(destination)
+      // Already signed in — leave /login so Back cannot return here.
+      replaceAfterLogin(destination)
     }
-  }, [auth.accessToken, destination, router])
+  }, [auth.accessToken, destination])
 
   const onSubmit = form.handleSubmit(async (values) => {
     try {
       await login.mutateAsync(values)
-      router.replace(destination)
+      replaceAfterLogin(destination)
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : "Unable to sign in"
-      toast.error(message)
+      toast.error(getErrorMessage(err))
     }
   })
 

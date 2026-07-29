@@ -7,7 +7,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import {
   createContext,
   useCallback,
@@ -25,6 +25,7 @@ import {
   subscribeAuth,
 } from "@/features/auth/auth-store";
 import { api } from "@/lib/api-client";
+import { replaceToLogin } from "@/lib/auth-navigation";
 
 const AuthBootstrapContext = createContext<{ bootstrapped: boolean }>({
   bootstrapped: false,
@@ -135,13 +136,13 @@ export function useLogin() {
 }
 
 export function useLogout() {
-  const router = useRouter();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => api.logout(),
     onSettled: () => {
       queryClient.clear();
-      router.replace("/login");
+      // Hard replace so Back / bfcache cannot restore the signed-in screen.
+      replaceToLogin();
     },
   });
 }

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query"
 import { useParams } from "next/navigation"
 
 import { Breadcrumbs } from "@/components/breadcrumbs"
+import { ErrorPage } from "@/components/error-page"
 import { PageTransition } from "@/components/motion"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
@@ -16,7 +17,7 @@ export default function ThreadDetailPage() {
   const params = useParams<{ thread_id: string }>()
   const threadId = params.thread_id
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => api.threads.detail(threadId),
   })
@@ -41,16 +42,19 @@ export default function ThreadDetailPage() {
 
   if (isError || !data) {
     return (
-      <div>
+      <div className="space-y-4">
         <Breadcrumbs
           items={[
             { label: "Overview", href: "/dashboard" },
             { label: "Thread" },
           ]}
         />
-        <p className="text-sm text-red-600">
-          {error instanceof Error ? error.message : "Failed to load thread"}
-        </p>
+        <ErrorPage
+          error={error}
+          onRetry={() => {
+            void refetch()
+          }}
+        />
       </div>
     )
   }

@@ -1,45 +1,69 @@
-"use client";
+"use client"
 
-import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect } from "react"
 
-import { AppHeader } from "@/components/app-header";
-import { Skeleton } from "@/components/ui/skeleton";
-import { useAuthBootstrap, useAuthState } from "@/features/auth/use-auth";
+import { AppHeader } from "@/components/app-header"
+import { Skeleton } from "@/components/ui/skeleton"
+import { clearAuthSession } from "@/features/auth/auth-store"
+import { useAuthBootstrap, useAuthState } from "@/features/auth/use-auth"
+import {
+  hasLogoutGuard,
+  replaceToLogin,
+} from "@/lib/auth-navigation"
 
 export default function AppShellLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: React.ReactNode
 }) {
-  const { bootstrapped } = useAuthBootstrap();
-  const auth = useAuthState();
-  const router = useRouter();
+  const { bootstrapped } = useAuthBootstrap()
+  const auth = useAuthState()
 
   useEffect(() => {
-    if (bootstrapped && !auth.accessToken) {
-      const next = window.location.pathname + window.location.search;
-      const login =
-        next && next !== "/login"
-          ? `/login?next=${encodeURIComponent(next)}`
-          : "/login";
-      router.replace(login);
+    const sendToLogin = () => {
+      const next = window.location.pathname + window.location.search
+      replaceToLogin(next)
     }
-  }, [bootstrapped, auth.accessToken, router]);
+
+    const enforceSignedOut = () => {
+      // After logout (or session drop), block bfcache restore of this shell.
+      if (hasLogoutGuard()) {
+        clearAuthSession()
+        sendToLogin()
+        return true
+      }
+      if (bootstrapped && !auth.accessToken) {
+        sendToLogin()
+        return true
+      }
+      return false
+    }
+
+    enforceSignedOut()
+
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        enforceSignedOut()
+      }
+    }
+
+    window.addEventListener("pageshow", handlePageShow)
+    return () => window.removeEventListener("pageshow", handlePageShow)
+  }, [bootstrapped, auth.accessToken])
 
   if (!bootstrapped) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <div className="mx-auto max-w-7xl space-y-4 p-6">
+        <div className="mx-auto max-w-8xl space-y-4 p-15">
           <Skeleton className="h-16 w-full rounded-lg" />
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>
       </div>
-    );
+    )
   }
 
   if (!auth.accessToken) {
-    return null;
+    return null
   }
 
   return (
@@ -51,9 +75,9 @@ export default function AppShellLayout({
         Skip to main content
       </a>
       <AppHeader />
-      <main id="main-content" className="mx-auto max-w-7xl p-6">
+      <main id="main-content" className="mx-auto max-w-8xl p-15">
         {children}
       </main>
     </div>
-  );
+  )
 }
