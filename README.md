@@ -32,6 +32,43 @@ frontend/demo/    Static UI demo (design reference only)
 - Anthropic API key
 - Slack app (optional / legacy review path: bot token + signing secret)
 
+## Docker
+
+### Local
+
+Runs Postgres (pgvector), Redis, and the FastAPI API (`Dockerfile` target `local`, hot reload). Frontend stays on the host.
+
+```bash
+# Ensure backend/.env exists (from .env.example) with Graph, Anthropic, JWT, etc.
+# Compose overrides DATABASE_URL and REDIS_URL to the container network.
+docker compose up --build
+```
+
+- API: http://localhost:8000 — health: `GET /health`
+- Postgres: `localhost:5432` (`postgres` / `postgres`, db `inbox_triage`)
+- Redis: `localhost:6379`
+
+Stop any host Postgres/Redis already bound to those ports first.
+
+```bash
+docker compose exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'
+```
+
+Optional host frontend: `cd frontend/web && npm run dev` (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`).
+
+### Production (EC2)
+
+Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay. Secrets go in `backend/.env.prod` (gitignored). Outside `ENVIRONMENT=local` the app requires TLS Redis (`rediss://` + password), non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, `JWT_SECRET` (≥64 chars), Graph/Slack/MSAL keys, etc.
+
+```bash
+cp backend/.env.example backend/.env.prod   # fill production values
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+
+- API published on host `:8000`; Postgres/Redis stay on the internal Compose network (not published)
+- Migrations run on container start via the entrypoint
+- Seed: `docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'`
+
 ## Backend setup
 
 ```bash
