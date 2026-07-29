@@ -8,6 +8,7 @@ import {
   getAccessToken,
   setAuthSession,
 } from "@/features/auth/auth-store";
+import { messageForStatus } from "@/lib/error-messages";
 import type {
   DashboardOverview,
   MailboxOverview,
@@ -138,14 +139,8 @@ async function apiFetch<T>(
     } catch {
       body = undefined;
     }
-    const detail =
-      typeof body === "object" &&
-      body &&
-      "detail" in body &&
-      typeof (body as { detail: unknown }).detail === "string"
-        ? (body as { detail: string }).detail
-        : `Request failed (${resp.status})`;
-    throw new ApiError(detail, resp.status, body);
+    // Always map status → friendly copy (never surface bare codes like "429").
+    throw new ApiError(messageForStatus(resp.status), resp.status, body);
   }
 
   if (resp.status === 204) {

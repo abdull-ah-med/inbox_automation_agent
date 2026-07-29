@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query"
 
 import { AttentionQueue } from "@/components/attention-queue"
-import { Breadcrumbs } from "@/components/breadcrumbs"
+import { ErrorPage } from "@/components/error-page"
 import { MailboxSummaryCard } from "@/components/mailbox-summary-card"
 import { PageTransition } from "@/components/motion"
 import { UrgencyDistribution } from "@/components/urgency-distribution"
@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 
 export default function DashboardPage() {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["dashboard", "overview"],
     queryFn: () => api.dashboard.overview(),
   })
@@ -31,9 +31,12 @@ export default function DashboardPage() {
 
   if (isError || !data) {
     return (
-      <p className="text-sm text-red-600">
-        {error instanceof Error ? error.message : "Failed to load dashboard"}
-      </p>
+      <ErrorPage
+        error={error}
+        onRetry={() => {
+          void refetch()
+        }}
+      />
     )
   }
 
@@ -44,7 +47,6 @@ export default function DashboardPage() {
 
   return (
     <PageTransition>
-      <Breadcrumbs items={[{ label: "Overview" }]} />
       <div className="mb-6">
         <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
           Overview
@@ -77,7 +79,7 @@ export default function DashboardPage() {
           </p>
           <AttentionQueue threads={data.needs_attention ?? []} />
         </section>
-        <section className="rounded-lg border border-gray-200 bg-white p-5 lg:col-span-2 dark:border-gray-700 dark:bg-gray-900">
+        <section className="h-fit self-start rounded-lg border border-gray-200 bg-white p-5 lg:col-span-2 dark:border-gray-700 dark:bg-gray-900">
           <h3 className="mb-4 text-sm font-semibold text-gray-700 dark:text-gray-300">
             Urgency by inbox
           </h3>

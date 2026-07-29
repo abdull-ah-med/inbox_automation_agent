@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { EmptyState } from "@/components/empty-state"
+import { ErrorPage } from "@/components/error-page"
 import { PageTransition } from "@/components/motion"
 import { ThreadCard } from "@/components/thread-card"
 import { Button } from "@/components/ui/button"
@@ -209,13 +210,11 @@ export default function MailboxPage() {
           ))}
         </div>
       ) : query.isError ? (
-        <EmptyState
-          title="Couldn’t load threads"
-          description={
-            query.error instanceof Error
-              ? query.error.message
-              : "Something went wrong loading this mailbox."
-          }
+        <ErrorPage
+          error={query.error}
+          onRetry={() => {
+            void query.refetch()
+          }}
         />
       ) : threads.length === 0 ? (
         <EmptyState
