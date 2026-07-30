@@ -69,9 +69,7 @@ async def simulate_ingest(
                 post_slack=False,
             )
         except Exception:
-            await ingestion_service.release_ingest_dedup(
-                redis, payload.mailbox, payload.message_id
-            )
+            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
             raise
         finally:
             await ingestion_service.release_triage_lock(
@@ -79,9 +77,7 @@ async def simulate_ingest(
             )
 
         if state.triage is None:
-            await ingestion_service.release_ingest_dedup(
-                redis, payload.mailbox, payload.message_id
-            )
+            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
             return result.model_copy(
                 update={
                     "triage": None,
@@ -92,9 +88,7 @@ async def simulate_ingest(
             )
 
         if not pipeline_service.pipeline_ready_for_dedup(state):
-            await ingestion_service.release_ingest_dedup(
-                redis, payload.mailbox, payload.message_id
-            )
+            await ingestion_service.release_ingest_dedup(redis, payload.mailbox, payload.message_id)
             return result.model_copy(
                 update={
                     "triage": state.triage,
@@ -104,9 +98,7 @@ async def simulate_ingest(
                 }
             )
 
-        await ingestion_service.complete_ingest_dedup(
-            redis, payload.mailbox, payload.message_id
-        )
+        await ingestion_service.complete_ingest_dedup(redis, payload.mailbox, payload.message_id)
 
         return result.model_copy(
             update={

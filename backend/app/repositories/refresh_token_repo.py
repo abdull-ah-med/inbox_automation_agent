@@ -73,11 +73,7 @@ async def get_by_hash_for_update(
     token_hash: str,
 ) -> RefreshTokenRead | None:
     """Load a refresh row with ``SELECT … FOR UPDATE`` to serialize rotation."""
-    stmt = (
-        select(RefreshToken)
-        .where(RefreshToken.token_hash == token_hash)
-        .with_for_update()
-    )
+    stmt = select(RefreshToken).where(RefreshToken.token_hash == token_hash).with_for_update()
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:

@@ -224,9 +224,7 @@ async def approve_draft(
     if existing is None:
         return None
 
-    already_approved = (
-        existing.approved_at is not None and existing.feedback_action == "approve"
-    )
+    already_approved = existing.approved_at is not None and existing.feedback_action == "approve"
     current_body = existing.edited_body or existing.reply_body
     if already_approved and (edited_body is None or edited_body == current_body):
         return existing

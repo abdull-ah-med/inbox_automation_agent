@@ -167,12 +167,7 @@ async def list_by_conversation(
     conditions = [AuditEvent.conversation_id == conversation_id]
     if mailbox is not None:
         conditions.append(AuditEvent.mailbox == mailbox)
-    stmt = (
-        select(AuditEvent)
-        .where(*conditions)
-        .order_by(AuditEvent.created_at.asc())
-        .limit(limit)
-    )
+    stmt = select(AuditEvent).where(*conditions).order_by(AuditEvent.created_at.asc()).limit(limit)
     result = await session.execute(stmt)
     return [_to_entry(row) for row in result.scalars().all()]
 

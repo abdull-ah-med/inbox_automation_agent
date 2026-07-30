@@ -181,9 +181,7 @@ async def poll_mailbox(
                         advance_cursor = False
                         continue
                 finally:
-                    await ingestion_service.release_triage_lock(
-                        redis, mailbox, message.id, claimed
-                    )
+                    await ingestion_service.release_triage_lock(redis, mailbox, message.id, claimed)
             elif result.status == "in_flight" or result.status == "skipped":
                 advance_cursor = False
                 continue

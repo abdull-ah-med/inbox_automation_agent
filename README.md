@@ -58,16 +58,60 @@ Optional host frontend: `cd frontend/web && npm run dev` (`NEXT_PUBLIC_API_BASE_
 
 ### Production (EC2)
 
-Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay. Secrets go in `backend/.env.prod` (gitignored). Outside `ENVIRONMENT=local` the app requires TLS Redis (`rediss://` + password), non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, `JWT_SECRET` (≥64 chars), Graph/Slack/MSAL keys, etc.
+Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay, which also builds and runs the Next.js frontend. Both backend and frontend bind to `127.0.0.1` only — a host nginx (with a real TLS cert) is the sole public entry point and reverse-proxies to both. Outside `ENVIRONMENT=local`, `Settings.validate_production_security()` refuses to start the app unless TLS Redis (`rediss://` + password), a non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, a `JWT_SECRET` (≥64 chars), and the Anthropic/Graph/Slack/MSAL credentials are all set — see `backend/.env.example` for the full list.
 
-```bash
-cp backend/.env.example backend/.env.prod   # fill production values
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
-```
+0. **Provision the EC2 instance** (one-time):
 
-- API published on host `:8000`; Postgres/Redis stay on the internal Compose network (not published)
-- Migrations run on container start via the entrypoint
-- Seed: `docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'`
+   - Ubuntu 22.04/24.04 LTS, `t3.small` or larger (Postgres + Redis + backend + frontend on one box)
+   - Allocate an **Elastic IP** and associate it before doing anything else — the `sslip.io` hostname below encodes this IP, so it must not change once you issue a TLS cert for it
+   - Security group: inbound `22` (SSH, restrict to your admin CIDR), `80` and `443` (from anywhere, needed for HTTP→HTTPS redirect and the certbot challenge). Nothing else needs to be open — backend (`8000`) and frontend (`3000`) only bind to `127.0.0.1`, never the instance's public interface
+   - Install Docker Engine + Compose plugin ([official install script](https://docs.docker.com/engine/install/ubuntu/)), then `sudo systemctl enable --now docker` so the stack (all services run `restart: unless-stopped`) comes back up automatically after an instance stop/reboot
+   - Install nginx and certbot: `sudo apt install -y nginx certbot python3-certbot-nginx`
+   - Clone this repo onto the instance
+
+1. **Generate the Redis TLS cert + password** (once):
+
+   ```bash
+   ./deploy/gen-redis-tls.sh
+   ```
+
+   This prints a `REDIS_PASSWORD` — add it to a repo-root `.env` (`REDIS_PASSWORD=...`, used by `docker-compose.prod.yml` for the Redis container). Also add a `POSTGRES_PASSWORD=...` (any strong random value, e.g. `openssl rand -hex 24`) to the same repo-root `.env` — it sets the Postgres container's password.
+
+2. **Fill in secrets**:
+
+   ```bash
+   cp backend/.env.example backend/.env.prod   # fill production values
+   ```
+
+   `backend/.env.prod` is the **only** source of `DATABASE_URL`/`REDIS_URL`/`ENVIRONMENT`/`FRONTEND_ORIGIN`/`COOKIE_SECURE` for the production container — set:
+
+   - `DATABASE_URL=postgresql+asyncpg://postgres:<POSTGRES_PASSWORD from step 1>@postgres:5432/inbox_triage`
+   - `REDIS_URL=rediss://:<REDIS_PASSWORD from step 1>@redis:6379/0?ssl_cert_reqs=none`
+   - `TRUST_X_FORWARDED_FOR=true` — nginx sits in front and rewrites `X-Forwarded-For`; leaving this `false` makes rate limiting key on nginx's own IP for every client instead of per-user
+
+   Also set `NEXT_PUBLIC_API_BASE_URL` (the public `https://` API URL) in the repo-root `.env` — it's passed as a frontend build arg.
+
+3. **Bring up the stack**:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+   ```
+
+   - Postgres/Redis stay on the internal Compose network (not published); backend/frontend publish to `127.0.0.1` only
+   - Migrations run on container start via the entrypoint (crashes the container if a migration fails, rather than starting on a stale schema)
+   - Seed the first user: `docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'`
+
+4. **Set up nginx + TLS** on the host:
+
+   ```bash
+   sed "s/__HOST__/your.sslip.io.hostname/g" deploy/nginx.conf.template | sudo tee /etc/nginx/sites-available/inbox-triage
+   sudo ln -s /etc/nginx/sites-available/inbox-triage /etc/nginx/sites-enabled/
+   sudo certbot --nginx -d your.sslip.io.hostname
+   ```
+
+   `certbot` rewrites the config in place to add the HTTPS server block and HTTP→HTTPS redirect. It also installs a renewal timer — confirm with `sudo certbot renew --dry-run`.
+
+**Backups**: Postgres data lives in a named Docker volume on the instance's root EBS volume — there is no automated off-instance backup. At minimum, schedule a periodic `pg_dump` to S3 (or enable [AWS Backup](https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html) on the root EBS volume) before relying on this in production; losing the instance currently means losing triage history and drafts.
 
 ## Backend setup
 

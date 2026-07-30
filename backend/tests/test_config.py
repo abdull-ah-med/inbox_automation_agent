@@ -113,6 +113,10 @@ def test_mailbox_allowed_empty_list_production_denies() -> None:
 def test_validate_production_security_requires_hardening() -> None:
     settings = Settings(
         environment="production",
+        anthropic_api_key="",
+        graph_client_id="",
+        graph_client_secret="",
+        graph_tenant_id="",
         target_mailboxes="",
         graph_webhook_client_state="short",
         redis_url="redis://localhost:6379/0",
@@ -123,6 +127,10 @@ def test_validate_production_security_requires_hardening() -> None:
         slack_review_channel_id="",
     )
     errors = settings.validate_production_security()
+    assert any("ANTHROPIC_API_KEY" in e for e in errors)
+    assert any("GRAPH_CLIENT_ID" in e for e in errors)
+    assert any("GRAPH_CLIENT_SECRET" in e for e in errors)
+    assert any("GRAPH_TENANT_ID" in e for e in errors)
     assert any("TARGET_MAILBOXES" in e for e in errors)
     assert any("GRAPH_WEBHOOK_CLIENT_STATE" in e for e in errors)
     assert any("REDIS_URL" in e for e in errors)
@@ -136,6 +144,10 @@ def test_validate_production_security_requires_hardening() -> None:
 def test_validate_production_security_passes_when_hardened() -> None:
     settings = Settings(
         environment="production",
+        anthropic_api_key="sk-ant-prod-key",
+        graph_client_id="00000000-0000-0000-0000-000000000000",
+        graph_client_secret="graph-secret-prod",
+        graph_tenant_id="11111111-1111-1111-1111-111111111111",
         target_mailboxes="user@example.com",
         graph_webhook_client_state="x" * 32,
         redis_url="rediss://:secret@redis.example:6380/0",
@@ -145,5 +157,8 @@ def test_validate_production_security_passes_when_hardened() -> None:
         slack_bot_token="xoxb-prod-token",
         slack_signing_secret="signing-secret-prod",
         slack_review_channel_id="C0123456789",
+        jwt_secret="x" * 64,
+        cookie_secure=True,
+        frontend_origin="https://app.example.com",
     )
     assert settings.validate_production_security() == []

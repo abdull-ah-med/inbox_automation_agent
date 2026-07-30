@@ -65,6 +65,4 @@ def validate_password_strength(password: str) -> None:
     if any(not c.isalnum() for c in password):
         classes += 1
     if classes < 3:
-        raise ValueError(
-            "Password must include at least 3 of: lowercase, uppercase, digit, symbol"
-        )
+        raise ValueError("Password must include at least 3 of: lowercase, uppercase, digit, symbol")

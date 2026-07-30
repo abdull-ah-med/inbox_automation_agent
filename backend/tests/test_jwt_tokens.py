@@ -85,7 +85,9 @@ def test_tampered_token_rejected(auth_settings: Settings) -> None:
     token, _ = create_access_token(user_id, auth_settings)
     parts = token.split(".")
     # Flip a character in the payload segment.
-    mutated = parts[0] + "." + parts[1][:-1] + ("A" if parts[1][-1] != "A" else "B") + "." + parts[2]
+    mutated = (
+        parts[0] + "." + parts[1][:-1] + ("A" if parts[1][-1] != "A" else "B") + "." + parts[2]
+    )
     with pytest.raises(jwt.PyJWTError):
         decode_access_token(mutated, auth_settings)
 

@@ -140,4 +140,6 @@ async def test_search_similar_applies_threshold_in_sql_and_excludes_conversation
     compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
     assert "email_embeddings" in compiled.lower() or "EmailEmbedding" in repr(stmt)
     # Distance threshold must be in the WHERE clause (not post-filtered in Python).
-    assert "cosine_distance" in compiled.lower() or "<=>" in compiled or "distance" in compiled.lower()
+    assert (
+        "cosine_distance" in compiled.lower() or "<=>" in compiled or "distance" in compiled.lower()
+    )

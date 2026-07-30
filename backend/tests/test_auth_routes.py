@@ -182,9 +182,7 @@ async def test_cors_preflight(app, local_settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cors_preflight_allows_skills_put_delete(
-    app, local_settings: Settings
-) -> None:
+async def test_cors_preflight_allows_skills_put_delete(app, local_settings: Settings) -> None:
     """Skills mutations need PUT/DELETE in CORS allow_methods for browser clients."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
