@@ -170,9 +170,7 @@ async def test_simulate_ingest_happy_path_includes_triage(
     triage_mock.assert_awaited_once()
     assert triage_mock.await_args.kwargs["post_slack"] is False
     claim_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1")
-    release_lock_mock.assert_awaited_once_with(
-        redis, "user@example.com", "sim-1", "lock-token"
-    )
+    release_lock_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1", "lock-token")
     complete_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1")
 
 
@@ -265,9 +263,7 @@ async def test_simulate_ingest_releases_dedup_when_triage_fails(
     assert response.status_code == 500
     complete_mock.assert_not_awaited()
     release_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1")
-    release_lock_mock.assert_awaited_once_with(
-        redis, "user@example.com", "sim-1", "lock-token"
-    )
+    release_lock_mock.assert_awaited_once_with(redis, "user@example.com", "sim-1", "lock-token")
 
 
 @pytest.mark.asyncio

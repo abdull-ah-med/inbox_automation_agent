@@ -149,9 +149,7 @@ async def test_regenerate_creates_new_draft() -> None:
 
     assert result.id == persisted.id
     assert gen_mock.await_args.kwargs["instruction"] == "just acknowledge, no action items"
-    assert gen_mock.await_args.kwargs["tone_references"] == [
-        "Thanks — sending the packet now."
-    ]
+    assert gen_mock.await_args.kwargs["tone_references"] == ["Thanks — sending the packet now."]
     create_mock.assert_awaited_once()
     assert audit_mock.await_args.kwargs["event_type"] == "draft.regenerated"
 

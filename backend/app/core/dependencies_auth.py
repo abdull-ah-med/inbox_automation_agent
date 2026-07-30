@@ -55,6 +55,10 @@ async def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Close the read txn this lookup autobegan so route handlers can open
+    # their own explicit `session.begin()` without hitting "already begun".
+    if session.in_transaction():
+        await session.commit()
     return UserMe.model_validate(user)
 
 

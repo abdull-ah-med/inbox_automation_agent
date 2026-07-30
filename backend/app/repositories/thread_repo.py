@@ -352,9 +352,7 @@ async def list_recent_for_mailboxes(
     result = await session.execute(stmt)
     rows = result.all()
 
-    buckets: dict[str, list[ThreadSummary]] = {
-        email.lower(): [] for email in mailbox_emails
-    }
+    buckets: dict[str, list[ThreadSummary]] = {email.lower(): [] for email in mailbox_emails}
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
     pending: list[tuple[str, uuid.UUID, str]] = []
@@ -532,14 +530,11 @@ async def aggregate_overview(
             func.count(case((Thread.state.in_(_AWAITING_STATES), 1))).label(
                 "awaiting_action_count"
             ),
-            func.count(case((Thread.state.in_(_FILTERED_STATES), 1))).label(
-                "filtered_count"
-            ),
+            func.count(case((Thread.state.in_(_FILTERED_STATES), 1))).label("filtered_count"),
             func.count(
                 case(
                     (
-                        (Thread.last_message_at < cutoff)
-                        & (Thread.state.in_(_AWAITING_STATES)),
+                        (Thread.last_message_at < cutoff) & (Thread.state.in_(_AWAITING_STATES)),
                         1,
                     )
                 )

@@ -124,9 +124,7 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
         patch(
             "app.services.pipeline_service.draft_repo.create_draft",
             new=AsyncMock(
-                return_value=MagicMock(
-                    model_dump=lambda **_: generated.draft.model_dump()
-                )
+                return_value=MagicMock(model_dump=lambda **_: generated.draft.model_dump())
             ),
         ),
         patch(

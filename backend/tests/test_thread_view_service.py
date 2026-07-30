@@ -41,8 +41,7 @@ async def test_dashboard_overview_assembles_configured_mailboxes() -> None:
     settings = Settings(
         environment="local",
         target_mailboxes=(
-            "inquiries@example.com,support@example.com,"
-            "info@example.com,sampleagent@example.com"
+            "inquiries@example.com,support@example.com,info@example.com,sampleagent@example.com"
         ),
         staleness_threshold_hours=24,
     )

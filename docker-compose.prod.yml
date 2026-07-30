@@ -1,18 +1,49 @@
 # Production overlay (EC2 or similar).
+#   Run ./deploy/gen-redis-tls.sh once first (see its output for REDIS_PASSWORD).
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 #
 # Put secrets in backend/.env.prod (gitignored). Outside ENVIRONMENT=local the
 # app requires TLS Redis (rediss:// + password), non-localhost DATABASE_URL,
 # HTTPS FRONTEND_ORIGIN, JWT_SECRET (>=64), Graph/Slack/MSAL keys, etc.
+#
+# Backend and frontend are bound to 127.0.0.1 only — a host nginx (with a
+# real TLS cert) is the public entry point and reverse-proxies to both.
+#
+# backend/.env.prod is the sole source of DATABASE_URL/REDIS_URL/ENVIRONMENT/
+# FRONTEND_ORIGIN/COOKIE_SECURE here (the base file's `environment:` block,
+# meant only for local dev, is reset below) — point DATABASE_URL/REDIS_URL at
+# the `postgres`/`redis` service names with the passwords set here via
+# POSTGRES_PASSWORD/REDIS_PASSWORD (repo-root .env).
 
 services:
   postgres:
     restart: unless-stopped
     ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
   redis:
     restart: unless-stopped
     ports: !reset []
+    volumes:
+      - /opt/inbox-triage-redis-tls:/tls:ro
+    command: >
+      redis-server
+      --port 0
+      --tls-port 6379
+      --tls-cert-file /tls/redis.crt
+      --tls-key-file /tls/redis.key
+      --tls-ca-cert-file /tls/ca.crt
+      --tls-auth-clients no
+      --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test:
+        [
+          "CMD", "redis-cli",
+          "--tls", "--cert", "/tls/redis.crt", "--key", "/tls/redis.key", "--cacert", "/tls/ca.crt",
+          "-a", "${REDIS_PASSWORD}", "--no-auth-warning",
+          "ping",
+        ]
 
   backend:
     build:
@@ -22,6 +53,17 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env.prod
+    environment: !reset {}
     volumes: !reset []
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      context: ./Frontend/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"

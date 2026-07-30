@@ -45,9 +45,7 @@ def upgrade() -> None:
                 postgresql_concurrently=True,
             )
         # Re-inspect after possible drop (autocommit already applied).
-        indexes = {
-            i["name"] for i in sa.inspect(bind).get_indexes("email_embeddings")
-        }
+        indexes = {i["name"] for i in sa.inspect(bind).get_indexes("email_embeddings")}
         if _UNIQUE_INDEX not in indexes:
             op.create_index(
                 _UNIQUE_INDEX,
@@ -70,9 +68,7 @@ def downgrade() -> None:
                 table_name="email_embeddings",
                 postgresql_concurrently=True,
             )
-        indexes = {
-            i["name"] for i in sa.inspect(bind).get_indexes("email_embeddings")
-        }
+        indexes = {i["name"] for i in sa.inspect(bind).get_indexes("email_embeddings")}
         if _OLD_INDEX not in indexes:
             op.create_index(
                 _OLD_INDEX,

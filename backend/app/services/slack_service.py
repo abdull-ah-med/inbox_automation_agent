@@ -57,6 +57,7 @@ class SlackPostResult:
     def ok_for_dedup(self) -> bool:
         return self.status in {"posted", "already_posted", "skipped_unconfigured"}
 
+
 _URGENCY_BADGE: dict[str, str] = {
     "CRITICAL": "🔴 CRITICAL",
     "HIGH": "🟠 HIGH",

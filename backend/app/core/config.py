@@ -160,6 +160,17 @@ class Settings(BaseSettings):
         if self.environment == "local":
             return []
         errors: list[str] = []
+        if not self.anthropic_api_key.strip():
+            errors.append(
+                "ANTHROPIC_API_KEY must be set when ENVIRONMENT is not local "
+                "(triage and draft generation cannot run without it)"
+            )
+        if not self.graph_client_id.strip():
+            errors.append("GRAPH_CLIENT_ID must be set when ENVIRONMENT is not local")
+        if not self.graph_client_secret.strip():
+            errors.append("GRAPH_CLIENT_SECRET must be set when ENVIRONMENT is not local")
+        if not self.graph_tenant_id.strip():
+            errors.append("GRAPH_TENANT_ID must be set when ENVIRONMENT is not local")
         if not self.mailbox_list:
             errors.append("TARGET_MAILBOXES must be set when ENVIRONMENT is not local")
         if not self.graph_webhook_client_state.strip():
