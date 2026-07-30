@@ -11,7 +11,11 @@ import {
 import { messageForStatus } from "@/lib/error-messages";
 import type {
   DashboardOverview,
+  DraftView,
   MailboxOverview,
+  SkillCreate,
+  SkillResponse,
+  SkillUpdate,
   ThreadDetail,
   ThreadList,
   TokenResponse,
@@ -212,6 +216,59 @@ export const api = {
   threads: {
     detail(id: string) {
       return apiFetch<ThreadDetail>(`/api/threads/${id}`);
+    },
+  },
+
+  drafts: {
+    approve(id: string, body?: { edited_body?: string }) {
+      return apiFetch<DraftView>(`/api/drafts/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      });
+    },
+    reject(id: string, body: { feedback_note: string }) {
+      return apiFetch<DraftView>(`/api/drafts/${id}/reject`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    markWrong(id: string, body: { feedback_note: string }) {
+      return apiFetch<DraftView>(`/api/drafts/${id}/wrong`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    regenerate(threadId: string, body: { instruction: string }) {
+      return apiFetch<DraftView>(
+        `/api/threads/${threadId}/regenerate-draft`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+    },
+  },
+
+  skills: {
+    list() {
+      return apiFetch<SkillResponse[]>("/api/skills");
+    },
+    create(body: SkillCreate) {
+      return apiFetch<SkillResponse>("/api/skills", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
+    update(id: string, body: SkillUpdate) {
+      return apiFetch<SkillResponse>(`/api/skills/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      });
+    },
+    delete(id: string) {
+      return apiFetch<void>(`/api/skills/${id}`, {
+        method: "DELETE",
+      });
     },
   },
 };

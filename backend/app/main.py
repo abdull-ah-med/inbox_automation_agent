@@ -18,7 +18,9 @@ from app.api.debug.graph_check import router as debug_graph_check_router
 from app.api.simulate.ingest import router as simulate_ingest_router
 from app.api.simulate.send_confirm import router as simulate_send_confirm_router
 from app.api.web.dashboard import router as dashboard_router
+from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
+from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
 from app.api.webhooks.graph import router as graph_webhook_router
 from app.api.webhooks.slack_actions import router as slack_actions_router
@@ -36,6 +38,7 @@ from app.core.exceptions import (
     AuthError,
     ClassificationError,
     DraftGenerationError,
+    DraftNotFoundError,
     GraphClientError,
     InboxTriageError,
     InvalidCredentialsError,
@@ -43,6 +46,10 @@ from app.core.exceptions import (
     InvalidTokenError,
     ReusedRefreshTokenError,
     RuleEngineError,
+    SkillBudgetExceededError,
+    SkillNameConflictError,
+    SkillNotFoundError,
+    ThreadNotFoundError,
     ThreadStateError,
     TriageError,
 )
@@ -64,6 +71,11 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     RuleEngineError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     GraphClientError: status.HTTP_502_BAD_GATEWAY,
     DraftGenerationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    DraftNotFoundError: status.HTTP_404_NOT_FOUND,
+    ThreadNotFoundError: status.HTTP_404_NOT_FOUND,
+    SkillNotFoundError: status.HTTP_404_NOT_FOUND,
+    SkillNameConflictError: status.HTTP_409_CONFLICT,
+    SkillBudgetExceededError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ThreadStateError: status.HTTP_409_CONFLICT,
     AuditError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     InvalidCredentialsError: status.HTTP_401_UNAUTHORIZED,
@@ -184,7 +196,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.frontend_origin],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
         expose_headers=[],
     )
@@ -223,6 +235,8 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(mailboxes_router)
     app.include_router(threads_router)
+    app.include_router(drafts_router)
+    app.include_router(skills_router)
     app.include_router(graph_webhook_router)
     app.include_router(slack_actions_router)
     if mount_dev_routes:

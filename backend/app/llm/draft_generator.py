@@ -71,6 +71,8 @@ def _build_user_content(
     *,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    skills: list[str] | None = None,
+    instruction: str | None = None,
 ) -> str:
     thread_lines = [_format_message_line(msg) for msg in thread_context.messages]
     thread_block = "\n".join(thread_lines) if thread_lines else "(no prior messages)"
@@ -89,6 +91,18 @@ def _build_user_content(
     else:
         tone_block = "(none)"
 
+    if skills:
+        skill_lines = [f"- {skill.strip()}" for skill in skills if skill.strip()]
+        skills_block = "\n".join(skill_lines) if skill_lines else "(none)"
+    else:
+        skills_block = "(none)"
+
+    instruction_block = ""
+    if instruction and instruction.strip():
+        instruction_block = (
+            f"\nReviewer instruction (override the default approach):\n{instruction.strip()}\n"
+        )
+
     return (
         f"Mailbox: {email.mailbox}\n"
         f"Message ID: {email.message_id}\n"
@@ -99,6 +113,7 @@ def _build_user_content(
         f"CC: {cc_list}\n"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
+        f"Standing instructions (skills):\n{skills_block}\n\n"
         f"Body:\n{email.body_text}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n\n"
@@ -111,6 +126,7 @@ def _build_user_content(
         f"- context_reason: {context_reason}\n\n"
         f"Cross-thread context:\n{cross_block}\n\n"
         f"Tone references (similar past replies):\n{tone_block}\n"
+        f"{instruction_block}"
     )
 
 
@@ -161,6 +177,8 @@ async def generate_draft(
     settings: Settings,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    skills: list[str] | None = None,
+    instruction: str | None = None,
 ) -> DraftCallResult:
     """Call Sonnet once (retry once on parse/API failure) and return a structured draft."""
     if not settings.anthropic_api_key.strip():
@@ -175,6 +193,8 @@ async def generate_draft(
         triage,
         cross_thread_context=_scrub_cross_thread(cross_thread_context),
         tone_references=tone_references,
+        skills=skills,
+        instruction=instruction,
     )
     started = time.perf_counter()
     last_error: Exception | None = None

@@ -114,6 +114,14 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(return_value=None),
         ),
         patch(
+            "app.services.pipeline_service.skill_repo.list_active",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.pipeline_service.reply_memory_service.find_similar_replies",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.pipeline_service.draft_repo.create_draft",
             new=AsyncMock(
                 return_value=MagicMock(

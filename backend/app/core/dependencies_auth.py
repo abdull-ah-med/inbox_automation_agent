@@ -107,5 +107,18 @@ def require_frontend_origin(request: Request, settings: AppSettings) -> None:
     )
 
 
+async def get_current_admin(
+    user: Annotated[UserMe, Depends(get_current_user)],
+) -> UserMe:
+    """Require an authenticated user with role ``admin``."""
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
+        )
+    return user
+
+
 CurrentUser = Annotated[UserMe, Depends(get_current_user)]
+CurrentAdmin = Annotated[UserMe, Depends(get_current_admin)]
 RequireCsrf = Annotated[None, Depends(require_csrf)]

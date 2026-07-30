@@ -20,12 +20,13 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import draft_repo, thread_repo
+from app.repositories import draft_repo, skill_repo, thread_repo
 from app.services import (
     audit_service,
     context_service,
     draft_service,
     embedding_service,
+    reply_memory_service,
     slack_service,
     triage_service,
 )
@@ -98,9 +99,7 @@ async def _apply_draft_outcome_state(
     else:
         return
     try:
-        await thread_repo.set_thread_outcome(
-            session, thread_id, state=new_state, urgency=urgency
-        )
+        await thread_repo.set_thread_outcome(session, thread_id, state=new_state, urgency=urgency)
     except Exception:
         logger.exception(
             "thread_state_update_failed",
@@ -108,6 +107,7 @@ async def _apply_draft_outcome_state(
             conversation_id=state.original_email.conversation_id,
             target_state=new_state,
         )
+
 
 # Spam / no-action skips are always terminal for dedup.
 # DRAFTED is terminal only when Slack delivery is in this set.
@@ -477,6 +477,15 @@ async def run_after_ingest(
         )
         return state
 
+    tone_references = await reply_memory_service.find_similar_replies(
+        session,
+        openai_client=embed_client,
+        settings=settings,
+        email_text=f"{email.subject}\n\n{email.body_text}",
+        mailbox=email.mailbox,
+        limit=3,
+    )
+
     state = await draft_service.run_draft(
         state,
         session=session,
@@ -484,6 +493,7 @@ async def run_after_ingest(
         settings=settings,
         thread_id=uuid.UUID(ingest_result.thread_id),
         cross_thread_context=cross_thread,
+        tone_references=tone_references,
     )
 
     draft_event = "draft.generated" if state.draft_status == "DRAFTED" else "draft.requires_human"
@@ -652,15 +662,37 @@ async def _run_phased_post_ingest(
             message_id=message_id,
         )
 
-    # --- Short read for draft idempotency, then release before Sonnet ---
+    # --- Short read for draft idempotency + skills + tone refs, then release before Sonnet ---
+    skill_contents: list[str] = []
+    tone_references: list[str] = []
     async with session_factory() as session:
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
+        try:
+            active_skills = await skill_repo.list_active(session)
+            skill_contents = [skill.content for skill in active_skills]
+        except Exception:
+            logger.exception(
+                "skill_load_failed",
+                conversation_id=email.conversation_id,
+                mailbox=email.mailbox,
+                message_id=message_id,
+            )
+            skill_contents = []
+        tone_references = await reply_memory_service.find_similar_replies(
+            session,
+            openai_client=openai_client,
+            settings=settings,
+            email_text=f"{email.subject}\n\n{email.body_text}",
+            mailbox=email.mailbox,
+            limit=3,
+        )
         await session.commit()
 
     async def _generate_and_persist_draft(
         current: EmailTriageState,
         *,
         cross_thread_context: CrossThreadContextSchema | None = None,
+        tone_references: list[str] | None = None,
     ) -> EmailTriageState:
         if existing is not None:
             current.draft = DraftSchema.model_validate(
@@ -682,6 +714,8 @@ async def _run_phased_post_ingest(
                 client=client,
                 settings=settings,
                 cross_thread_context=cross_thread_context,
+                tone_references=tone_references,
+                skills=skill_contents,
             )
         except DraftGenerationError as exc:
             logger.warning(
@@ -721,13 +755,15 @@ async def _run_phased_post_ingest(
                 model=generated.model,
                 latency_ms=generated.latency_ms,
                 context_match_confidence=confidence,
+                skills_count=len(skill_contents),
             )
-        return current
+            return current
 
     if needs_context:
         state = await _generate_and_persist_draft(
             state,
             cross_thread_context=cross_thread,
+            tone_references=tone_references,
         )
     else:
         _embed_result, state = await asyncio.gather(
@@ -737,7 +773,7 @@ async def _run_phased_post_ingest(
                 settings=settings,
                 session_factory=session_factory,
             ),
-            _generate_and_persist_draft(state),
+            _generate_and_persist_draft(state, tone_references=tone_references),
         )
         _ = _embed_result
 

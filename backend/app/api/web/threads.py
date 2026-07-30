@@ -9,12 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.dependencies import get_db
+from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
-from app.models.schemas.dashboard import AuditEntry, MessageDetail, ThreadDetail
+from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
+from app.models.schemas.feedback import RegenerateDraftSchema
 from app.repositories import audit_repo, thread_repo
-from app.services import thread_view_service
+from app.services import draft_regeneration_service, thread_view_service
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
 
@@ -74,3 +75,35 @@ async def get_thread_audit(
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return await audit_repo.list_by_thread_id(session, thread_id, thread.conversation_id)
+
+
+@router.post(
+    "/{thread_id}/regenerate-draft",
+    response_model=DraftView,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("20/minute")
+async def regenerate_draft(
+    thread_id: uuid.UUID,
+    body: RegenerateDraftSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    client: AnthropicClientDep,
+    openai_client: OpenAIClientDep,
+    user: CurrentUser,
+) -> DraftView:
+    """Regenerate a draft with a reviewer instruction. Creates a new draft row."""
+    _ = request, response
+    # Service commits the read txn before Sonnet, then opens a short write txn.
+    persisted = await draft_regeneration_service.regenerate_draft(
+        session,
+        client=client,
+        settings=settings,
+        thread_id=thread_id,
+        instruction=body.instruction,
+        actor=user.email,
+        openai_client=openai_client,
+    )
+    return thread_view_service.draft_response_to_view(persisted)

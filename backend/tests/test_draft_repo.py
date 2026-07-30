@@ -43,6 +43,10 @@ def _orm_row(**overrides: object) -> MagicMock:
     row.edited_body = None
     row.approved_at = None
     row.rejected_at = None
+    row.context_match_confidence = None
+    row.feedback_note = None
+    row.feedback_action = None
+    row.suggested_actions = []
     row.created_at = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
     for key, value in overrides.items():
         setattr(row, key, value)
@@ -124,3 +128,42 @@ async def test_get_draft_by_message_maps_orm_to_schema() -> None:
     assert found.urgency == "HIGH"
     assert found.forward_to is None
     assert "confidence" not in type(found).model_fields
+
+
+@pytest.mark.asyncio
+async def test_approve_draft_applies_edit_when_already_approved() -> None:
+    draft_id = uuid.uuid4()
+    approved_at = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
+    existing = _orm_row(
+        id=draft_id,
+        approved_at=approved_at,
+        feedback_action="approve",
+        body="Hello",
+        edited_body=None,
+    )
+    updated = _orm_row(
+        id=draft_id,
+        thread_id=existing.thread_id,
+        approved_at=approved_at,
+        feedback_action="approve",
+        body="Hello",
+        edited_body="Revised",
+    )
+    get_result = MagicMock()
+    get_result.scalar_one_or_none.return_value = existing
+    update_result = MagicMock()
+    update_result.scalar_one_or_none.return_value = updated
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[get_result, update_result])
+    session.flush = AsyncMock()
+
+    result = await draft_repo.approve_draft(
+        session,
+        draft_id,
+        edited_body="Revised",
+    )
+
+    assert result is not None
+    assert result.edited_body == "Revised"
+    assert result.feedback_action == "approve"
+    session.flush.assert_awaited_once()

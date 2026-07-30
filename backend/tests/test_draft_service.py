@@ -96,6 +96,10 @@ async def test_run_draft_pending_to_drafted() -> None:
             new=AsyncMock(return_value=None),
         ),
         patch(
+            "app.services.draft_service.skill_repo.list_active",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.draft_service.draft_llm.generate_draft",
             new=AsyncMock(return_value=call),
         ) as generate,
@@ -126,6 +130,10 @@ async def test_run_draft_generation_failure_requires_human() -> None:
         patch(
             "app.services.draft_service.draft_repo.get_draft_by_message",
             new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_service.skill_repo.list_active",
+            new=AsyncMock(return_value=[]),
         ),
         patch(
             "app.services.draft_service.draft_llm.generate_draft",
@@ -182,6 +190,10 @@ async def test_run_draft_persists_context_match_confidence() -> None:
         patch(
             "app.services.draft_service.draft_repo.get_draft_by_message",
             new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_service.skill_repo.list_active",
+            new=AsyncMock(return_value=[]),
         ),
         patch(
             "app.services.draft_service.draft_llm.generate_draft",
