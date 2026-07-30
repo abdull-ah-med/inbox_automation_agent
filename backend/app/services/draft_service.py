@@ -13,7 +13,7 @@ from app.core.exceptions import DraftGenerationError
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
-from app.repositories import draft_repo
+from app.repositories import draft_repo, skill_repo
 
 logger = structlog.get_logger(__name__)
 
@@ -27,6 +27,7 @@ async def run_draft(
     thread_id: uuid.UUID,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    skills: list[str] | None = None,
 ) -> EmailTriageState:
     """Generate and persist a draft when ``draft_status`` is PENDING.
 
@@ -55,6 +56,20 @@ async def run_draft(
         state.error_logs.append("draft_skipped:missing_triage")
         return state
 
+    skill_contents = skills
+    if skill_contents is None:
+        try:
+            active_skills = await skill_repo.list_active(session)
+            skill_contents = [skill.content for skill in active_skills]
+        except Exception:
+            logger.exception(
+                "skill_load_failed",
+                conversation_id=state.original_email.conversation_id,
+                mailbox=state.original_email.mailbox,
+                message_id=message_id,
+            )
+            skill_contents = []
+
     try:
         result = await draft_llm.generate_draft(
             state.original_email,
@@ -64,6 +79,7 @@ async def run_draft(
             settings=settings,
             cross_thread_context=cross_thread_context,
             tone_references=tone_references,
+            skills=skill_contents,
         )
     except DraftGenerationError as exc:
         logger.warning(
@@ -103,5 +119,6 @@ async def run_draft(
         model=result.model,
         latency_ms=result.latency_ms,
         context_match_confidence=confidence,
+        skills_count=len(skill_contents),
     )
     return state

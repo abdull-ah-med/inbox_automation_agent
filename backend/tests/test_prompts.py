@@ -104,8 +104,16 @@ def test_draft_prompt_documents_output_fields_without_confidence() -> None:
         "teaching_note",
         "urgency",
         "urgency_reason",
+        "suggested_actions",
     ):
         assert field in DRAFT_SYSTEM_PROMPT
     assert "confidence" not in DRAFT_SYSTEM_PROMPT.lower()
     assert "confidence" not in DraftSchema.model_fields
     assert "confidence" not in ClassificationSchema.model_fields
+
+
+def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
+    assert PROMPT_VERSION != "2026-07-20.1"
+    assert "suggested_actions" in DRAFT_SYSTEM_PROMPT
+    assert "stakeholder" in DRAFT_SYSTEM_PROMPT
+    assert "suggested_actions" in DraftSchema.model_fields

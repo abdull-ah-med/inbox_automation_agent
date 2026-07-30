@@ -109,6 +109,13 @@ class ClassificationView(BaseModel):
     created_at: datetime
 
 
+class SuggestedActionView(BaseModel):
+    step: int
+    action: str
+    stakeholder: str | None = None
+    rationale: str
+
+
 class DraftView(BaseModel):
     id: uuid.UUID
     subject: str
@@ -118,6 +125,12 @@ class DraftView(BaseModel):
     urgency_reason: str | None = None
     forward_to: str | None = None
     created_at: datetime
+    suggested_actions: list[SuggestedActionView] = Field(default_factory=list)
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    edited_body: str | None = None
+    feedback_note: str | None = None
+    feedback_action: str | None = None
 
 
 class ThreadDetail(BaseModel):

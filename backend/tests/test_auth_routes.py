@@ -179,3 +179,24 @@ async def test_cors_preflight(app, local_settings: Settings) -> None:
     assert resp.status_code in {200, 204}
     assert resp.headers.get("access-control-allow-origin") == local_settings.frontend_origin
     assert resp.headers.get("access-control-allow-credentials") == "true"
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allows_skills_put_delete(
+    app, local_settings: Settings
+) -> None:
+    """Skills mutations need PUT/DELETE in CORS allow_methods for browser clients."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        for method in ("PUT", "DELETE"):
+            resp = await client.options(
+                "/api/skills",
+                headers={
+                    "Origin": local_settings.frontend_origin,
+                    "Access-Control-Request-Method": method,
+                    "Access-Control-Request-Headers": "authorization,content-type",
+                },
+            )
+            assert resp.status_code in {200, 204}, method
+            allow = resp.headers.get("access-control-allow-methods", "")
+            assert method in allow.upper(), f"{method} missing from {allow!r}"

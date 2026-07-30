@@ -126,6 +126,7 @@ export default function ThreadDetailPage() {
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <aside className="lg:col-span-2">
           <ThreadTriageSidebar
+            threadId={threadId}
             thread={thread}
             classification={classification}
             draft={draft}

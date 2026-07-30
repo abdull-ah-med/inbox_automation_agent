@@ -101,6 +101,13 @@ export interface ClassificationView {
   created_at: string
 }
 
+export interface SuggestedAction {
+  step: number
+  action: string
+  stakeholder: string | null
+  rationale: string
+}
+
 export interface DraftView {
   id: string
   subject: string
@@ -110,6 +117,39 @@ export interface DraftView {
   urgency_reason: string | null
   forward_to: string | null
   created_at: string
+  suggested_actions: SuggestedAction[]
+  approved_at: string | null
+  rejected_at: string | null
+  edited_body: string | null
+  feedback_note: string | null
+  feedback_action: string | null
+}
+
+export interface SkillResponse {
+  id: string
+  name: string
+  description: string | null
+  content: string
+  category: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillCreate {
+  name: string
+  description?: string
+  content: string
+  category?: string
+  is_active?: boolean
+}
+
+export interface SkillUpdate {
+  name?: string
+  description?: string
+  content?: string
+  category?: string
+  is_active?: boolean
 }
 
 export interface ThreadDetail {

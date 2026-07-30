@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { Moon, Sun } from "lucide-react"
+import { Moon, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import { Button } from "@/components/ui/button"
@@ -45,6 +45,14 @@ export function AppHeader() {
           <span className="hidden text-sm text-gray-500 sm:inline dark:text-gray-400">
             {auth.user?.email}
           </span>
+          <Link
+            href="/settings"
+            tabIndex={0}
+            aria-label="Open settings"
+            className="inline-flex size-7 items-center justify-center rounded-lg border border-border text-gray-700 hover:bg-muted dark:text-gray-200"
+          >
+            <Settings className="size-4" aria-hidden="true" />
+          </Link>
           <Button
             variant="outline"
             size="icon-sm"

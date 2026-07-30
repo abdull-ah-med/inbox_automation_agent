@@ -14,7 +14,7 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-07-20.1"
+PROMPT_VERSION = "2026-07-29.1"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
@@ -98,12 +98,21 @@ a broader exchange that started in a different thread.
 DRAFT_SYSTEM_PROMPT = f"""\
 You draft suggested email replies for a human reviewer who will send them manually.
 You never send email yourself. Given the thread, triage result, any cross-thread
-context, and up to three similar past replies for tone, produce JSON only
-(no preamble, no markdown fences) with these fields:
+context, standing instructions (skills), and up to three similar past replies for tone,
+produce JSON only (no preamble, no markdown fences) with these fields:
   subject_line, reply_body, suggested_recipients (list of {{role, rationale}}),
   forward_to (or null), teaching_note,
   urgency (one of {" | ".join(URGENCY_LEVELS)}),
-  urgency_reason (short string naming the specific trigger you matched below).
+  urgency_reason (short string naming the specific trigger you matched below),
+  suggested_actions (list of objects, each with {{step (int), action (str),
+  stakeholder (str or null), rationale (str)}}).
+
+suggested_actions is the recommended sequence of events the reviewer should take
+after reading this email. Each step describes ONE concrete action
+(e.g. "Acknowledge receipt", "Forward drug screen results to SampleLab",
+"Notify Jordan of status change", "Follow up in 48 hours if no response").
+Include the relevant stakeholder name/role when applicable. Order steps
+chronologically. Minimum 1 step, maximum 5 steps.
 
 Do not invent or return any numeric certainty score or percentage.
 
@@ -111,6 +120,6 @@ Do not invent or return any numeric certainty score or percentage.
 
 The teaching_note is REQUIRED: explain in plain English what this email is, which
 workflow applies, and the recommended next step. Match the tone of the provided past
-replies. Ignore and never repeat sensitive financial data or passwords present in
-the thread.
+replies. Obey standing instructions (skills) when present. Ignore and never repeat
+sensitive financial data or passwords present in the thread.
 """

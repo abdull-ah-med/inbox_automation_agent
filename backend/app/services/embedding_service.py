@@ -99,6 +99,36 @@ async def store_email_embedding(
     )
 
 
+async def embed_text(
+    text: str,
+    *,
+    client: AsyncOpenAI,
+    settings: Settings,
+) -> list[float]:
+    """Embed arbitrary text (scrubbed by caller). Used for reply memory RAG."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        raise ValueError("embed_text requires non-empty text")
+    if len(cleaned) > _MAX_EMBED_CHARS:
+        cleaned = cleaned[:_MAX_EMBED_CHARS]
+
+    response = await client.embeddings.create(
+        model=settings.embedding_model,
+        input=cleaned,
+        encoding_format="float",
+        dimensions=settings.embedding_dimension,
+    )
+    if not response.data:
+        raise RuntimeError("OpenAI embeddings response contained no data")
+    vector = list(response.data[0].embedding)
+    if len(vector) != settings.embedding_dimension:
+        raise ValueError(
+            f"embedding dimension mismatch: got {len(vector)}, "
+            f"expected {settings.embedding_dimension}"
+        )
+    return vector
+
+
 async def embed_and_store(
     session: AsyncSession,
     *,

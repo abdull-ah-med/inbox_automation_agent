@@ -12,8 +12,10 @@ from app.core.outlook_links import outlook_web_link
 from app.models.schemas.dashboard import (
     DraftView,
     MessageDetail,
+    SuggestedActionView,
     ThreadDetail,
 )
+from app.models.schemas.draft import DraftResponseSchema
 from app.repositories import (
     audit_repo,
     classification_repo,
@@ -21,6 +23,34 @@ from app.repositories import (
     message_repo,
     thread_repo,
 )
+
+
+def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
+    """Map internal draft schema to the dashboard/API DraftView contract."""
+    return DraftView(
+        id=draft.id,
+        subject=draft.subject_line,
+        body=draft.edited_body or draft.reply_body,
+        teaching_note=draft.teaching_note,
+        urgency=draft.urgency,
+        urgency_reason=draft.urgency_reason,
+        forward_to=draft.forward_to,
+        created_at=draft.created_at,
+        suggested_actions=[
+            SuggestedActionView(
+                step=action.step,
+                action=action.action,
+                stakeholder=action.stakeholder,
+                rationale=action.rationale,
+            )
+            for action in draft.suggested_actions
+        ],
+        approved_at=draft.approved_at,
+        rejected_at=draft.rejected_at,
+        edited_body=draft.edited_body,
+        feedback_note=draft.feedback_note,
+        feedback_action=draft.feedback_action,
+    )
 
 
 async def get_thread_detail(
@@ -53,16 +83,7 @@ async def get_thread_detail(
     draft_row = await draft_repo.get_latest_by_thread(session, thread_id)
     draft: DraftView | None = None
     if draft_row is not None:
-        draft = DraftView(
-            id=draft_row.id,
-            subject=draft_row.subject_line,
-            body=draft_row.edited_body or draft_row.reply_body,
-            teaching_note=draft_row.teaching_note,
-            urgency=draft_row.urgency,
-            urgency_reason=draft_row.urgency_reason,
-            forward_to=draft_row.forward_to,
-            created_at=draft_row.created_at,
-        )
+        draft = draft_response_to_view(draft_row)
     audit_log = await audit_repo.list_by_thread_id(
         session,
         thread_id,

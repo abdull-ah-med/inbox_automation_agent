@@ -48,3 +48,23 @@ class ReusedRefreshTokenError(AuthError):
 
 class InvalidCursorError(InboxTriageError):
     """Raised when a pagination cursor is malformed."""
+
+
+class DraftNotFoundError(InboxTriageError):
+    """Raised when a draft id does not exist."""
+
+
+class SkillNotFoundError(InboxTriageError):
+    """Raised when a skill id does not exist."""
+
+
+class SkillNameConflictError(InboxTriageError):
+    """Raised when creating/updating a skill with a duplicate name."""
+
+
+class SkillBudgetExceededError(InboxTriageError):
+    """Raised when activating a skill would exceed active count or char budget."""
+
+
+class ThreadNotFoundError(InboxTriageError):
+    """Raised when a thread id does not exist for regeneration or lookup."""
