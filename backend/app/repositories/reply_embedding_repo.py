@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,8 @@ class ReplyEmbeddingSchema(BaseModel):
     mailbox: str
     reply_text: str
     original_email_preview: str | None = None
+    is_excluded: bool = False
+    created_at: datetime | None = None
 
 
 async def store_reply_embedding(
@@ -61,6 +65,42 @@ async def store_reply_embedding(
     return ReplyEmbeddingSchema.model_validate(existing)
 
 
+async def list_reply_embeddings(
+    session: AsyncSession,
+    *,
+    mailbox: str | None = None,
+    limit: int = 100,
+) -> list[ReplyEmbeddingSchema]:
+    """List approved replies newest-first for Settings (includes excluded)."""
+    capped = max(1, min(limit, 500))
+    stmt = select(ReplyEmbedding).order_by(ReplyEmbedding.created_at.desc()).limit(capped)
+    if mailbox is not None:
+        stmt = stmt.where(ReplyEmbedding.mailbox == mailbox)
+    result = await session.execute(stmt)
+    return [ReplyEmbeddingSchema.model_validate(row) for row in result.scalars().all()]
+
+
+async def set_excluded(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+    *,
+    is_excluded: bool,
+) -> ReplyEmbeddingSchema | None:
+    """Toggle exclusion from tone RAG. Returns None if the row is missing."""
+    stmt = (
+        sa_update(ReplyEmbedding)
+        .where(ReplyEmbedding.id == reply_id)
+        .values(is_excluded=is_excluded)
+        .returning(ReplyEmbedding)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return ReplyEmbeddingSchema.model_validate(row)
+
+
 async def find_similar_replies(
     session: AsyncSession,
     *,
@@ -68,12 +108,16 @@ async def find_similar_replies(
     mailbox: str | None = None,
     limit: int = 3,
 ) -> list[str]:
-    """Return top-N reply texts by cosine similarity (empty list if none)."""
+    """Return top-N non-excluded reply texts by cosine similarity."""
     if limit < 1:
         return []
 
     distance = ReplyEmbedding.embedding.cosine_distance(query_embedding)
-    stmt = select(ReplyEmbedding.reply_text, distance.label("distance")).order_by(distance)
+    stmt = (
+        select(ReplyEmbedding.reply_text, distance.label("distance"))
+        .where(ReplyEmbedding.is_excluded.is_(False))
+        .order_by(distance)
+    )
     if mailbox is not None:
         stmt = stmt.where(ReplyEmbedding.mailbox == mailbox)
     stmt = stmt.limit(limit)

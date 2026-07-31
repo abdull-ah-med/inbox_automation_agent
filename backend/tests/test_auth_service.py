@@ -211,3 +211,65 @@ async def test_change_password_revokes_all(settings: Settings) -> None:
             new_password="BrandNewPassword2!",
         )
     revoke_all.assert_awaited_once_with(session, user.id)
+
+
+@pytest.mark.asyncio
+async def test_create_user_rejects_weak_password(settings: Settings) -> None:
+    session = AsyncMock()
+    with pytest.raises(ValueError, match="at least 12 characters"):
+        await auth_service.create_user(
+            session,
+            email="new@example.com",
+            password="short",
+            role="user",
+        )
+
+
+@pytest.mark.asyncio
+async def test_refresh_grace_roundtrip_encrypted() -> None:
+    """Grace cache encrypts with MSAL Fernet key (cryptography Fernet)."""
+    from cryptography.fernet import Fernet
+
+    from app.models.schemas.auth import TokenResponse, UserMe
+
+    key = Fernet.generate_key().decode()
+    settings = Settings(
+        environment="local",
+        jwt_secret="z" * 64,
+        refresh_rotation_grace_seconds=10,
+        msal_cache_encryption_key=key,
+    )
+    user = UserMe(
+        id=uuid.uuid4(),
+        email="elise@example.com",
+        role="user",
+        created_at=datetime.now(UTC),
+    )
+    result = auth_service.AuthResult(
+        response=TokenResponse(
+            access_token="access.jwt",
+            expires_in=900,
+            user=user,
+        ),
+        refresh_plaintext="new-refresh-token",
+    )
+    redis = AsyncMock()
+    stored: dict[str, str] = {}
+
+    async def fake_set(key_name: str, value: str, ex: int | None = None) -> bool:
+        stored["raw"] = value
+        assert not value.startswith("{"), "grace payload must not be plaintext JSON"
+        return True
+
+    async def fake_get(key_name: str) -> str | None:
+        return stored.get("raw")
+
+    redis.set = fake_set
+    redis.get = fake_get
+
+    await auth_service._store_refresh_grace(redis, settings, "old-hash", result)
+    loaded = await auth_service._load_refresh_grace(redis, settings, "old-hash")
+    assert loaded is not None
+    assert loaded.refresh_plaintext == "new-refresh-token"
+    assert loaded.response.access_token == "access.jwt"
+    assert loaded.response.user.email == "elise@example.com"

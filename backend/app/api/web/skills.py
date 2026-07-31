@@ -54,8 +54,10 @@ async def create_skill(
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
-    async with session.begin():
-        return await skill_repo.create(session, body)
+    # CurrentAdmin/CurrentUser already autobegins this session — do not begin again.
+    created = await skill_repo.create(session, body)
+    await session.commit()
+    return created
 
 
 @router.put(
@@ -73,10 +75,10 @@ async def update_skill(
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
-    async with session.begin():
-        updated = await skill_repo.update_skill(session, skill_id, body)
+    updated = await skill_repo.update_skill(session, skill_id, body)
     if updated is None:
         raise SkillNotFoundError(f"Skill not found: {skill_id}")
+    await session.commit()
     return updated
 
 
@@ -93,7 +95,7 @@ async def delete_skill(
     _admin: CurrentAdmin,
 ) -> None:
     _ = request, response
-    async with session.begin():
-        deleted = await skill_repo.delete_skill(session, skill_id)
+    deleted = await skill_repo.delete_skill(session, skill_id)
     if not deleted:
         raise SkillNotFoundError(f"Skill not found: {skill_id}")
+    await session.commit()

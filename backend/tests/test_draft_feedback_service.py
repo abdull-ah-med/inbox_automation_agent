@@ -396,14 +396,25 @@ async def test_approve_stores_reply_memory_helper() -> None:
         redis_url="redis://localhost:6379/15",
     )
 
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
     with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
         patch(
             "app.services.draft_feedback_service.thread_repo.get_by_id",
             AsyncMock(
                 return_value=type(
                     "T",
                     (),
-                    {"conversation_id": "c1", "mailbox": "elise@example.com"},
+                    {"conversation_id": "c1", "mailbox": "elise@example.com", "subject": "Subj"},
                 )()
             ),
         ),
@@ -413,7 +424,6 @@ async def test_approve_stores_reply_memory_helper() -> None:
         ) as store_mock,
     ):
         await draft_feedback_service.store_approved_reply_memory(
-            session,
             draft=draft,
             settings=settings,
             openai_client=AsyncMock(),
@@ -422,3 +432,32 @@ async def test_approve_stores_reply_memory_helper() -> None:
     store_mock.assert_awaited_once()
     assert store_mock.await_args.kwargs["final_body"] == "Approved body"
     assert store_mock.await_args.kwargs["mailbox"] == "elise@example.com"
+
+
+@pytest.mark.asyncio
+async def test_approve_reply_memory_failure_does_not_raise() -> None:
+    """Dedicated session errors must not escape (approve HTTP stays 200)."""
+    from app.core.config import Settings
+
+    draft = _draft(
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        reply_body="Approved body",
+    )
+    settings = Settings(
+        target_mailboxes="elise@example.com",
+        openai_api_key="sk-test",
+        jwt_secret="c" * 64,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+
+    with patch(
+        "app.services.draft_feedback_service.get_session_factory",
+        side_effect=RuntimeError("db down"),
+    ):
+        await draft_feedback_service.store_approved_reply_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=AsyncMock(),
+        )

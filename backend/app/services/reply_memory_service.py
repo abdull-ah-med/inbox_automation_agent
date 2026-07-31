@@ -71,6 +71,10 @@ async def store_approved_reply(
             mailbox=mailbox,
         )
     except Exception:
+        # Flush/DB errors leave the session inactive until rollback
+        # (SQLAlchemy 2.0: PendingRollbackError / FAQ session rollback).
+        if session.in_transaction():
+            await session.rollback()
         logger.exception(
             "reply_memory_store_failed",
             draft_id=str(draft_id),

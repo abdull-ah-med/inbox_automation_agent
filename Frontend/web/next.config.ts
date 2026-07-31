@@ -12,6 +12,9 @@ if (
 }
 
 const nextConfig: NextConfig = {
+  // Standalone output for minimal Docker images (Next.js output file tracing).
+  // https://nextjs.org/docs/app/api-reference/config/next-config-js/output
+  output: "standalone",
   poweredByHeader: false,
   reactStrictMode: true,
 };

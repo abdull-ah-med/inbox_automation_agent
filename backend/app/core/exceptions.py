@@ -58,6 +58,10 @@ class SkillNotFoundError(InboxTriageError):
     """Raised when a skill id does not exist."""
 
 
+class ReplyMemoryNotFoundError(InboxTriageError):
+    """Raised when a reply-memory (tone reference) id does not exist."""
+
+
 class SkillNameConflictError(InboxTriageError):
     """Raised when creating/updating a skill with a duplicate name."""
 

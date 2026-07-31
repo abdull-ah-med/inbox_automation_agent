@@ -122,6 +122,7 @@ def test_validate_production_security_requires_hardening() -> None:
         redis_url="redis://localhost:6379/0",
         msal_cache_encryption_key="",
         database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage",
+        slack_enabled=True,
         slack_bot_token="",
         slack_signing_secret="",
         slack_review_channel_id="",
@@ -139,6 +140,32 @@ def test_validate_production_security_requires_hardening() -> None:
     assert any("SLACK_BOT_TOKEN" in e for e in errors)
     assert any("SLACK_SIGNING_SECRET" in e for e in errors)
     assert any("SLACK_REVIEW_CHANNEL_ID" in e for e in errors)
+
+
+def test_validate_production_security_skips_slack_when_disabled() -> None:
+    settings = Settings(
+        environment="production",
+        anthropic_api_key="sk-ant-prod-key",
+        graph_client_id="00000000-0000-0000-0000-000000000000",
+        graph_client_secret="graph-secret-prod",
+        graph_tenant_id="11111111-1111-1111-1111-111111111111",
+        target_mailboxes="user@example.com",
+        graph_webhook_client_state="x" * 32,
+        redis_url="rediss://:secret@redis.example:6380/0",
+        msal_cache_encryption_key="e0xmjKk-RnBXRjYz-Tsvjar3_Glouxk2n5tNImpxYLc=",
+        database_url="postgresql+asyncpg://app:secret@db.example:5432/inbox_triage",
+        enable_dev_routes=False,
+        slack_enabled=False,
+        slack_bot_token="",
+        slack_signing_secret="",
+        slack_review_channel_id="",
+        jwt_secret="x" * 64,
+        cookie_secure=True,
+        frontend_origin="https://app.example.com",
+    )
+    errors = settings.validate_production_security()
+    assert not any("SLACK_" in e for e in errors)
+    assert errors == []
 
 
 def test_validate_production_security_passes_when_hardened() -> None:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
+from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
 from app.repositories import draft_repo, thread_repo
 from app.services import audit_service, reply_memory_service
@@ -105,7 +106,6 @@ async def approve_draft(
 
 
 async def store_approved_reply_memory(
-    session: AsyncSession,
     *,
     draft: DraftResponseSchema,
     settings: Settings,
@@ -113,23 +113,37 @@ async def store_approved_reply_memory(
 ) -> None:
     """Best-effort reply memory after the approve txn has committed.
 
-    Resolves mailbox, commits any open read txn, embeds (network), then inserts.
+    Uses a **dedicated** DB session so embed/DB failures cannot leave the
+    request session in SQLAlchemy's inactive/pending-rollback state
+    (``PendingRollbackError`` — see
+    https://docs.sqlalchemy.org/en/20/errors.html#this-session-s-transaction-has-been-rolled-back-due-to-a-previous-exception-during-flush).
+    Never raises to the approve HTTP path.
     """
-    thread = await thread_repo.get_by_id(session, draft.thread_id)
-    mailbox = thread.mailbox if thread is not None else "unknown"
-    if session.in_transaction():
-        await session.commit()
-    final_body = draft.edited_body or draft.reply_body
-    await reply_memory_service.store_approved_reply(
-        session,
-        openai_client=openai_client,
-        settings=settings,
-        draft_id=draft.id,
-        mailbox=mailbox,
-        final_body=final_body,
-    )
-    if session.in_transaction():
-        await session.commit()
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            mailbox = thread.mailbox if thread is not None else "unknown"
+            email_preview = thread.subject if thread is not None else None
+            if session.in_transaction():
+                await session.commit()
+            final_body = draft.edited_body or draft.reply_body
+            await reply_memory_service.store_approved_reply(
+                session,
+                openai_client=openai_client,
+                settings=settings,
+                draft_id=draft.id,
+                mailbox=mailbox,
+                final_body=final_body,
+                email_preview=email_preview,
+            )
+            if session.in_transaction():
+                await session.commit()
+    except Exception:
+        logger.exception(
+            "reply_memory_post_approve_failed",
+            draft_id=str(draft.id),
+        )
 
 
 async def reject_draft(

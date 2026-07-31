@@ -82,10 +82,7 @@ def app(local_settings: Settings):
         application.dependency_overrides[get_current_user] = fake_user
 
         mock_session = MagicMock()
-        begin_cm = MagicMock()
-        begin_cm.__aenter__ = AsyncMock(return_value=None)
-        begin_cm.__aexit__ = AsyncMock(return_value=None)
-        mock_session.begin = MagicMock(return_value=begin_cm)
+        mock_session.commit = AsyncMock()
 
         async def fake_db():
             yield mock_session
