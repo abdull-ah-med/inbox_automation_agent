@@ -39,7 +39,7 @@ rm -f redis.csr
 # UID/GID than whoever runs this script — chown the private keys to it and
 # lock them to owner-only, rather than leaving them world-readable.
 sudo chown 999:1000 ca.key redis.key
-chmod 600 ca.key redis.key
+sudo chmod 600 ca.key redis.key
 
 REDIS_PASSWORD=$(openssl rand -hex 24)
 
