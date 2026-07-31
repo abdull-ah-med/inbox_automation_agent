@@ -23,7 +23,7 @@ from app.models.schemas.email_triage_state import CrossThreadContextSchema
 
 logger = structlog.get_logger(__name__)
 
-DRAFT_MAX_TOKENS = 800
+DRAFT_MAX_TOKENS = 2000
 
 
 @dataclass(frozen=True, slots=True)
