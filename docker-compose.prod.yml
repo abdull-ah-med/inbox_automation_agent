@@ -51,7 +51,7 @@ services:
       dockerfile: Dockerfile
       target: production
     restart: unless-stopped
-    env_file:
+    env_file: !override
       - ./backend/.env.prod
     environment: !reset {}
     volumes: !reset []
