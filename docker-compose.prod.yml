@@ -51,11 +51,11 @@ services:
       dockerfile: Dockerfile
       target: production
     restart: unless-stopped
-    env_file:
+    env_file: !override
       - ./backend/.env.prod
     environment: !reset {}
     volumes: !reset []
-    ports:
+    ports: !override
       - "127.0.0.1:8000:8000"
 
   frontend:

@@ -193,7 +193,7 @@ def create_app() -> FastAPI:
     if not is_local:
         app.add_middleware(
             TrustedHostMiddleware,
-            allowed_hosts=[settings.api_host, f"*.{settings.api_host}"],
+            allowed_hosts=[settings.api_host, f"*.{settings.api_host}", "localhost"],
         )
     app.add_middleware(
         CORSMiddleware,
