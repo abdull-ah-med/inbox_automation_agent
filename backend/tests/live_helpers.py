@@ -61,6 +61,23 @@ def require_anthropic_settings() -> Settings:
     return settings
 
 
+def require_openai_settings() -> Settings:
+    """Settings for live embedding / tone-memory tests (OpenAI + Anthropic + DB).
+
+    Graph credentials are optional here — cross-thread Graph fetch can use a
+    stub client. Mailbox list is still required so simulate ingest passes the
+    allowlist.
+    """
+    settings = Settings()
+    if not settings.openai_api_key.strip():
+        raise RuntimeError("OPENAI_API_KEY required in .env for live embedding tests")
+    if not settings.anthropic_api_key.strip():
+        raise RuntimeError("ANTHROPIC_API_KEY required in .env for live embedding E2E")
+    if not settings.mailbox_list:
+        raise RuntimeError("TARGET_MAILBOXES required in .env for live embedding E2E")
+    return settings
+
+
 def lookback_days(default: int = 30) -> int:
     """How far back to list Graph messages (default 30 days for E2E)."""
     raw = os.environ.get("LIVE_LOOKBACK_DAYS", "").strip()

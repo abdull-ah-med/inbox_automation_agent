@@ -17,6 +17,8 @@ def _embedding_row(**overrides: object) -> MagicMock:
     row.mailbox = overrides.get("mailbox", "elise@example.com")
     row.reply_text = overrides.get("reply_text", "Thanks — sending now.")
     row.original_email_preview = overrides.get("original_email_preview")
+    row.is_excluded = overrides.get("is_excluded", False)
+    row.created_at = overrides.get("created_at")
     return row
 
 
@@ -136,3 +138,53 @@ async def test_find_similar_without_mailbox() -> None:
         limit=2,
     )
     assert texts == ["Any mailbox"]
+
+
+@pytest.mark.asyncio
+async def test_set_excluded_updates_row() -> None:
+    reply_id = uuid.uuid4()
+    updated = _embedding_row(id=reply_id, is_excluded=True)
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = updated
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+    session.flush = AsyncMock()
+
+    stored = await reply_embedding_repo.set_excluded(
+        session,
+        reply_id,
+        is_excluded=True,
+    )
+    assert stored is not None
+    assert stored.is_excluded is True
+    session.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_excluded_missing_returns_none() -> None:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+
+    assert (
+        await reply_embedding_repo.set_excluded(
+            session,
+            uuid.uuid4(),
+            is_excluded=True,
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_reply_embeddings() -> None:
+    rows = [_embedding_row(), _embedding_row(is_excluded=True)]
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = rows
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=result)
+
+    listed = await reply_embedding_repo.list_reply_embeddings(session, limit=10)
+    assert len(listed) == 2
+    assert listed[1].is_excluded is True

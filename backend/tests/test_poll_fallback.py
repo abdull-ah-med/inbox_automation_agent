@@ -457,7 +457,6 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
         poll_interval_seconds=300,
     )
     redis = AsyncMock()
-    redis.set = AsyncMock(return_value=True)
     auth = MagicMock()
     graph_client = MagicMock()
 
@@ -469,6 +468,10 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
         patch(
             "app.workers.poll_fallback_worker.get_redis",
             AsyncMock(return_value=redis),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.acquire_lock",
+            AsyncMock(return_value="owner-token"),
         ),
         patch(
             "app.workers.poll_fallback_worker.get_graph_auth",
@@ -498,7 +501,6 @@ async def test_run_poll_all_mailboxes_skips_when_not_leader() -> None:
         poll_interval_seconds=300,
     )
     redis = AsyncMock()
-    redis.set = AsyncMock(return_value=False)
 
     with (
         patch(
@@ -508,6 +510,10 @@ async def test_run_poll_all_mailboxes_skips_when_not_leader() -> None:
         patch(
             "app.workers.poll_fallback_worker.get_redis",
             AsyncMock(return_value=redis),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.acquire_lock",
+            AsyncMock(return_value=None),
         ),
         patch(
             "app.workers.poll_fallback_worker.poll_mailbox",

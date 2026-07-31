@@ -13,6 +13,7 @@ import type {
   DashboardOverview,
   DraftView,
   MailboxOverview,
+  ReplyMemoryResponse,
   SkillCreate,
   SkillResponse,
   SkillUpdate,
@@ -268,6 +269,23 @@ export const api = {
     delete(id: string) {
       return apiFetch<void>(`/api/skills/${id}`, {
         method: "DELETE",
+      });
+    },
+  },
+
+  replyMemory: {
+    list(mailbox?: string) {
+      const qs = new URLSearchParams();
+      if (mailbox) qs.set("mailbox", mailbox);
+      const query = qs.toString();
+      return apiFetch<ReplyMemoryResponse[]>(
+        `/api/reply-memory${query ? `?${query}` : ""}`,
+      );
+    },
+    setExcluded(id: string, is_excluded: boolean) {
+      return apiFetch<ReplyMemoryResponse>(`/api/reply-memory/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ is_excluded }),
       });
     },
   },

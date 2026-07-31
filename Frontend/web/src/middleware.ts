@@ -10,6 +10,13 @@ import type { NextRequest } from "next/server"
  * always 307s back to /login after a successful sign-in.
  *
  * Auth is enforced client-side (in-memory access token + silent refresh).
+ *
+ * CSP notes (Next.js):
+ * https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
+ * Full nonce + strict-dynamic is the long-term target. Until then:
+ * - style-src needs 'unsafe-inline' for Tailwind/runtime styles
+ * - script-src keeps 'unsafe-inline' for Next hydration without nonce plumbing
+ * - 'unsafe-eval' is only needed in development (Turbopack/webpack); omit in prod
  */
 export function middleware(_request: NextRequest) {
   const response = NextResponse.next()
@@ -20,11 +27,13 @@ export function middleware(_request: NextRequest) {
     "geolocation=(), camera=(), microphone=()",
   )
   response.headers.set("X-Content-Type-Options", "nosniff")
-  // SPA CSP: allow self + API origin for fetch; no inline scripts by default
-  // except Next.js hydration needs are handled by Next's own headers in prod.
   const apiBase =
     process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
     "http://localhost:8000"
+  const isProd = process.env.NODE_ENV === "production"
+  const scriptSrc = isProd
+    ? "script-src 'self' 'unsafe-inline'"
+    : "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
   response.headers.set(
     "Content-Security-Policy",
     [
@@ -32,7 +41,7 @@ export function middleware(_request: NextRequest) {
       `connect-src 'self' ${apiBase}`,
       "img-src 'self' data:",
       "style-src 'self' 'unsafe-inline'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      scriptSrc,
       "font-src 'self' data:",
       "frame-ancestors 'none'",
       "base-uri 'self'",

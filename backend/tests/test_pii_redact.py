@@ -15,6 +15,7 @@ from app.llm.pii_redact import (
     TOKEN_DL,
     TOKEN_DOB,
     TOKEN_ID,
+    TOKEN_PHONE,
     TOKEN_SSN,
     scrub_email_for_llm,
     scrub_text,
@@ -84,6 +85,25 @@ def test_scrub_passport_and_ein_labeled() -> None:
     assert TOKEN_ID in text
     assert "X12345678" not in text
     assert "12-3456789" not in text
+
+
+def test_scrub_labeled_phone() -> None:
+    text = scrub_text("Please call phone: (415) 555-0123 about the packet.")
+    assert TOKEN_PHONE in text
+    assert "415" not in text or "555-0123" not in text
+    assert "(415) 555-0123" not in text
+
+
+def test_scrub_e164_phone() -> None:
+    text = scrub_text("Reach me at +14155550123 anytime.")
+    assert TOKEN_PHONE in text
+    assert "+14155550123" not in text
+
+
+def test_scrub_nanp_separated_phone() -> None:
+    text = scrub_text("Office is 415-555-0199 for scheduling.")
+    assert TOKEN_PHONE in text
+    assert "415-555-0199" not in text
 
 
 def test_ops_email_without_pii_unchanged() -> None:

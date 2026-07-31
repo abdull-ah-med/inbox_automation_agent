@@ -111,9 +111,15 @@ export const ThreadTriageSidebar = ({
     await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
   }
 
+  const draftId = draft?.id
+
   const approveMutation = useMutation({
-    mutationFn: (body?: { edited_body?: string }) =>
-      api.drafts.approve(draft!.id, body),
+    mutationFn: (body?: { edited_body?: string }) => {
+      if (!draftId) {
+        throw new Error("No draft available to approve")
+      }
+      return api.drafts.approve(draftId, body)
+    },
     onSuccess: async () => {
       setEditOpen(false)
       setActionError(null)
@@ -125,8 +131,12 @@ export const ThreadTriageSidebar = ({
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (feedback_note: string) =>
-      api.drafts.reject(draft!.id, { feedback_note }),
+    mutationFn: (feedback_note: string) => {
+      if (!draftId) {
+        throw new Error("No draft available to reject")
+      }
+      return api.drafts.reject(draftId, { feedback_note })
+    },
     onSuccess: async () => {
       setRejectOpen(false)
       setRejectNote("")
@@ -139,8 +149,12 @@ export const ThreadTriageSidebar = ({
   })
 
   const wrongMutation = useMutation({
-    mutationFn: (feedback_note: string) =>
-      api.drafts.markWrong(draft!.id, { feedback_note }),
+    mutationFn: (feedback_note: string) => {
+      if (!draftId) {
+        throw new Error("No draft available to mark wrong")
+      }
+      return api.drafts.markWrong(draftId, { feedback_note })
+    },
     onSuccess: async () => {
       setWrongOpen(false)
       setWrongNote("")

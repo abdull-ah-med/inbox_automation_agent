@@ -139,7 +139,7 @@ async def test_generate_draft_happy_path_uses_settings_model_and_prompt() -> Non
     kwargs = client.messages.parse.await_args.kwargs
     assert kwargs["model"] == "claude-sonnet-4-6"
     assert kwargs["max_tokens"] == draft_llm.DRAFT_MAX_TOKENS
-    assert kwargs["max_tokens"] <= 800
+    assert kwargs["max_tokens"] <= 2048
     assert kwargs["output_format"] is DraftSchema
     system = kwargs["system"]
     assert system[0]["text"] == DRAFT_SYSTEM_PROMPT

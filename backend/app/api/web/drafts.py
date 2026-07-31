@@ -40,18 +40,19 @@ async def approve_draft(
 ) -> DraftView:
     """Approve a draft (optionally with edited body). Does not send email."""
     _ = request, response
-    async with session.begin():
-        updated = await draft_feedback_service.approve_draft(
-            session,
-            draft_id,
-            edited_body=body.edited_body,
-            actor=user.email,
-            settings=settings,
-        )
-
-    # Embed after the approve txn commits so we never hold Postgres during OpenAI.
-    await draft_feedback_service.store_approved_reply_memory(
+    # CurrentUser already autobegins this session — do not session.begin() again.
+    updated = await draft_feedback_service.approve_draft(
         session,
+        draft_id,
+        edited_body=body.edited_body,
+        actor=user.email,
+        settings=settings,
+    )
+    await session.commit()
+
+    # Dedicated session inside the helper — never poison this request session.
+    # https://docs.sqlalchemy.org/en/20/errors.html#this-session-s-transaction-has-been-rolled-back-due-to-a-previous-exception-during-flush
+    await draft_feedback_service.store_approved_reply_memory(
         draft=updated,
         settings=settings,
         openai_client=openai_client,
@@ -76,14 +77,14 @@ async def reject_draft(
 ) -> DraftView:
     """Reject a draft with a required note. Does not send email."""
     _ = request, response
-    async with session.begin():
-        updated = await draft_feedback_service.reject_draft(
-            session,
-            draft_id,
-            feedback_note=body.feedback_note,
-            actor=user.email,
-            settings=settings,
-        )
+    updated = await draft_feedback_service.reject_draft(
+        session,
+        draft_id,
+        feedback_note=body.feedback_note,
+        actor=user.email,
+        settings=settings,
+    )
+    await session.commit()
     return thread_view_service.draft_response_to_view(updated)
 
 
@@ -104,12 +105,12 @@ async def mark_draft_wrong(
 ) -> DraftView:
     """Mark a draft as wrong with a required note. Does not send email."""
     _ = request, response
-    async with session.begin():
-        updated = await draft_feedback_service.mark_wrong(
-            session,
-            draft_id,
-            feedback_note=body.feedback_note,
-            actor=user.email,
-            settings=settings,
-        )
+    updated = await draft_feedback_service.mark_wrong(
+        session,
+        draft_id,
+        feedback_note=body.feedback_note,
+        actor=user.email,
+        settings=settings,
+    )
+    await session.commit()
     return thread_view_service.draft_response_to_view(updated)

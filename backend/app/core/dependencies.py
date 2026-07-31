@@ -181,6 +181,14 @@ def get_slack_app(
 
     token = settings.slack_bot_token.strip()
     signing_secret = settings.slack_signing_secret.strip()
+    if not settings.slack_enabled:
+        logger.info(
+            "slack_disabled",
+            hint="SLACK_ENABLED=false — review cards skipped",
+        )
+        _slack_app = None
+        _slack_app_resolved = True
+        return None
     if not token or not signing_secret:
         logger.warning(
             "slack_unconfigured",

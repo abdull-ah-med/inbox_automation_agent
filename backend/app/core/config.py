@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     graph_notification_url: str = ""
     graph_lifecycle_url: str = ""
     target_mailboxes: str = ""
+    # When false, Slack Bolt is not constructed and review cards are skipped
+    # (pipeline still completes; slack_delivery=skipped_unconfigured).
+    slack_enabled: bool = True
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_review_channel_id: str = ""
@@ -192,12 +195,15 @@ class Settings(BaseSettings):
                 "MSAL_CACHE_ENCRYPTION_KEY must be set outside local "
                 "(Fernet key from cryptography.fernet.Fernet.generate_key())"
             )
-        if not self.slack_bot_token.strip():
-            errors.append("SLACK_BOT_TOKEN must be set when ENVIRONMENT is not local")
-        if not self.slack_signing_secret.strip():
-            errors.append("SLACK_SIGNING_SECRET must be set when ENVIRONMENT is not local")
-        if not self.slack_review_channel_id.strip():
-            errors.append("SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local")
+        if self.slack_enabled:
+            if not self.slack_bot_token.strip():
+                errors.append("SLACK_BOT_TOKEN must be set when ENVIRONMENT is not local")
+            if not self.slack_signing_secret.strip():
+                errors.append("SLACK_SIGNING_SECRET must be set when ENVIRONMENT is not local")
+            if not self.slack_review_channel_id.strip():
+                errors.append(
+                    "SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local"
+                )
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
         db_host = (urlparse(self.database_url).hostname or "").lower()

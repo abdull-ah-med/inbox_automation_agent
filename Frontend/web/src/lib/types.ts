@@ -152,6 +152,16 @@ export interface SkillUpdate {
   is_active?: boolean
 }
 
+export interface ReplyMemoryResponse {
+  id: string
+  draft_id: string
+  mailbox: string
+  reply_text: string
+  original_email_preview: string | null
+  is_excluded: boolean
+  created_at: string
+}
+
 export interface ThreadDetail {
   thread: ThreadSummary
   messages: MessageDetail[]

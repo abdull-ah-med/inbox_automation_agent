@@ -70,7 +70,16 @@ export default function MailboxPage() {
     [pathname, router, searchParams, state, urgency, staleOnly, showFiltered],
   )
 
-  const query = useInfiniteQuery({
+  const {
+    data,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useInfiniteQuery({
     queryKey: [
       "mailbox",
       mailbox,
@@ -94,25 +103,28 @@ export default function MailboxPage() {
   })
 
   const threads = useMemo(
-    () => query.data?.pages.flatMap((p) => p.items) ?? [],
-    [query.data],
+    () => data?.pages.flatMap((p) => p.items) ?? [],
+    [data],
   )
 
+  // TanStack Query infinite-scroll pattern: depend on stable query fields,
+  // not the whole query object (recreated each render).
+  // https://tanstack.com/query/latest/docs/framework/react/guides/infinite-queries
   useEffect(() => {
     const node = sentinelRef.current
     if (!node) return
     const observer = new IntersectionObserver((entries) => {
       if (
         entries[0]?.isIntersecting &&
-        query.hasNextPage &&
-        !query.isFetchingNextPage
+        hasNextPage &&
+        !isFetchingNextPage
       ) {
-        void query.fetchNextPage()
+        void fetchNextPage()
       }
     })
     observer.observe(node)
     return () => observer.disconnect()
-  }, [query])
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
   const color = inboxColor(mailbox)
   const label = inboxLabel(mailbox)
@@ -203,17 +215,17 @@ export default function MailboxPage() {
         </Button>
       </div>
 
-      {query.isLoading ? (
+      {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full rounded-lg" />
           ))}
         </div>
-      ) : query.isError ? (
+      ) : isError ? (
         <ErrorPage
-          error={query.error}
+          error={error}
           onRetry={() => {
-            void query.refetch()
+            void refetch()
           }}
         />
       ) : threads.length === 0 ? (
@@ -231,7 +243,7 @@ export default function MailboxPage() {
             <ThreadCard key={thread.id} thread={thread} />
           ))}
           <div ref={sentinelRef} className="h-8" />
-          {query.isFetchingNextPage ? (
+          {isFetchingNextPage ? (
             <Skeleton className="h-16 w-full rounded-lg" />
           ) : null}
         </div>

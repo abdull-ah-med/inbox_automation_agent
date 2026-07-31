@@ -16,6 +16,7 @@ TOKEN_DL = "[REDACTED_DL]"
 TOKEN_BANK = "[REDACTED_BANK]"
 TOKEN_CARD = "[REDACTED_CARD]"
 TOKEN_ID = "[REDACTED_ID]"
+TOKEN_PHONE = "[REDACTED_PHONE]"
 
 # Ordered: more specific / higher-confidence patterns first.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -91,6 +92,28 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
             r"\d{2}-?\d{7}\b"
         ),
         TOKEN_ID,
+    ),
+    # Labeled phone (NIST SP 800-122 treats telephone numbers as PII).
+    (
+        re.compile(
+            r"(?i)\b(?:phone|tel(?:ephone)?|mobile|cell|fax)\s*(?:number|no\.?|#)?"
+            r"\s*[:#]?\s*"
+            r"(?:"
+            r"\+?\d{1,3}[\s./-]?)?"
+            r"\(?\d{2,4}\)?[\s./-]?\d{2,4}[\s./-]?\d{3,4}"
+        ),
+        TOKEN_PHONE,
+    ),
+    # E.164-style international (+ and country code; ITU-T E.164 max 15 digits).
+    (
+        re.compile(r"(?<!\w)\+[1-9]\d{6,14}(?!\d)"),
+        TOKEN_PHONE,
+    ),
+    # NANP with separators: (415) 555-0123 / 415-555-0123 / 415.555.0123
+    # Area/central office NXX cannot start with 0 or 1 (NANP).
+    (
+        re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?[2-9]\d{2}\)?[\s.-][2-9]\d{2}[\s.-]\d{4}(?!\d)"),
+        TOKEN_PHONE,
     ),
 )
 

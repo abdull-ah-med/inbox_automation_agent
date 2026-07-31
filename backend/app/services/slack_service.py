@@ -198,7 +198,8 @@ def build_review_card(state: EmailTriageState) -> list[dict[str, Any]]:
 
 def _slack_configured(settings: Settings, slack_app: AsyncApp | None) -> bool:
     return (
-        slack_app is not None
+        settings.slack_enabled
+        and slack_app is not None
         and bool(settings.slack_bot_token.strip())
         and bool(settings.slack_signing_secret.strip())
         and bool(settings.slack_review_channel_id.strip())

@@ -15,6 +15,7 @@ from app.core.redis_keys import (
     SCHEDULER_POLL_LOCK_KEY,
     poll_cursor_key,
 )
+from app.core.redis_lock import acquire_lock
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
 from app.models.schemas.graph import GraphMessageSchema
@@ -237,8 +238,10 @@ async def run_poll_all_mailboxes() -> None:
 
     redis = await get_redis()
     lock_ttl = max(settings.poll_interval_seconds - 5, 30)
-    acquired = await redis.set(SCHEDULER_POLL_LOCK_KEY, "1", nx=True, ex=lock_ttl)
-    if not acquired:
+    # Owner-token NX lock (Redis lock pattern) — TTL alone releases; no unsafe DEL.
+    # https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
+    token = await acquire_lock(redis, SCHEDULER_POLL_LOCK_KEY, ttl_seconds=lock_ttl)
+    if token is None:
         logger.info("poll_skipped_not_leader")
         return
 

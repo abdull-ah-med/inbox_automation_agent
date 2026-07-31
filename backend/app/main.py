@@ -20,6 +20,7 @@ from app.api.simulate.send_confirm import router as simulate_send_confirm_router
 from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
+from app.api.web.reply_memory import router as reply_memory_router
 from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
 from app.api.webhooks.graph import router as graph_webhook_router
@@ -44,6 +45,7 @@ from app.core.exceptions import (
     InvalidCredentialsError,
     InvalidCursorError,
     InvalidTokenError,
+    ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
     RuleEngineError,
     SkillBudgetExceededError,
@@ -74,6 +76,7 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     DraftNotFoundError: status.HTTP_404_NOT_FOUND,
     ThreadNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNotFoundError: status.HTTP_404_NOT_FOUND,
+    ReplyMemoryNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNameConflictError: status.HTTP_409_CONFLICT,
     SkillBudgetExceededError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ThreadStateError: status.HTTP_409_CONFLICT,
@@ -221,14 +224,17 @@ def create_app() -> FastAPI:
             logger.warning("health_database_ping_failed")
 
         healthy = redis_status == "ok" and db_status == "ok"
-        body = {
-            "status": "ok" if healthy else "error",
-            "redis": redis_status,
-            "database": db_status,
-        }
+        # Public body is status-only (avoid advertising which subsystem failed).
+        # Component detail stays in structured logs for operators.
+        logger.info(
+            "health_check",
+            healthy=healthy,
+            redis=redis_status,
+            database=db_status,
+        )
         return JSONResponse(
             status_code=status.HTTP_200_OK if healthy else status.HTTP_503_SERVICE_UNAVAILABLE,
-            content=body,
+            content={"status": "ok" if healthy else "error"},
         )
 
     app.include_router(auth_router)
@@ -237,6 +243,7 @@ def create_app() -> FastAPI:
     app.include_router(threads_router)
     app.include_router(drafts_router)
     app.include_router(skills_router)
+    app.include_router(reply_memory_router)
     app.include_router(graph_webhook_router)
     app.include_router(slack_actions_router)
     if mount_dev_routes:

@@ -21,7 +21,17 @@ from app.core.exceptions import (
     ReusedRefreshTokenError,
 )
 from app.core.redis_keys import refresh_grace_key
-from app.core.security.password import hash_password, needs_rehash, verify_password
+from app.core.security.cache_crypto import (
+    CacheEncryptionError,
+    decrypt_cache_blob,
+    encrypt_cache_blob,
+)
+from app.core.security.password import (
+    hash_password,
+    needs_rehash,
+    validate_password_strength,
+    verify_password,
+)
 from app.core.security.tokens import (
     create_access_token,
     generate_refresh_token,
@@ -52,6 +62,8 @@ async def create_user(
     role: str = "user",
 ) -> UserMe:
     """Invite-only user creation (CLI / admin)."""
+    # Same policy as ChangePasswordRequest / seed_user CLI (OWASP length + classes).
+    validate_password_strength(password)
     existing = await user_repo.get_by_email(session, email)
     if existing is not None:
         raise InvalidCredentialsError("User already exists")
@@ -119,7 +131,7 @@ async def refresh(
 
     if stored.revoked_at is not None:
         # Concurrent refresh / network retry: return the same pair within grace.
-        grace = await _load_refresh_grace(redis, token_hash)
+        grace = await _load_refresh_grace(redis, settings, token_hash)
         if grace is not None:
             return grace
 
@@ -165,7 +177,7 @@ async def refresh(
     )
     if not claimed:
         # Lost the race after FOR UPDATE (should be rare); treat as reuse/grace.
-        grace = await _load_refresh_grace(redis, token_hash)
+        grace = await _load_refresh_grace(redis, settings, token_hash)
         if grace is not None:
             return grace
         await refresh_token_repo.revoke_family(session, stored.family_id)
@@ -249,6 +261,43 @@ async def _issue_tokens(
     return AuthResult(response=response, refresh_plaintext=plaintext)
 
 
+def _grace_encryption_key(settings: Settings) -> str | None:
+    """Reuse MSAL Fernet key when set (required outside local)."""
+    key = settings.msal_cache_encryption_key.strip()
+    return key or None
+
+
+def _encode_refresh_grace(settings: Settings, payload_json: str) -> str:
+    """Encrypt grace JSON when a Fernet key is configured (same as MSAL cache).
+
+    Fernet: https://cryptography.io/en/latest/fernet/
+    """
+    key = _grace_encryption_key(settings)
+    if key is None:
+        return payload_json
+    try:
+        return encrypt_cache_blob(payload_json, key)
+    except CacheEncryptionError:
+        logger.exception("refresh_grace_encryption_key_invalid")
+        raise
+
+
+def _decode_refresh_grace(settings: Settings, raw: str) -> str | None:
+    """Decrypt grace payload; fall back to plaintext for pre-encryption entries."""
+    key = _grace_encryption_key(settings)
+    if key is None:
+        return raw
+    try:
+        decrypted = decrypt_cache_blob(raw, key)
+    except CacheEncryptionError:
+        logger.exception("refresh_grace_encryption_key_invalid")
+        return None
+    if decrypted is not None:
+        return decrypted
+    logger.warning("refresh_grace_plaintext_fallback")
+    return raw
+
+
 async def _store_refresh_grace(
     redis: Redis,
     settings: Settings,
@@ -266,17 +315,24 @@ async def _store_refresh_grace(
     }
     await redis.set(
         refresh_grace_key(old_token_hash),
-        json.dumps(payload),
+        _encode_refresh_grace(settings, json.dumps(payload)),
         ex=ttl,
     )
 
 
-async def _load_refresh_grace(redis: Redis, old_token_hash: str) -> AuthResult | None:
+async def _load_refresh_grace(
+    redis: Redis,
+    settings: Settings,
+    old_token_hash: str,
+) -> AuthResult | None:
     raw = await redis.get(refresh_grace_key(old_token_hash))
     if not raw:
         return None
     try:
-        data = json.loads(raw)
+        decoded = _decode_refresh_grace(settings, raw)
+        if decoded is None:
+            return None
+        data = json.loads(decoded)
         user = UserMe.model_validate(data["user"])
         response = TokenResponse(
             access_token=data["access_token"],
