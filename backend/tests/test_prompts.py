@@ -11,6 +11,7 @@ from typing import get_args
 
 from app.llm.prompts import (
     DRAFT_SYSTEM_PROMPT,
+    MESSAGE_SUMMARY_SYSTEM_PROMPT,
     PROMPT_VERSION,
     TRIAGE_SYSTEM_PROMPT,
     URGENCY_EXAMPLES,
@@ -57,6 +58,7 @@ def test_triage_prompt_documents_output_fields() -> None:
         "is_spam",
         "has_action_items",
         "needs_context",
+        "routing_category",
     ):
         assert field in TRIAGE_SYSTEM_PROMPT
     assert "confidence" not in TRIAGE_SYSTEM_PROMPT.lower()
@@ -83,6 +85,20 @@ def test_triage_prompt_documents_redaction_tokens() -> None:
 
 def test_prompt_version_present() -> None:
     assert isinstance(PROMPT_VERSION, str) and PROMPT_VERSION.strip()
+
+
+def test_message_summary_prompt_documents_fields() -> None:
+    for field in (
+        "intent",
+        "ask",
+        "commitments",
+        "people",
+        "deadlines",
+        "open_questions",
+        "one_line",
+    ):
+        assert field in MESSAGE_SUMMARY_SYSTEM_PROMPT
+    assert "json" in MESSAGE_SUMMARY_SYSTEM_PROMPT.lower()
 
 
 def test_draft_prompt_requires_teaching_note() -> None:
@@ -117,3 +133,10 @@ def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
     assert "suggested_actions" in DRAFT_SYSTEM_PROMPT
     assert "stakeholder" in DRAFT_SYSTEM_PROMPT
     assert "suggested_actions" in DraftSchema.model_fields
+
+
+def test_draft_prompt_requires_plain_text_reply_body() -> None:
+    lowered = DRAFT_SYSTEM_PROMPT.lower()
+    assert "plain-text" in lowered or "plain text" in lowered
+    assert "markdown" in lowered
+    assert "**bold**" in DRAFT_SYSTEM_PROMPT

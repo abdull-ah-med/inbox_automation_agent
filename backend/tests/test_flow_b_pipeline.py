@@ -18,6 +18,22 @@ from app.services import pipeline_service
 _EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
 _RESOLVE = "app.services.pipeline_service.context_service.resolve_cross_thread_context"
 _GRAPH = "app.services.pipeline_service._resolve_graph_client"
+_SUMMARIZE = "app.services.pipeline_service._summarize_non_spam"
+_SESSION_FACTORY = "app.db.session.get_session_factory"
+
+
+def _session_factory() -> MagicMock:
+    """``async with factory() as session, session.begin():`` compatible mock."""
+    session = AsyncMock()
+    begin_cm = AsyncMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
+
+    factory_cm = AsyncMock()
+    factory_cm.__aenter__ = AsyncMock(return_value=session)
+    factory_cm.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=factory_cm)
 
 
 def _email() -> EmailMessageSchema:
@@ -113,10 +129,8 @@ async def test_flow_b_match_audits_and_passes_context_to_draft() -> None:
         patch(_RESOLVE, new=AsyncMock(return_value=cross)) as resolve,
         patch(_GRAPH, new=AsyncMock(return_value=MagicMock())),
         patch(_EMBED_SAFE, new=AsyncMock(return_value=None)) as embed_mock,
-        patch(
-            "app.db.session.get_session_factory",
-            return_value=MagicMock(),
-        ),
+        patch(_SUMMARIZE, new=AsyncMock()),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
@@ -184,10 +198,8 @@ async def test_flow_b_no_match_falls_back_to_flow_a() -> None:
         patch(_RESOLVE, new=AsyncMock(return_value=None)),
         patch(_GRAPH, new=AsyncMock(return_value=MagicMock())),
         patch(_EMBED_SAFE, new=AsyncMock(return_value=None)) as embed_mock,
-        patch(
-            "app.db.session.get_session_factory",
-            return_value=MagicMock(),
-        ),
+        patch(_SUMMARIZE, new=AsyncMock()),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
@@ -249,10 +261,8 @@ async def test_flow_b_graph_unavailable_audits_no_match_and_drafts() -> None:
         patch(_RESOLVE, new=AsyncMock()) as resolve,
         patch(_GRAPH, new=AsyncMock(return_value=None)),
         patch(_EMBED_SAFE, new=AsyncMock(return_value=None)),
-        patch(
-            "app.db.session.get_session_factory",
-            return_value=MagicMock(),
-        ),
+        patch(_SUMMARIZE, new=AsyncMock()),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
@@ -310,6 +320,8 @@ async def test_flow_a_skips_context_resolution() -> None:
         ) as audit,
         patch(_RESOLVE, new=AsyncMock()) as resolve,
         patch(_EMBED_SAFE, new=AsyncMock(return_value=None)),
+        patch(_SUMMARIZE, new=AsyncMock()),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
@@ -376,11 +388,17 @@ async def test_flow_b_skips_graph_and_context_when_openai_unconfigured() -> None
         patch(_RESOLVE, new=AsyncMock()) as resolve,
         patch(_GRAPH, new=AsyncMock()) as resolve_graph,
         patch(_EMBED_SAFE, new=AsyncMock(return_value=None)) as embed_mock,
+        patch(_SUMMARIZE, new=AsyncMock()),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
+        patch(
+            "app.core.dependencies.openai_client_from_settings",
+            return_value=None,
+        ),
     ):
         state = await pipeline_service.run_after_ingest(
             session=AsyncMock(),
             redis=AsyncMock(),
-            settings=Settings(environment="local"),
+            settings=Settings(environment="local", openai_api_key=""),
             client=AsyncMock(),
             openai_client=None,
             graph_client=MagicMock(),
@@ -395,6 +413,109 @@ async def test_flow_b_skips_graph_and_context_when_openai_unconfigured() -> None
     event_types = [c.kwargs["event_type"] for c in audit.await_args_list]
     assert "context.match" not in event_types
     assert "context.no_match" not in event_types
+
+
+@pytest.mark.asyncio
+async def test_spam_skips_summary() -> None:
+    """Spam terminal path must never call the summarizer."""
+    ingest = _ingest()
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=True,
+            spam_reason="newsletter",
+            has_action_items=False,
+            action_items_summary="",
+            needs_context=False,
+        )
+        state.draft_status = "SKIPPED"
+        return state
+
+    with (
+        patch(
+            "app.services.pipeline_service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(),
+        ) as draft_mock,
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ),
+        patch(_SUMMARIZE, new=AsyncMock()) as summarize,
+        patch(_EMBED_SAFE, new=AsyncMock(return_value=None)),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.draft_status == "SKIPPED"
+    summarize.assert_not_awaited()
+    draft_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_spam_calls_summary() -> None:
+    """Non-spam PENDING path must summarize before draft."""
+    ingest = _ingest()
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=False,
+        )
+        state.draft_status = "PENDING"
+        return state
+
+    async def _run_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="Re: docs",
+            reply_body="Here you go.",
+            teaching_note="Straightforward request.",
+            urgency="NORMAL",
+            urgency_reason="Routine",
+        )
+        return state
+
+    with (
+        patch(
+            "app.services.pipeline_service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_run_draft),
+        ),
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ),
+        patch(_SUMMARIZE, new=AsyncMock()) as summarize,
+        patch(_EMBED_SAFE, new=AsyncMock(return_value=None)),
+        patch(_SESSION_FACTORY, return_value=_session_factory()),
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.draft_status == "DRAFTED"
+    summarize.assert_awaited_once()
 
 
 @pytest.mark.asyncio

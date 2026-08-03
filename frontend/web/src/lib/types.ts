@@ -123,6 +123,8 @@ export interface DraftView {
   edited_body: string | null
   feedback_note: string | null
   feedback_action: string | null
+  feedback_reason_code: string | null
+  routing_category: string | null
 }
 
 export interface SkillResponse {
@@ -131,6 +133,7 @@ export interface SkillResponse {
   description: string | null
   content: string
   category: string | null
+  always_apply: boolean
   is_active: boolean
   created_at: string
   updated_at: string
@@ -140,7 +143,8 @@ export interface SkillCreate {
   name: string
   description?: string
   content: string
-  category?: string
+  category?: string | null
+  always_apply?: boolean
   is_active?: boolean
 }
 
@@ -148,7 +152,8 @@ export interface SkillUpdate {
   name?: string
   description?: string
   content?: string
-  category?: string
+  category?: string | null
+  always_apply?: boolean
   is_active?: boolean
 }
 
@@ -159,6 +164,38 @@ export interface ReplyMemoryResponse {
   reply_text: string
   original_email_preview: string | null
   is_excluded: boolean
+  created_at: string
+}
+
+export interface ToneProfileData {
+  formality: "formal" | "professional" | "conversational"
+  greeting_pattern: string | null
+  sign_off_pattern: string | null
+  typical_length: "short" | "medium" | "long"
+  favored_phrases: string[]
+  avoided_phrases: string[]
+  behavioral_rules: string[]
+}
+
+export interface ToneProfileResponse {
+  id: string
+  mailbox: string
+  routing_category: string
+  profile: ToneProfileData
+  sample_count: number
+  version: number
+  built_at: string
+}
+
+export interface SkillCandidateResponse {
+  id: string
+  mailbox: string
+  routing_category: string
+  reason_code: string
+  proposed_name: string
+  proposed_content: string
+  source_rejection_ids: string[]
+  status: "pending" | "accepted" | "dismissed"
   created_at: string
 }
 

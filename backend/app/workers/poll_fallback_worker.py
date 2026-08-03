@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 
 from app.core.config import get_settings
 from app.core.dependencies import get_graph_auth, get_graph_client, get_redis
+from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
     DEFAULT_POLL_LOOKBACK_SECONDS,
     SCHEDULER_POLL_LOCK_KEY,
@@ -70,18 +71,34 @@ async def _collect_poll_messages(
     graph_client: GraphClient,
     filter_query: str,
 ) -> list[GraphMessageSchema]:
-    """List messages from all poll folders, dedupe by id, sort by received time."""
+    """List messages from all poll folders, dedupe by id, sort by received time.
+
+    Per-folder Graph failures are logged and skipped so one denied folder does
+    not abort the mailbox. If every folder fails, raises ``GraphClientError``
+    so the caller can skip cursor updates.
+    """
     messages: list[GraphMessageSchema] = []
     seen_ids: set[str] = set()
+    folder_errors = 0
     for folder in _POLL_FOLDERS:
-        folder_messages = await graph_client.list_messages(
-            mailbox,
-            folder=folder,
-            filter_query=filter_query,
-            orderby="receivedDateTime asc",
-            top=50,
-            follow_next_link=True,
-        )
+        try:
+            folder_messages = await graph_client.list_messages(
+                mailbox,
+                folder=folder,
+                filter_query=filter_query,
+                orderby="receivedDateTime asc",
+                top=50,
+                follow_next_link=True,
+            )
+        except GraphClientError as exc:
+            folder_errors += 1
+            logger.warning(
+                "poll_folder_failed",
+                mailbox=mailbox,
+                folder=folder,
+                error=str(exc),
+            )
+            continue
         logger.info(
             "poll_folder_fetched",
             mailbox=mailbox,
@@ -93,6 +110,10 @@ async def _collect_poll_messages(
                 continue
             seen_ids.add(message.id)
             messages.append(message)
+    if folder_errors == len(_POLL_FOLDERS):
+        raise GraphClientError(
+            f"Graph list failed for all poll folders on mailbox {mailbox}"
+        )
     messages.sort(key=_message_sort_key)
     return messages
 
@@ -139,11 +160,21 @@ async def poll_mailbox(
         folders=_POLL_FOLDERS,
     )
 
-    messages = await _collect_poll_messages(
-        mailbox,
-        graph_client=graph_client,
-        filter_query=filter_query,
-    )
+    try:
+        messages = await _collect_poll_messages(
+            mailbox,
+            graph_client=graph_client,
+            filter_query=filter_query,
+        )
+    except GraphClientError as exc:
+        # Access denied / missing mailbox / transient Graph errors must not
+        # abort the scheduler, backfill loop, or lifecycle catch-up.
+        logger.warning(
+            "poll_mailbox_skipped_graph_error",
+            mailbox=mailbox,
+            error=str(exc),
+        )
+        return
 
     cursor_candidate = existing_cursor
     advance_cursor = True

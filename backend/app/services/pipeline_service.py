@@ -20,14 +20,18 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import draft_repo, skill_repo, thread_repo
+from app.repositories import draft_repo, thread_repo
 from app.services import (
     audit_service,
     context_service,
     draft_service,
     embedding_service,
+    rejection_memory_service,
     reply_memory_service,
+    skill_selection_service,
     slack_service,
+    summary_service,
+    tone_profile_service,
     triage_service,
 )
 from app.services.triage_service import decide_triage_outcome
@@ -228,6 +232,46 @@ async def _resolve_graph_client(
 _TRIAGE_ELIGIBLE_STATUSES = frozenset({"ingested", "retry_triage"})
 
 
+async def _summarize_non_spam(
+    *,
+    state: EmailTriageState,
+    client: AsyncAnthropic,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Summarize current + siblings when triage is non-spam; never raises."""
+    if state.triage is None or state.triage.is_spam:
+        return
+    try:
+        async with session_factory() as session, session.begin():
+            await summary_service.summarize_current_if_needed(
+                session,
+                email=state.original_email,
+                client=client,
+                settings=settings,
+            )
+        await summary_service.backfill_sibling_summaries(
+            session_factory=session_factory,
+            emails=list(state.thread_context.messages),
+            current_message_id=state.original_email.message_id,
+            client=client,
+            settings=settings,
+        )
+        # Refresh summary fields on thread_context messages from originals we mutated.
+        by_id = {m.message_id: m for m in state.thread_context.messages}
+        if state.original_email.message_id in by_id:
+            by_id[
+                state.original_email.message_id
+            ].summary_one_line = state.original_email.summary_one_line
+            by_id[state.original_email.message_id].summary_json = state.original_email.summary_json
+    except Exception:
+        logger.exception(
+            "pipeline_summary_failed",
+            conversation_id=state.original_email.conversation_id,
+            message_id=state.original_email.message_id,
+        )
+
+
 async def _safe_audit(
     session: AsyncSession,
     *,
@@ -407,6 +451,14 @@ async def run_after_ingest(
     from app.db.session import get_session_factory
 
     embed_client = openai_client or openai_client_from_settings(settings)
+    factory = get_session_factory()
+    if state.triage is not None and not state.triage.is_spam:
+        await _summarize_non_spam(
+            state=state,
+            client=client,
+            settings=settings,
+            session_factory=factory,
+        )
     needs_context = bool(state.triage and state.triage.needs_context)
 
     # Non-spam: always embed. Flow B (needs_context) embeds inside context_service.
@@ -481,7 +533,7 @@ async def run_after_ingest(
         session,
         openai_client=embed_client,
         settings=settings,
-        email_text=f"{email.subject}\n\n{email.body_text}",
+        email_text=f"{email.subject}\n\n{email.body_clean or email.body_text}",
         mailbox=email.mailbox,
         limit=3,
     )
@@ -494,6 +546,7 @@ async def run_after_ingest(
         thread_id=uuid.UUID(ingest_result.thread_id),
         cross_thread_context=cross_thread,
         tone_references=tone_references,
+        openai_client=embed_client,
     )
 
     draft_event = "draft.generated" if state.draft_status == "DRAFTED" else "draft.requires_human"
@@ -591,6 +644,15 @@ async def _run_phased_post_ingest(
         )
         await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
 
+    # Non-spam: summarize before draft/embed so packing has summary lines.
+    if state.triage is not None and not state.triage.is_spam:
+        await _summarize_non_spam(
+            state=state,
+            client=client,
+            settings=settings,
+            session_factory=session_factory,
+        )
+
     if state.draft_status != "PENDING":
         await _embed_in_fresh_session(
             state=state,
@@ -662,28 +724,49 @@ async def _run_phased_post_ingest(
             message_id=message_id,
         )
 
-    # --- Short read for draft idempotency + skills + tone refs, then release before Sonnet ---
+    # --- Short read for draft idempotency + skills + tone + constraints, then release ---
     skill_contents: list[str] = []
     tone_references: list[str] = []
+    tone_profile_block: str | None = None
+    negative_constraints: list[str] = []
+    email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
+    routing_category = state.triage.routing_category if state.triage is not None else "general"
     async with session_factory() as session:
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
-        try:
-            active_skills = await skill_repo.list_active(session)
-            skill_contents = [skill.content for skill in active_skills]
-        except Exception:
-            logger.exception(
-                "skill_load_failed",
-                conversation_id=email.conversation_id,
-                mailbox=email.mailbox,
-                message_id=message_id,
-            )
-            skill_contents = []
-        tone_references = await reply_memory_service.find_similar_replies(
+        if state.triage is not None:
+            try:
+                skill_contents = await skill_selection_service.select_skill_contents(
+                    session,
+                    client=client,
+                    settings=settings,
+                    openai_client=openai_client,
+                    email=email,
+                    triage=state.triage,
+                    conversation_id=email.conversation_id,
+                )
+            except Exception:
+                logger.exception(
+                    "skill_load_failed",
+                    conversation_id=email.conversation_id,
+                    mailbox=email.mailbox,
+                    message_id=message_id,
+                )
+                skill_contents = []
+        tone_profile_block, tone_references = await tone_profile_service.load_for_draft(
             session,
             openai_client=openai_client,
             settings=settings,
-            email_text=f"{email.subject}\n\n{email.body_text}",
             mailbox=email.mailbox,
+            routing_category=routing_category,
+            email_text=email_text,
+        )
+        negative_constraints = await rejection_memory_service.find_negative_constraints(
+            session,
+            openai_client=openai_client,
+            settings=settings,
+            email_text=email_text,
+            mailbox=email.mailbox,
+            routing_category=routing_category,
             limit=3,
         )
         await session.commit()
@@ -693,6 +776,8 @@ async def _run_phased_post_ingest(
         *,
         cross_thread_context: CrossThreadContextSchema | None = None,
         tone_references: list[str] | None = None,
+        tone_profile: str | None = None,
+        negative_constraints: list[str] | None = None,
     ) -> EmailTriageState:
         if existing is not None:
             current.draft = DraftSchema.model_validate(
@@ -715,7 +800,9 @@ async def _run_phased_post_ingest(
                 settings=settings,
                 cross_thread_context=cross_thread_context,
                 tone_references=tone_references,
+                tone_profile=tone_profile,
                 skills=skill_contents,
+                negative_constraints=negative_constraints,
             )
         except DraftGenerationError as exc:
             logger.warning(
@@ -740,6 +827,9 @@ async def _run_phased_post_ingest(
                 draft=generated.draft,
                 prompt_version=generated.prompt_version,
                 context_match_confidence=confidence,
+                routing_category=(
+                    state.triage.routing_category if state.triage is not None else None
+                ),
             )
             current.draft = DraftSchema.model_validate(
                 persisted.model_dump(include=set(DraftSchema.model_fields))
@@ -764,6 +854,8 @@ async def _run_phased_post_ingest(
             state,
             cross_thread_context=cross_thread,
             tone_references=tone_references,
+            tone_profile=tone_profile_block,
+            negative_constraints=negative_constraints,
         )
     else:
         _embed_result, state = await asyncio.gather(
@@ -773,7 +865,12 @@ async def _run_phased_post_ingest(
                 settings=settings,
                 session_factory=session_factory,
             ),
-            _generate_and_persist_draft(state, tone_references=tone_references),
+            _generate_and_persist_draft(
+                state,
+                tone_references=tone_references,
+                tone_profile=tone_profile_block,
+                negative_constraints=negative_constraints,
+            ),
         )
         _ = _embed_result
 

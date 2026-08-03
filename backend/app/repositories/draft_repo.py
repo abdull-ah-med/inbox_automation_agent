@@ -98,6 +98,8 @@ def _parse_suggested_actions(
 def _to_response(row: Draft) -> DraftResponseSchema:
     suggested, forward_to = _parse_recipients(row.recipients)
     urgency_raw = row.urgency if row.urgency in _VALID_URGENCY else "NORMAL"
+    feedback_reason = row.feedback_reason_code
+    routing = row.routing_category
     return DraftResponseSchema(
         id=row.id,
         thread_id=row.thread_id,
@@ -113,8 +115,10 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         urgency=cast(Urgency, urgency_raw),
         urgency_reason=row.urgency_reason or "",
         context_match_confidence=row.context_match_confidence,
-        feedback_note=row.feedback_note,
-        feedback_action=row.feedback_action,
+        feedback_note=row.feedback_note if isinstance(row.feedback_note, str) else None,
+        feedback_action=row.feedback_action if isinstance(row.feedback_action, str) else None,
+        feedback_reason_code=feedback_reason if isinstance(feedback_reason, str) else None,
+        routing_category=routing if isinstance(routing, str) else None,
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
     )
 
@@ -152,6 +156,7 @@ async def create_draft(
     draft: DraftSchema,
     prompt_version: str,
     context_match_confidence: float | None = None,
+    routing_category: str | None = None,
 ) -> DraftResponseSchema:
     """Insert a draft or return the existing row on ``message_id`` conflict.
 
@@ -171,6 +176,7 @@ async def create_draft(
         urgency_reason=draft.urgency_reason,
         context_match_confidence=context_match_confidence,
         suggested_actions=_suggested_actions_payload(draft),
+        routing_category=routing_category,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["message_id"],
@@ -252,6 +258,7 @@ async def reject_draft(
     draft_id: uuid.UUID,
     *,
     feedback_note: str,
+    reason_code: str,
 ) -> DraftResponseSchema | None:
     existing = await get_draft_by_id(session, draft_id)
     if existing is None:
@@ -266,6 +273,7 @@ async def reject_draft(
             rejected_at=datetime.now(UTC),
             feedback_note=feedback_note,
             feedback_action="reject",
+            feedback_reason_code=reason_code,
             approved_at=None,
         )
         .returning(Draft)
@@ -283,6 +291,7 @@ async def mark_wrong(
     draft_id: uuid.UUID,
     *,
     feedback_note: str,
+    reason_code: str,
 ) -> DraftResponseSchema | None:
     existing = await get_draft_by_id(session, draft_id)
     if existing is None:
@@ -296,6 +305,7 @@ async def mark_wrong(
         .values(
             feedback_note=feedback_note,
             feedback_action="wrong",
+            feedback_reason_code=reason_code,
             approved_at=None,
         )
         .returning(Draft)
@@ -320,6 +330,63 @@ async def get_approved_drafts(
     stmt = stmt.order_by(Draft.approved_at.desc()).limit(limit)
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
+
+
+async def count_approvals(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    routing_category: str | None = None,
+    since: datetime | None = None,
+) -> int:
+    """Count approved drafts for a mailbox (optional category + since filter)."""
+    stmt = (
+        select(func.count())
+        .select_from(Draft)
+        .join(Thread, Thread.id == Draft.thread_id)
+        .where(
+            Thread.mailbox == mailbox,
+            Draft.approved_at.is_not(None),
+            Draft.feedback_action == "approve",
+        )
+    )
+    if routing_category is not None:
+        stmt = stmt.where(Draft.routing_category == routing_category)
+    if since is not None:
+        stmt = stmt.where(Draft.approved_at > since)
+    result = await session.execute(stmt)
+    return int(result.scalar_one())
+
+
+async def list_recent_approved_bodies(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    routing_category: str | None = None,
+    limit: int = 20,
+) -> list[str]:
+    """Return recent approved reply bodies (edited_body ?? body), newest first."""
+    capped = max(1, min(limit, 50))
+    stmt = (
+        select(Draft.edited_body, Draft.body)
+        .join(Thread, Thread.id == Draft.thread_id)
+        .where(
+            Thread.mailbox == mailbox,
+            Draft.approved_at.is_not(None),
+            Draft.feedback_action == "approve",
+        )
+        .order_by(Draft.approved_at.desc())
+        .limit(capped)
+    )
+    if routing_category is not None:
+        stmt = stmt.where(Draft.routing_category == routing_category)
+    result = await session.execute(stmt)
+    bodies: list[str] = []
+    for edited, body in result.all():
+        text = (edited or body or "").strip()
+        if text:
+            bodies.append(text)
+    return bodies
 
 
 async def latest_teaching_notes_by_threads(

@@ -5,12 +5,13 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db
+from app.core.config import Settings, get_settings
+from app.core.dependencies import OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
-from app.core.exceptions import SkillNotFoundError
+from app.core.exceptions import SkillBudgetExceededError, SkillNameConflictError, SkillNotFoundError
 from app.core.rate_limit import limiter
 from app.models.schemas.skill import (
     SkillCreateSchema,
@@ -18,10 +19,12 @@ from app.models.schemas.skill import (
     SkillUpdateSchema,
 )
 from app.repositories import skill_repo
+from app.services import skill_embedding_service
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+AppSettings = Annotated[Settings, Depends(get_settings)]
 
 
 @router.get(
@@ -51,11 +54,30 @@ async def create_skill(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: AppSettings,
+    openai_client: OpenAIClientDep,
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
     # CurrentAdmin/CurrentUser already autobegins this session — do not begin again.
-    created = await skill_repo.create(session, body)
+    try:
+        created = await skill_repo.create(session, body)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except SkillBudgetExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SkillNameConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await skill_embedding_service.maybe_embed_skill(
+        session,
+        skill_id=created.id,
+        name=created.name,
+        description=created.description,
+        settings=settings,
+        openai_client=openai_client,
+    )
     await session.commit()
     return created
 
@@ -72,12 +94,31 @@ async def update_skill(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: AppSettings,
+    openai_client: OpenAIClientDep,
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
-    updated = await skill_repo.update_skill(session, skill_id, body)
+    try:
+        updated = await skill_repo.update_skill(session, skill_id, body)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except SkillBudgetExceededError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except SkillNameConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if updated is None:
         raise SkillNotFoundError(f"Skill not found: {skill_id}")
+    await skill_embedding_service.maybe_embed_skill(
+        session,
+        skill_id=updated.id,
+        name=updated.name,
+        description=updated.description,
+        settings=settings,
+        openai_client=openai_client,
+    )
     await session.commit()
     return updated
 

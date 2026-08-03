@@ -1,0 +1,23 @@
+Vendored from Mailgun Talon
+===========================
+
+This directory contains a minimal subset of the Mailgun Talon library
+(https://github.com/mailgun/talon), pinned to commit:
+
+  71d9b6eb78e985bcdfbf99b69c20c001b4b818c4
+
+License: Apache License 2.0 (see LICENSE in this directory).
+
+Files included (quotations + bruteforce signature extraction only):
+  - constants.py
+  - utils.py
+  - html_quotations.py
+  - quotations.py
+  - signature/constants.py
+  - signature/bruteforce.py
+
+Modifications from upstream:
+  - Package imports rewritten from ``talon.*`` to relative imports under
+    ``app.llm._vendor.talon``.
+  - Removed unused ``from six.moves import range`` (Python 3 builtin).
+  - Minimal ``__init__.py`` files that do not import the ML classifier tree.

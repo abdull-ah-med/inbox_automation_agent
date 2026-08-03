@@ -87,6 +87,7 @@ def _drafted_state(*, urgency: str = "HIGH") -> EmailTriageState:
 
 def _configured_settings() -> Settings:
     return Settings(
+        slack_enabled=True,
         slack_bot_token="xoxb-test-token",
         slack_signing_secret="signing-secret-test",
         slack_review_channel_id="C0123456789",

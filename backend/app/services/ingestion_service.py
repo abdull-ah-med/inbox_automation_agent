@@ -33,6 +33,7 @@ from app.core.redis_keys import (
     triage_lock_key,
 )
 from app.graph.client import GraphClient
+from app.llm import email_clean
 from app.models.schemas.email import (
     EmailDirectionEnum,
     EmailMessageSchema,
@@ -104,6 +105,39 @@ def _direction_for_sender(mailbox: str, sender: str) -> EmailDirectionEnum:
     return EmailDirectionEnum.INBOUND
 
 
+def _body_content_type(message: GraphMessageSchema) -> str:
+    if message.body and message.body.content_type:
+        return message.body.content_type.strip().lower() or "text"
+    return "text"
+
+
+def _apply_body_clean(email: EmailMessageSchema) -> EmailMessageSchema:
+    """Compute and attach ``body_clean`` (never raises)."""
+    cleaned = email_clean.clean_email_body(
+        email.body_text,
+        content_type=email.body_content_type,
+    )
+    return email.model_copy(update={"body_clean": cleaned.body_clean})
+
+
+def _ensure_body_clean_from_row(
+    *,
+    body_text: str,
+    body_content_type: str,
+    body_clean: str | None,
+    body_clean_version: int | None,
+) -> tuple[str, int]:
+    """Return (body_clean, version), recomputing when missing or stale."""
+    if (
+        body_clean
+        and body_clean.strip()
+        and body_clean_version == email_clean.CLEAN_VERSION
+    ):
+        return body_clean, body_clean_version
+    cleaned = email_clean.clean_email_body(body_text, content_type=body_content_type)
+    return cleaned.body_clean, email_clean.CLEAN_VERSION
+
+
 def _to_email_message_schema(
     *,
     mailbox: str,
@@ -112,7 +146,7 @@ def _to_email_message_schema(
 ) -> EmailMessageSchema:
     sender = _sender_address(message)
     received_at = message.received_date_time or datetime.now(UTC)
-    return EmailMessageSchema(
+    email = EmailMessageSchema(
         message_id=message.id,
         conversation_id=conversation_id,
         mailbox=mailbox,
@@ -120,12 +154,14 @@ def _to_email_message_schema(
         subject=message.subject or "(no subject)",
         body_text=_body_text(message),
         body_preview=message.body_preview,
+        body_content_type=_body_content_type(message),
         received_at=received_at,
         direction=_direction_for_sender(mailbox, sender),
         to_recipients=_recipient_addresses(message.to_recipients),
         cc_recipients=_recipient_addresses(message.cc_recipients),
         has_attachments=bool(message.has_attachments),
     )
+    return _apply_body_clean(email)
 
 
 async def claim_ingest_dedup(redis: Redis, mailbox: str, message_id: str) -> DedupClaim:
@@ -217,6 +253,23 @@ async def _thread_context_from_db(
     db_messages = await message_repo.list_by_thread(session, thread.id)
     context_messages: list[EmailMessageSchema] = []
     for row in db_messages:
+        body_clean, clean_version = _ensure_body_clean_from_row(
+            body_text=row.body_text,
+            body_content_type=row.body_content_type or "text",
+            body_clean=row.body_clean,
+            body_clean_version=row.body_clean_version,
+        )
+        if (
+            row.body_clean != body_clean
+            or row.body_clean_version != clean_version
+        ):
+            await message_repo.update_body_clean(
+                session,
+                message_id=row.id,
+                body_clean=body_clean,
+                body_clean_version=clean_version,
+                body_clean_computed_at=datetime.now(UTC),
+            )
         context_messages.append(
             EmailMessageSchema(
                 message_id=row.graph_message_id,
@@ -226,6 +279,8 @@ async def _thread_context_from_db(
                 subject=thread.subject,
                 body_text=row.body_text,
                 body_preview=row.body_preview,
+                body_content_type=row.body_content_type or "text",
+                body_clean=body_clean,
                 received_at=row.received_at,
                 direction=(
                     EmailDirectionEnum(row.direction)
@@ -235,6 +290,8 @@ async def _thread_context_from_db(
                 to_recipients=list(row.to_recipients or []),
                 cc_recipients=list(row.cc_recipients or []),
                 has_attachments=bool(row.has_attachments),
+                summary_one_line=row.summary_one_line,
+                summary_json=row.summary_json,
             )
         )
     thread_context = ThreadContextSchema(
@@ -324,6 +381,10 @@ async def ingest_graph_message(
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
                 has_attachments=email_msg.has_attachments,
+                body_content_type=email_msg.body_content_type,
+                body_clean=email_msg.body_clean,
+                body_clean_version=email_clean.CLEAN_VERSION,
+                body_clean_computed_at=datetime.now(UTC),
             )
 
         thread_context = ThreadContextSchema(
@@ -439,6 +500,23 @@ async def ingest_simulated_message(
         )
 
         direction = _direction_for_sender(payload.mailbox, payload.sender)
+        email_msg = _apply_body_clean(
+            EmailMessageSchema(
+                message_id=payload.message_id,
+                conversation_id=payload.conversation_id,
+                mailbox=payload.mailbox,
+                sender=payload.sender,
+                subject=payload.subject,
+                body_text=payload.body_text,
+                body_preview=payload.body_preview,
+                body_content_type="text",
+                received_at=payload.received_at,
+                direction=direction,
+                to_recipients=list(payload.to_recipients),
+                cc_recipients=list(payload.cc_recipients),
+                has_attachments=payload.has_attachments,
+            )
+        )
         await message_repo.create_message(
             session,
             thread_id=thread.id,
@@ -451,22 +529,12 @@ async def ingest_simulated_message(
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),
             has_attachments=payload.has_attachments,
+            body_content_type=email_msg.body_content_type,
+            body_clean=email_msg.body_clean,
+            body_clean_version=email_clean.CLEAN_VERSION,
+            body_clean_computed_at=datetime.now(UTC),
         )
 
-        email_msg = EmailMessageSchema(
-            message_id=payload.message_id,
-            conversation_id=payload.conversation_id,
-            mailbox=payload.mailbox,
-            sender=payload.sender,
-            subject=payload.subject,
-            body_text=payload.body_text,
-            body_preview=payload.body_preview,
-            received_at=payload.received_at,
-            direction=direction,
-            to_recipients=list(payload.to_recipients),
-            cc_recipients=list(payload.cc_recipients),
-            has_attachments=payload.has_attachments,
-        )
         thread_context = ThreadContextSchema(
             conversation_id=payload.conversation_id,
             mailbox=payload.mailbox,

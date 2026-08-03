@@ -63,7 +63,7 @@ def _settings() -> Settings:
         embedding_model="text-embedding-3-small",
         embedding_dimension=8,
         embedding_min_similarity=0.78,
-        embedding_top_k=3,
+        embedding_candidate_k=15,
         openai_api_key="test-key",
     )
 
@@ -134,6 +134,14 @@ async def test_resolve_above_threshold_fetches_thread_and_persists_link() -> Non
             new=AsyncMock(return_value=[match]),
         ) as search,
         patch(
+            "app.services.context_service.embedding_repo.search_fts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.context_service._messages_from_db",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
             "app.services.context_service.thread_link_repo.insert_thread_link",
             new=AsyncMock(return_value=uuid.uuid4()),
         ) as link,
@@ -148,7 +156,9 @@ async def test_resolve_above_threshold_fetches_thread_and_persists_link() -> Non
 
     assert result is not None
     assert result.matched_conversation_id == "conv-matched"
-    assert result.similarity_score == 0.91
+    # Aggregated RRF conversation score for a single vector-leg rank-1 hit.
+    expected_score = 1.0 / (60 + 1)
+    assert abs(result.similarity_score - expected_score) < 1e-6
     assert len(result.thread_messages) == 2
     search.assert_awaited_once()
     assert search.await_args.kwargs["exclude_conversation_id"] == "conv-current"
@@ -161,7 +171,7 @@ async def test_resolve_above_threshold_fetches_thread_and_persists_link() -> Non
     assert link.await_args.kwargs["source_message_id"] == source_pk
     assert link.await_args.kwargs["matched_embedding_id"] == matched_embedding_id
     assert link.await_args.kwargs["matched_conversation_id"] == "conv-matched"
-    assert link.await_args.kwargs["similarity_score"] == 0.91
+    assert abs(link.await_args.kwargs["similarity_score"] - expected_score) < 1e-6
     # Read-only: only list_thread_messages used.
     graph_client.send_mail.assert_not_called()
     graph_client.create_reply.assert_not_called()
@@ -193,6 +203,10 @@ async def test_resolve_below_threshold_returns_none() -> None:
         ),
         patch(
             "app.services.context_service.embedding_repo.search_similar",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.context_service.embedding_repo.search_fts",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -247,6 +261,14 @@ async def test_resolve_graph_error_returns_none_safely() -> None:
             new=AsyncMock(return_value=[match]),
         ),
         patch(
+            "app.services.context_service.embedding_repo.search_fts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.context_service._messages_from_db",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
             "app.services.context_service.thread_link_repo.insert_thread_link",
             new=AsyncMock(),
         ) as link,
@@ -261,3 +283,293 @@ async def test_resolve_graph_error_returns_none_safely() -> None:
 
     assert result is None
     link.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_prefers_corroborated_conversation() -> None:
+    """Fix 6 regression: three corroborating hits beat one stronger single hit."""
+    state = _state()
+    settings = _settings()
+    vector = [0.1] * settings.embedding_dimension
+    stored = EmbeddingMatchSchema(
+        id=uuid.uuid4(),
+        conversation_id=state.original_email.conversation_id,
+        similarity_score=1.0,
+        message_id=uuid.uuid4(),
+    )
+
+    def _match(conv: str, score: float) -> EmbeddingMatchSchema:
+        return EmbeddingMatchSchema(
+            id=uuid.uuid4(),
+            conversation_id=conv,
+            similarity_score=score,
+            message_id=uuid.uuid4(),
+        )
+
+    # Vector ranks (1-indexed): unique fillers + A@2 + B@4,6,9 (Fix 6 layout).
+    vector_matches = [
+        _match("conv-filler-1", 0.95),
+        _match("conv-a", 0.92),
+        _match("conv-filler-3", 0.90),
+        _match("conv-b", 0.88),
+        _match("conv-filler-5", 0.86),
+        _match("conv-b", 0.84),
+        _match("conv-filler-7", 0.82),
+        _match("conv-filler-8", 0.80),
+        _match("conv-b", 0.78),
+    ]
+    graph_client = MagicMock()
+    graph_client.list_thread_messages = AsyncMock(return_value=[_graph_msg("prior-b")])
+    graph_client.send_mail = AsyncMock()
+    graph_client.create_reply = AsyncMock()
+
+    with (
+        patch(
+            "app.services.context_service.embedding_service.embed_email",
+            new=AsyncMock(return_value=vector),
+        ),
+        patch(
+            "app.services.context_service.embedding_service.store_email_embedding",
+            new=AsyncMock(return_value=stored),
+        ),
+        patch(
+            "app.services.context_service.embedding_repo.search_similar",
+            new=AsyncMock(return_value=vector_matches),
+        ),
+        patch(
+            "app.services.context_service.embedding_repo.search_fts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.context_service._messages_from_db",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.context_service.thread_link_repo.insert_thread_link",
+            new=AsyncMock(return_value=uuid.uuid4()),
+        ) as link,
+    ):
+        result = await context_service.resolve_cross_thread_context(
+            state,
+            session_factory=_session_factory(),
+            graph_client=graph_client,
+            openai_client=AsyncMock(),
+            settings=settings,
+        )
+
+    assert result is not None
+    assert result.matched_conversation_id == "conv-b"
+    graph_client.list_thread_messages.assert_awaited_once_with(
+        "elise@example.com",
+        "conv-b",
+    )
+    assert link.await_args.kwargs["matched_conversation_id"] == "conv-b"
+    graph_client.send_mail.assert_not_called()
+    graph_client.create_reply.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resolve_prefers_local_db_messages_over_graph() -> None:
+    state = _state()
+    settings = _settings()
+    vector = [0.1] * settings.embedding_dimension
+    stored = EmbeddingMatchSchema(
+        id=uuid.uuid4(),
+        conversation_id=state.original_email.conversation_id,
+        similarity_score=1.0,
+        message_id=uuid.uuid4(),
+    )
+    match = EmbeddingMatchSchema(
+        id=uuid.uuid4(),
+        conversation_id="conv-matched",
+        similarity_score=0.91,
+        message_id=uuid.uuid4(),
+    )
+    local_msgs = [
+        _email(
+            message_id="local-1",
+            conversation_id="conv-matched",
+            body_clean="Local cleaned body",
+            summary_one_line="Local summary",
+        )
+    ]
+    graph_client = MagicMock()
+    graph_client.list_thread_messages = AsyncMock()
+    graph_client.send_mail = AsyncMock()
+    graph_client.create_reply = AsyncMock()
+
+    with (
+        patch(
+            "app.services.context_service.embedding_service.embed_email",
+            new=AsyncMock(return_value=vector),
+        ),
+        patch(
+            "app.services.context_service.embedding_service.store_email_embedding",
+            new=AsyncMock(return_value=stored),
+        ),
+        patch(
+            "app.services.context_service.embedding_repo.search_similar",
+            new=AsyncMock(return_value=[match]),
+        ),
+        patch(
+            "app.services.context_service.embedding_repo.search_fts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.context_service._messages_from_db",
+            new=AsyncMock(return_value=local_msgs),
+        ),
+        patch(
+            "app.services.context_service.thread_link_repo.insert_thread_link",
+            new=AsyncMock(return_value=uuid.uuid4()),
+        ),
+    ):
+        result = await context_service.resolve_cross_thread_context(
+            state,
+            session_factory=_session_factory(),
+            graph_client=graph_client,
+            openai_client=AsyncMock(),
+            settings=settings,
+        )
+
+    assert result is not None
+    assert result.thread_messages == local_msgs
+    graph_client.list_thread_messages.assert_not_awaited()
+    graph_client.send_mail.assert_not_called()
+    graph_client.create_reply.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_messages_from_db_builds_schemas() -> None:
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    thread_id = uuid.uuid4()
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="elise@example.com",
+        conversation_id="conv-matched",
+        subject="Prior",
+        state="NEW",
+        last_message_at=datetime(2026, 7, 1, tzinfo=UTC),
+        last_updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    row = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="local-1",
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="raw",
+        body_preview="raw",
+        body_content_type="text",
+        body_clean="cleaned local",
+        body_clean_version=1,
+        received_at=datetime(2026, 7, 1, tzinfo=UTC),
+        to_recipients=[],
+        cc_recipients=[],
+        summary_one_line="one line",
+        summary_json={"one_line": "one line"},
+    )
+
+    with (
+        patch(
+            "app.services.context_service.thread_repo.get_by_conversation_id",
+            new=AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.context_service.message_repo.list_by_thread",
+            new=AsyncMock(return_value=[row]),
+        ),
+    ):
+        msgs = await context_service._messages_from_db(
+            _session_factory(),
+            mailbox="elise@example.com",
+            conversation_id="conv-matched",
+        )
+
+    assert msgs is not None
+    assert len(msgs) == 1
+    assert msgs[0].body_clean == "cleaned local"
+    assert msgs[0].summary_one_line == "one line"
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_none_when_embed_fails() -> None:
+    with patch(
+        "app.services.context_service.embedding_service.embed_email",
+        new=AsyncMock(side_effect=RuntimeError("openai down")),
+    ):
+        result = await context_service.resolve_cross_thread_context(
+            _state(),
+            session_factory=_session_factory(),
+            graph_client=MagicMock(),
+            openai_client=AsyncMock(),
+            settings=_settings(),
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_messages_from_db_returns_none_when_thread_missing() -> None:
+    with patch(
+        "app.services.context_service.thread_repo.get_by_conversation_id",
+        new=AsyncMock(return_value=None),
+    ):
+        msgs = await context_service._messages_from_db(
+            _session_factory(),
+            mailbox="elise@example.com",
+            conversation_id="missing",
+        )
+    assert msgs is None
+
+
+@pytest.mark.asyncio
+async def test_messages_from_db_recomputes_missing_clean() -> None:
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    thread_id = uuid.uuid4()
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="elise@example.com",
+        conversation_id="conv-matched",
+        subject="Prior",
+        state="NEW",
+        last_message_at=datetime(2026, 7, 1, tzinfo=UTC),
+        last_updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    row = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="local-1",
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="Please reply with the packet today.",
+        body_preview="Please reply",
+        body_content_type="text",
+        body_clean=None,
+        received_at=datetime(2026, 7, 1, tzinfo=UTC),
+        to_recipients=[],
+        cc_recipients=[],
+    )
+
+    with (
+        patch(
+            "app.services.context_service.thread_repo.get_by_conversation_id",
+            new=AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.context_service.message_repo.list_by_thread",
+            new=AsyncMock(return_value=[row]),
+        ),
+    ):
+        msgs = await context_service._messages_from_db(
+            _session_factory(),
+            mailbox="elise@example.com",
+            conversation_id="conv-matched",
+        )
+
+    assert msgs is not None
+    assert msgs[0].body_clean
+    assert "packet" in (msgs[0].body_clean or "")

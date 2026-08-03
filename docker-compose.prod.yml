@@ -60,7 +60,7 @@ services:
 
   frontend:
     build:
-      context: ./Frontend/web
+      context: ./frontend/web
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}

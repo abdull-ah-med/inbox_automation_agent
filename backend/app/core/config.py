@@ -67,7 +67,18 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = Field(default=1536, ge=1, le=3072)
     embedding_min_similarity: float = Field(default=0.78, ge=0.0, le=1.0)
-    embedding_top_k: int = Field(default=3, ge=1, le=20)
+    # Hybrid retrieval: over-fetch per leg, then collapse to conversations.
+    embedding_candidate_k: int = Field(default=15, ge=1, le=50)
+    embedding_final_conversations: int = Field(default=1, ge=1, le=5)
+    embedding_secondary_margin: float = Field(default=0.85, ge=0.0, le=1.0)
+    embedding_corroboration_bonus: float = Field(default=0.15, ge=0.0, le=1.0)
+    embedding_corroboration_max_hits: int = Field(default=3, ge=0, le=10)
+    rrf_k: int = Field(default=60, ge=1)
+    # text-embedding-3-* hard cap is 8191 tokens (OpenAI cookbook); stay under.
+    embedding_max_input_tokens: int = Field(default=8000, ge=1, le=8191)
+    # Same-thread prompt packing.
+    thread_verbatim_tail: int = Field(default=2, ge=0, le=10)
+    thread_full_if_at_most: int = Field(default=5, ge=1, le=50)
 
     # Web auth (JWT access + rotating refresh cookie).
     jwt_secret: str = ""

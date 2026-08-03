@@ -106,6 +106,36 @@ def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     assert "Thanks — sending the packet now." in content
 
 
+def test_build_user_content_uses_cleaned_body_not_quotes() -> None:
+    email = EmailMessageSchema(
+        message_id="m1",
+        conversation_id="c1",
+        mailbox="elise@example.com",
+        sender="vendor@example.com",
+        subject="Need docs",
+        body_text=(
+            "Please send the packet.\n\n"
+            "-----Original Message-----\nFrom: old\nQuoted junk\n"
+            "CONFIDENTIALITY NOTICE: This email is confidential."
+        ),
+        body_clean="Please send the packet.",
+        body_preview="Please send",
+        received_at=datetime(2026, 7, 10, 12, 0, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+        to_recipients=["elise@example.com"],
+        cc_recipients=[],
+    )
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+    )
+    assert "Please send the packet." in content
+    assert "Original Message" not in content
+    assert "CONFIDENTIALITY NOTICE" not in content
+    assert "Quoted junk" not in content
+
+
 def test_draft_schema_has_no_confidence_field() -> None:
     assert "confidence" not in DraftSchema.model_fields
     draft = _ok_draft()
