@@ -1,4 +1,4 @@
-"""Email embedding repository — insert + thresholded pgvector cosine search."""
+"""Email embedding repository — insert + hybrid (vector + FTS) search."""
 
 from __future__ import annotations
 
@@ -12,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.repositories import message_repo
-
-# Cosine distance (<=>) → similarity = 1 - distance (pgvector docs / OpenAI FAQ).
 
 
 async def insert_embedding(
@@ -29,6 +27,8 @@ async def insert_embedding(
     body_preview: str,
     graph_message_id: str | None = None,
     message_pk: uuid.UUID | None = None,
+    search_document: str = "",
+    embed_clean_version: int | None = None,
 ) -> EmbeddingMatchSchema:
     """Insert an embedding row; skip duplicate when ``message_id`` already exists.
 
@@ -62,10 +62,11 @@ async def insert_embedding(
         "embedding": embedding,
         "sent_at": sent_at,
         "body_preview": body_preview,
+        "search_document": search_document or "",
+        "embed_clean_version": embed_clean_version,
     }
 
     if resolved_pk is not None:
-        # Partial unique index uq_email_embeddings_message_id (message_id IS NOT NULL).
         stmt = (
             pg_insert(EmailEmbedding)
             .values(**values)
@@ -85,7 +86,6 @@ async def insert_embedding(
                 similarity_score=1.0,
                 message_id=inserted.message_id,
             )
-        # Concurrent insert won — return the existing row.
         existing = (
             await session.execute(
                 select(EmailEmbedding).where(EmailEmbedding.message_id == resolved_pk)
@@ -109,6 +109,27 @@ async def insert_embedding(
     )
 
 
+async def update_embedding_document(
+    session: AsyncSession,
+    *,
+    embedding_id: uuid.UUID,
+    embedding: list[float],
+    search_document: str,
+    body_preview: str,
+    embed_clean_version: int,
+) -> None:
+    row = (
+        await session.execute(select(EmailEmbedding).where(EmailEmbedding.id == embedding_id))
+    ).scalar_one_or_none()
+    if row is None:
+        return
+    row.embedding = embedding
+    row.search_document = search_document
+    row.body_preview = body_preview
+    row.embed_clean_version = embed_clean_version
+    await session.flush()
+
+
 async def search_similar(
     session: AsyncSession,
     *,
@@ -117,13 +138,7 @@ async def search_similar(
     top_k: int,
     exclude_conversation_id: str | None = None,
 ) -> list[EmbeddingMatchSchema]:
-    """Return top-K cosine matches at or above ``min_similarity``.
-
-    Filters by distance in SQL (``<=> <= 1 - min_similarity``) before LIMIT so
-    thresholding does not shrink the candidate window in application code.
-    Uses ``vector_cosine_ops`` / ``cosine_distance`` so the HNSW index applies.
-    See https://github.com/pgvector/pgvector#querying
-    """
+    """Return top-K cosine matches at or above ``min_similarity``."""
     max_distance = 1.0 - min_similarity
     distance = EmailEmbedding.embedding.cosine_distance(embedding)
     similarity = (1 - distance).label("similarity_score")
@@ -144,6 +159,50 @@ async def search_similar(
                 id=row.id,
                 conversation_id=row.conversation_id,
                 similarity_score=float(score),
+                message_id=row.message_id,
+            )
+        )
+    return matches
+
+
+async def search_fts(
+    session: AsyncSession,
+    *,
+    query_text: str,
+    top_k: int,
+    exclude_conversation_id: str | None = None,
+) -> list[EmbeddingMatchSchema]:
+    """Return top-K full-text matches by ``ts_rank_cd`` on ``search_vector``."""
+    from sqlalchemy import column, func, literal_column
+
+    cleaned = (query_text or "").strip()
+    if not cleaned:
+        return []
+
+    # Generated ``search_vector`` is not an ORM attribute; reference by name.
+    search_vector: object = column("search_vector")
+    tsquery = func.websearch_to_tsquery("english", cleaned)
+    rank = func.ts_rank_cd(search_vector, tsquery).label("rank")
+    stmt = (
+        select(EmailEmbedding, rank)
+        .where(literal_column("search_vector").op("@@")(tsquery))
+        .order_by(rank.desc())
+        .limit(top_k)
+    )
+    if exclude_conversation_id is not None:
+        stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
+
+    result = await session.execute(stmt)
+    matches: list[EmbeddingMatchSchema] = []
+    for row, score in result.all():
+        # Normalize FTS rank into [0, 1] soft range for schema validation; RRF
+        # uses ranks not raw scores so absolute magnitude is unused downstream.
+        raw = float(score) if score is not None else 0.0
+        matches.append(
+            EmbeddingMatchSchema(
+                id=row.id,
+                conversation_id=row.conversation_id,
+                similarity_score=min(1.0, max(0.0, raw)),
                 message_id=row.message_id,
             )
         )

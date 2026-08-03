@@ -59,19 +59,24 @@ def sample_message() -> GraphMessageSchema:
 @pytest.mark.asyncio
 async def test_thread_context_from_db_includes_recipients() -> None:
     """retry_triage rebuild must restore To/CC for Haiku PoI rules."""
+    from app.repositories.message_repo import MessageSchema
     from app.services.ingestion_service import _thread_context_from_db
 
     thread_id = uuid.uuid4()
     message_id = "msg-1"
     session = AsyncMock()
-    msg_row = MagicMock(
-        graph_message_id=message_id,
+    msg_row = MessageSchema(
+        id=uuid.uuid4(),
         thread_id=thread_id,
+        graph_message_id=message_id,
+        direction="inbound",
         sender="vendor@example.com",
         body_text="Body",
         body_preview="Body",
+        body_content_type="text",
+        body_clean="Body",
+        body_clean_version=1,
         received_at=datetime.now(UTC),
-        direction="inbound",
         to_recipients=["user@example.com"],
         cc_recipients=["cc@example.com"],
     )
@@ -109,6 +114,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
     rebuilt = result.thread_context.messages[0]
     assert rebuilt.to_recipients == ["user@example.com"]
     assert rebuilt.cc_recipients == ["cc@example.com"]
+    assert rebuilt.body_clean == "Body"
 
 
 def test_extract_message_id_from_resource() -> None:

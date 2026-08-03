@@ -109,12 +109,16 @@ async def test_regenerate_creates_new_draft() -> None:
             ),
         ),
         patch(
-            "app.services.draft_regeneration_service.skill_repo.list_active",
+            "app.services.draft_regeneration_service.skill_selection_service.select_skill_contents",
             AsyncMock(return_value=[]),
         ),
         patch(
-            "app.services.draft_regeneration_service.reply_memory_service.find_similar_replies",
-            AsyncMock(return_value=["Thanks — sending the packet now."]),
+            "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",
+            AsyncMock(return_value=(None, ["Thanks — sending the packet now."])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            AsyncMock(return_value=[]),
         ),
         patch(
             "app.services.draft_regeneration_service.draft_llm.generate_draft",

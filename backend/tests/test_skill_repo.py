@@ -20,7 +20,8 @@ def _skill_row(**overrides: object) -> MagicMock:
     row.name = overrides.get("name", "Drug screen")
     row.description = overrides.get("description", "Handle screens")
     row.content = overrides.get("content", "Always CC Jordan")
-    row.category = overrides.get("category", "drug-screen")
+    row.category = overrides.get("category", "escalation")
+    row.always_apply = overrides.get("always_apply", False)
     row.is_active = overrides.get("is_active", True)
     row.created_at = overrides.get("created_at", datetime.now(UTC))
     row.updated_at = overrides.get("updated_at", datetime.now(UTC))
@@ -62,7 +63,7 @@ async def test_create_conflict() -> None:
     with pytest.raises(SkillNameConflictError):
         await skill_repo.create(
             session,
-            SkillCreateSchema(name="Dup", content="x"),
+            SkillCreateSchema(name="Dup", content="x", category="general"),
         )
 
 
@@ -80,12 +81,18 @@ async def test_create_ok() -> None:
         row.id = uuid.uuid4()  # type: ignore[attr-defined]
         row.created_at = datetime.now(UTC)  # type: ignore[attr-defined]
         row.updated_at = datetime.now(UTC)  # type: ignore[attr-defined]
+        row.always_apply = False  # type: ignore[attr-defined]
 
     session.refresh = AsyncMock(side_effect=fake_refresh)
 
     created = await skill_repo.create(
         session,
-        SkillCreateSchema(name="Tone", content="Be warm", description="d", category="tone"),
+        SkillCreateSchema(
+            name="Tone",
+            content="Be warm",
+            description="d",
+            category="general",
+        ),
     )
     assert created.name == "Tone"
     assert created.content == "Be warm"
@@ -106,7 +113,7 @@ async def test_create_active_budget_exceeded() -> None:
     with pytest.raises(SkillBudgetExceededError):
         await skill_repo.create(
             session,
-            SkillCreateSchema(name="Overflow", content="Too many"),
+            SkillCreateSchema(name="Overflow", content="Too many", category="general"),
         )
 
 

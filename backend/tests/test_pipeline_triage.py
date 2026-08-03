@@ -90,6 +90,10 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
             "app.services.pipeline_service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
+        patch(
+            "app.services.pipeline_service._summarize_non_spam",
+            new=AsyncMock(),
+        ),
         _patch_embed() as embed_mock,
     ):
         state = await pipeline_service.run_after_ingest(
@@ -172,6 +176,10 @@ async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
             "app.services.pipeline_service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
+        patch(
+            "app.services.pipeline_service._summarize_non_spam",
+            new=AsyncMock(),
+        ),
         _patch_embed(),
     ):
         state = await pipeline_service.run_after_ingest(

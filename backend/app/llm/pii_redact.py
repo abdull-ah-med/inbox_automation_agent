@@ -166,6 +166,14 @@ def scrub_email_for_llm(email: EmailMessageSchema) -> EmailMessageSchema:
             "body_preview": (
                 scrub_text(email.body_preview) if email.body_preview is not None else None
             ),
+            "body_clean": (
+                scrub_text(email.body_clean) if email.body_clean is not None else None
+            ),
+            "summary_one_line": (
+                scrub_text(email.summary_one_line)
+                if email.summary_one_line is not None
+                else None
+            ),
         }
     )
 

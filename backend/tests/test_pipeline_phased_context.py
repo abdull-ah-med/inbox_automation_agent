@@ -114,11 +114,15 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.pipeline_service.skill_repo.list_active",
+            "app.services.pipeline_service.skill_selection_service.select_skill_contents",
             new=AsyncMock(return_value=[]),
         ),
         patch(
-            "app.services.pipeline_service.reply_memory_service.find_similar_replies",
+            "app.services.pipeline_service.tone_profile_service.load_for_draft",
+            new=AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.pipeline_service.rejection_memory_service.find_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -131,10 +135,14 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             "app.services.pipeline_service.thread_repo.set_thread_outcome",
             new=AsyncMock(return_value=None),
         ),
+        patch(
+            "app.core.dependencies.openai_client_from_settings",
+            return_value=None,
+        ),
     ):
         state = await pipeline_service._run_phased_post_ingest(
             redis=AsyncMock(),
-            settings=Settings(environment="local"),
+            settings=Settings(environment="local", openai_api_key=""),
             client=AsyncMock(),
             openai_client=None,
             ingest_result=_ingest(),

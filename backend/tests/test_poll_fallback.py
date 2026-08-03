@@ -252,6 +252,96 @@ async def test_poll_mailbox_ingests_junk_only_messages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poll_mailbox_access_denied_does_not_raise() -> None:
+    """Graph 403 on every folder must skip the mailbox without crashing."""
+    from app.core.exceptions import GraphClientError
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="2026-07-09T10:00:00Z")
+    redis.set = AsyncMock(return_value=True)
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(
+        side_effect=GraphClientError(
+            "Graph API GET failed with status 403: "
+            '{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}'
+        )
+    )
+
+    await poll_mailbox(
+        "denied@example.com",
+        redis=redis,
+        graph_client=graph_client,
+    )
+
+    redis.set.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_poll_mailbox_continues_when_one_folder_denied() -> None:
+    """Inbox access denied must not block junk-folder ingest."""
+    from app.core.exceptions import GraphClientError
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.set = AsyncMock(return_value=True)
+
+    junk_msg = GraphMessageSchema.model_validate(
+        {
+            "id": "junk-1",
+            "subject": "Spammy",
+            "receivedDateTime": "2026-07-09T12:00:00Z",
+            "conversationId": "conv-junk",
+            "from": {"emailAddress": {"address": "spam@b.com"}},
+        }
+    )
+
+    async def _list_messages(*_args: object, folder: str = "inbox", **_kwargs: object):
+        if folder == "inbox":
+            raise GraphClientError(
+                "Graph API GET failed with status 403: "
+                '{"error":{"code":"ErrorAccessDenied","message":"Access is denied."}}'
+            )
+        return [junk_msg]
+
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(side_effect=_list_messages)
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.ingest_graph_message",
+            AsyncMock(return_value=IngestResultSchema(message_id="junk-1", status="ingested")),
+        ) as ingest,
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.complete_ingest_dedup",
+            AsyncMock(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            AsyncMock(return_value=MagicMock()),
+        ),
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+        )
+
+    ingest.assert_awaited_once()
+    assert ingest.await_args.kwargs["message_id"] == "junk-1"
+
+
+@pytest.mark.asyncio
 async def test_poll_mailbox_partial_failure_same_second_does_not_skip_retry() -> None:
     """Regression: +1s on partial failure would skip a failed same-second message."""
     redis = AsyncMock()

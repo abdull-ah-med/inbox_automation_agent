@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
@@ -24,8 +25,36 @@ MAX_ACTIVE_SKILLS = 20
 MAX_ACTIVE_SKILLS_CHARS = 50_000
 
 
+class SkillSelectionRow(BaseModel):
+    """Internal skill row including optional embedding for routing."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    description: str | None = None
+    content: str
+    category: str | None = None
+    always_apply: bool = False
+    is_active: bool = True
+    embedding: list[float] | None = None
+
+
+def _validate_category_rules(
+    *,
+    always_apply: bool,
+    category: str | None,
+) -> None:
+    if not always_apply and category is None:
+        raise ValueError("category is required when always_apply is false")
+
+
 def _to_response(row: Skill) -> SkillResponseSchema:
     return SkillResponseSchema.model_validate(row)
+
+
+def _to_selection(row: Skill) -> SkillSelectionRow:
+    return SkillSelectionRow.model_validate(row)
 
 
 async def list_all(session: AsyncSession) -> list[SkillResponseSchema]:
@@ -38,6 +67,13 @@ async def list_active(session: AsyncSession) -> list[SkillResponseSchema]:
     stmt = select(Skill).where(Skill.is_active.is_(True)).order_by(Skill.name.asc())
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
+
+
+async def list_active_for_selection(session: AsyncSession) -> list[SkillSelectionRow]:
+    """Active skills including embeddings for the routing funnel."""
+    stmt = select(Skill).where(Skill.is_active.is_(True)).order_by(Skill.name.asc())
+    result = await session.execute(stmt)
+    return [_to_selection(row) for row in result.scalars().all()]
 
 
 async def get_by_id(
@@ -85,6 +121,7 @@ async def create(
     session: AsyncSession,
     data: SkillCreateSchema,
 ) -> SkillResponseSchema:
+    _validate_category_rules(always_apply=data.always_apply, category=data.category)
     if data.is_active:
         await _assert_active_budget(session, content=data.content)
 
@@ -93,6 +130,7 @@ async def create(
         description=data.description,
         content=data.content,
         category=data.category,
+        always_apply=data.always_apply,
         is_active=data.is_active,
     )
     session.add(row)
@@ -117,6 +155,12 @@ async def update_skill(
     if not values:
         return existing
 
+    will_be_always = values.get("always_apply", existing.always_apply)
+    next_category = values.get("category", existing.category)
+    if "category" in values and values["category"] is None and not will_be_always:
+        next_category = None
+    _validate_category_rules(always_apply=will_be_always, category=next_category)
+
     will_be_active = values.get("is_active", existing.is_active)
     next_content = values.get("content", existing.content)
     if will_be_active:
@@ -138,6 +182,45 @@ async def update_skill(
         return None
     await session.flush()
     return _to_response(row)
+
+
+async def update_embedding(
+    session: AsyncSession,
+    skill_id: uuid.UUID,
+    *,
+    embedding: list[float],
+) -> None:
+    stmt = (
+        sa_update(Skill)
+        .where(Skill.id == skill_id)
+        .values(embedding=embedding, updated_at=datetime.now(UTC))
+    )
+    await session.execute(stmt)
+    await session.flush()
+
+
+async def rank_by_cosine(
+    session: AsyncSession,
+    *,
+    query_embedding: list[float],
+    skill_ids: list[uuid.UUID],
+    limit: int = 8,
+) -> list[SkillSelectionRow]:
+    """Return skills ordered by cosine distance (closest first)."""
+    if not skill_ids or limit < 1:
+        return []
+    distance = Skill.embedding.cosine_distance(query_embedding)
+    stmt = (
+        select(Skill)
+        .where(
+            Skill.id.in_(skill_ids),
+            Skill.embedding.is_not(None),
+        )
+        .order_by(distance)
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return [_to_selection(row) for row in result.scalars().all()]
 
 
 async def delete_skill(session: AsyncSession, skill_id: uuid.UUID) -> bool:

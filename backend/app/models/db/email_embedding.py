@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import DateTime, ForeignKey, Index, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,3 +42,11 @@ class EmailEmbedding(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     body_preview: Mapped[str] = mapped_column(Text, nullable=False)
+    search_document: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="",
+        server_default="",
+    )
+    # Generated tsvector is defined in migration 016; not mapped for ORM writes.
+    embed_clean_version: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)

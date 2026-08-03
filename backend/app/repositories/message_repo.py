@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,10 +24,19 @@ class MessageSchema(BaseModel):
     sender: str
     body_text: str
     body_preview: str | None = None
+    body_content_type: str = "text"
+    body_clean: str | None = None
+    body_clean_version: int | None = None
+    body_clean_computed_at: datetime | None = None
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
+    summary_json: dict[str, Any] | None = None
+    summary_one_line: str | None = None
+    summarized_at: datetime | None = None
+    summary_model: str | None = None
+    summary_clean_version: int | None = None
 
 
 async def get_by_graph_id(
@@ -34,6 +44,18 @@ async def get_by_graph_id(
     graph_message_id: str,
 ) -> MessageSchema | None:
     stmt = select(Message).where(Message.graph_message_id == graph_message_id)
+    result = await session.execute(stmt)
+    message = result.scalar_one_or_none()
+    if message is None:
+        return None
+    return MessageSchema.model_validate(message)
+
+
+async def get_by_id(
+    session: AsyncSession,
+    message_id: uuid.UUID,
+) -> MessageSchema | None:
+    stmt = select(Message).where(Message.id == message_id)
     result = await session.execute(stmt)
     message = result.scalar_one_or_none()
     if message is None:
@@ -63,6 +85,10 @@ async def create_message(
     to_recipients: list[str] | None = None,
     cc_recipients: list[str] | None = None,
     has_attachments: bool = False,
+    body_content_type: str = "text",
+    body_clean: str | None = None,
+    body_clean_version: int | None = None,
+    body_clean_computed_at: datetime | None = None,
 ) -> MessageSchema:
     """Insert a message or return the existing row on ``graph_message_id`` conflict."""
     insert_stmt = insert(Message).values(
@@ -76,6 +102,10 @@ async def create_message(
         to_recipients=list(to_recipients or []),
         cc_recipients=list(cc_recipients or []),
         has_attachments=has_attachments,
+        body_content_type=body_content_type,
+        body_clean=body_clean,
+        body_clean_version=body_clean_version,
+        body_clean_computed_at=body_clean_computed_at,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["graph_message_id"],
@@ -92,3 +122,47 @@ async def create_message(
             f"Message insert conflicted but row missing for graph_message_id={graph_message_id}"
         )
     return existing
+
+
+async def update_body_clean(
+    session: AsyncSession,
+    *,
+    message_id: uuid.UUID,
+    body_clean: str,
+    body_clean_version: int,
+    body_clean_computed_at: datetime,
+) -> None:
+    stmt = (
+        update(Message)
+        .where(Message.id == message_id)
+        .values(
+            body_clean=body_clean,
+            body_clean_version=body_clean_version,
+            body_clean_computed_at=body_clean_computed_at,
+        )
+    )
+    await session.execute(stmt)
+
+
+async def update_summary(
+    session: AsyncSession,
+    *,
+    message_id: uuid.UUID,
+    summary_json: dict[str, Any],
+    summary_one_line: str,
+    summarized_at: datetime,
+    summary_model: str,
+    summary_clean_version: int,
+) -> None:
+    stmt = (
+        update(Message)
+        .where(Message.id == message_id)
+        .values(
+            summary_json=summary_json,
+            summary_one_line=summary_one_line,
+            summarized_at=summarized_at,
+            summary_model=summary_model,
+            summary_clean_version=summary_clean_version,
+        )
+    )
+    await session.execute(stmt)

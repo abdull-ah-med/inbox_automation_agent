@@ -148,12 +148,24 @@ async def test_reject_requires_note(app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reject_requires_reason_code(app) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            f"/api/drafts/{uuid.uuid4()}/reject",
+            json={"feedback_note": "Bad tone"},
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_reject_ok(app) -> None:
     draft = _draft_response(
         approved_at=None,
         rejected_at=datetime.now(UTC),
         feedback_action="reject",
         feedback_note="Bad tone",
+        feedback_reason_code="tone",
     )
     with patch(
         "app.api.web.drafts.draft_feedback_service.reject_draft",
@@ -163,7 +175,7 @@ async def test_reject_ok(app) -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 f"/api/drafts/{draft.id}/reject",
-                json={"feedback_note": "Bad tone"},
+                json={"feedback_note": "Bad tone", "reason_code": "tone"},
             )
     assert resp.status_code == 200
     assert resp.json()["feedback_action"] == "reject"
@@ -175,6 +187,7 @@ async def test_wrong_ok(app) -> None:
         approved_at=None,
         feedback_action="wrong",
         feedback_note="Should escalate",
+        feedback_reason_code="wrong_action",
     )
     with patch(
         "app.api.web.drafts.draft_feedback_service.mark_wrong",
@@ -184,7 +197,7 @@ async def test_wrong_ok(app) -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 f"/api/drafts/{draft.id}/wrong",
-                json={"feedback_note": "Should escalate"},
+                json={"feedback_note": "Should escalate", "reason_code": "wrong_action"},
             )
     assert resp.status_code == 200
     assert resp.json()["feedback_action"] == "wrong"

@@ -45,7 +45,8 @@ def _skill(**overrides: object) -> SkillResponseSchema:
         "name": "Drug screen",
         "description": "Handle screens",
         "content": "Always CC Jordan on drug-screen emails",
-        "category": "drug-screen",
+        "category": "escalation",
+        "always_apply": False,
         "is_active": True,
         "created_at": datetime.now(UTC),
         "updated_at": datetime.now(UTC),
@@ -116,7 +117,11 @@ async def test_create_skill_201(app) -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/api/skills",
-                json={"name": "Drug screen", "content": "Always CC Jordan"},
+                json={
+                    "name": "Drug screen",
+                    "content": "Always CC Jordan",
+                    "category": "escalation",
+                },
             )
     assert resp.status_code == 201
     assert resp.json()["name"] == "Drug screen"
@@ -132,7 +137,7 @@ async def test_create_duplicate_409(app) -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
                 "/api/skills",
-                json={"name": "Dup", "content": "x"},
+                json={"name": "Dup", "content": "x", "category": "general"},
             )
     assert resp.status_code == 409
 

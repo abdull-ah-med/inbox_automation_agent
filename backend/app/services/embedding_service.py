@@ -10,41 +10,95 @@ https://platform.openai.com/docs/api-reference/embeddings/create):
         dimensions=1536,  # optional; default for text-embedding-3-small is 1536
     )
 
-Failures are isolated — callers use ``embed_and_store_safe`` so ingest never crashes.
+Token budgeting uses tiktoken ``cl100k_base`` (OpenAI embedding cookbook:
+EMBEDDING_CTX_LENGTH = 8191). Failures are isolated — callers use
+``embed_and_store_safe`` so ingest never crashes.
 """
 
 from __future__ import annotations
 
 import structlog
+import tiktoken
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.llm.pii_redact import scrub_email_for_llm
+from app.llm.email_clean import CLEAN_VERSION, effective_body_text
+from app.llm.pii_redact import scrub_email_for_llm, scrub_text
 from app.models.schemas.email import EmailMessageSchema
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.repositories import embedding_repo
 
 logger = structlog.get_logger(__name__)
 
-# text-embedding-3-small max input is 8192 tokens (OpenAI embeddings guide).
-# ~4 chars/token → stay well under the limit without tiktoken in the hot path.
-_MAX_EMBED_CHARS = 24_000
 _PREVIEW_CHARS = 500
+_ENCODING: tiktoken.Encoding | None = None
 
 
-def _build_embed_text(email: EmailMessageSchema) -> str:
+def _get_encoding() -> tiktoken.Encoding:
+    global _ENCODING
+    if _ENCODING is None:
+        _ENCODING = tiktoken.get_encoding("cl100k_base")
+    return _ENCODING
+
+
+def _truncate_to_token_budget(text: str, *, max_tokens: int) -> str:
+    encoding = _get_encoding()
+    tokens = encoding.encode(text)
+    if len(tokens) <= max_tokens:
+        return text
+    return encoding.decode(tokens[:max_tokens])
+
+
+def build_search_document(email: EmailMessageSchema) -> str:
+    """Metadata-prefixed cleaned body used for embed + FTS (unsrubbed for FTS store)."""
+    body = effective_body_text(
+        body_clean=email.body_clean,
+        body_text=email.body_text,
+        body_content_type=email.body_content_type,
+    )
+    to_list = ", ".join(email.to_recipients) if email.to_recipients else ""
+    cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else ""
+    subject = (email.subject or "").strip()
+    return (
+        f"From: {email.sender} | To: {to_list} | CC: {cc_list} | Subject: {subject}\n\n{body}"
+    ).strip()
+
+
+def _build_embed_text(email: EmailMessageSchema, *, max_tokens: int) -> str:
+    """Scrubbed metadata + cleaned body, truncated by token budget.
+
+    The metadata prefix is never truncated — only the body portion is cut so
+    sender/recipient/subject always survive.
+    """
     scrubbed = scrub_email_for_llm(email)
+    body = effective_body_text(
+        body_clean=scrubbed.body_clean,
+        body_text=scrubbed.body_text,
+        body_content_type=scrubbed.body_content_type,
+    )
+    to_list = ", ".join(scrubbed.to_recipients) if scrubbed.to_recipients else ""
+    cc_list = ", ".join(scrubbed.cc_recipients) if scrubbed.cc_recipients else ""
     subject = (scrubbed.subject or "").strip()
-    body = (scrubbed.body_text or "").strip()
-    combined = f"Subject: {subject}\n\n{body}".strip()
-    if len(combined) > _MAX_EMBED_CHARS:
-        combined = combined[:_MAX_EMBED_CHARS]
-    return combined
+    prefix = f"From: {scrubbed.sender} | To: {to_list} | CC: {cc_list} | Subject: {subject}\n\n"
+    encoding = _get_encoding()
+    prefix_tokens = len(encoding.encode(prefix))
+    body_budget = max(1, max_tokens - prefix_tokens)
+    body_truncated = _truncate_to_token_budget(body, max_tokens=body_budget)
+    return f"{prefix}{body_truncated}".strip()
 
 
 def _body_preview_for_store(email: EmailMessageSchema) -> str:
-    preview = (email.body_preview or email.body_text or email.subject or "").strip()
+    preview = (
+        email.body_preview
+        or effective_body_text(
+            body_clean=email.body_clean,
+            body_text=email.body_text,
+            body_content_type=email.body_content_type,
+        )
+        or email.subject
+        or ""
+    ).strip()
     if len(preview) > _PREVIEW_CHARS:
         return preview[:_PREVIEW_CHARS]
     return preview or "(empty)"
@@ -57,7 +111,7 @@ async def embed_email(
     settings: Settings,
 ) -> list[float]:
     """Scrub, call OpenAI embeddings, return a vector of ``settings.embedding_dimension``."""
-    text = _build_embed_text(email)
+    text = _build_embed_text(email, max_tokens=settings.embedding_max_input_tokens)
     if not text:
         raise ValueError("embed_email requires non-empty subject/body after scrub")
 
@@ -83,8 +137,11 @@ async def store_email_embedding(
     *,
     email: EmailMessageSchema,
     embedding: list[float],
+    search_document: str | None = None,
+    embed_clean_version: int | None = None,
 ) -> EmbeddingMatchSchema:
     """Persist embedding + participant metadata via the repository."""
+    doc = search_document if search_document is not None else build_search_document(email)
     return await embedding_repo.insert_embedding(
         session,
         embedding=embedding,
@@ -96,6 +153,10 @@ async def store_email_embedding(
         sent_at=email.received_at,
         body_preview=_body_preview_for_store(email),
         graph_message_id=email.message_id,
+        search_document=doc,
+        embed_clean_version=(
+            embed_clean_version if embed_clean_version is not None else CLEAN_VERSION
+        ),
     )
 
 
@@ -106,11 +167,13 @@ async def embed_text(
     settings: Settings,
 ) -> list[float]:
     """Embed arbitrary text (scrubbed by caller). Used for reply memory RAG."""
-    cleaned = (text or "").strip()
+    cleaned = scrub_text((text or "").strip())
     if not cleaned:
         raise ValueError("embed_text requires non-empty text")
-    if len(cleaned) > _MAX_EMBED_CHARS:
-        cleaned = cleaned[:_MAX_EMBED_CHARS]
+    cleaned = _truncate_to_token_budget(
+        cleaned,
+        max_tokens=settings.embedding_max_input_tokens,
+    )
 
     response = await client.embeddings.create(
         model=settings.embedding_model,
