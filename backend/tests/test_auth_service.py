@@ -78,32 +78,36 @@ async def test_login_wrong_password(settings: Settings) -> None:
     """Wrong password raises a generic InvalidCredentialsError."""
     user = _user()
     session = AsyncMock()
-    with patch("app.services.auth_service.user_repo.get_by_email", AsyncMock(return_value=user)):
-        with pytest.raises(InvalidCredentialsError):
-            await auth_service.login(
-                session,
-                settings,
-                email=user.email,
-                password="WrongPassword1!",
-                user_agent=None,
-                ip=None,
-            )
+    with (
+        patch("app.services.auth_service.user_repo.get_by_email", AsyncMock(return_value=user)),
+        pytest.raises(InvalidCredentialsError),
+    ):
+        await auth_service.login(
+            session,
+            settings,
+            email=user.email,
+            password="WrongPassword1!",
+            user_agent=None,
+            ip=None,
+        )
 
 
 @pytest.mark.asyncio
 async def test_login_missing_user(settings: Settings) -> None:
     """Unknown email raises the same generic error."""
     session = AsyncMock()
-    with patch("app.services.auth_service.user_repo.get_by_email", AsyncMock(return_value=None)):
-        with pytest.raises(InvalidCredentialsError):
-            await auth_service.login(
-                session,
-                settings,
-                email="nobody@example.com",
-                password="CorrectHorseBattery1!",
-                user_agent=None,
-                ip=None,
-            )
+    with (
+        patch("app.services.auth_service.user_repo.get_by_email", AsyncMock(return_value=None)),
+        pytest.raises(InvalidCredentialsError),
+    ):
+        await auth_service.login(
+            session,
+            settings,
+            email="nobody@example.com",
+            password="CorrectHorseBattery1!",
+            user_agent=None,
+            ip=None,
+        )
 
 
 @pytest.mark.asyncio
@@ -138,16 +142,16 @@ async def test_refresh_reuse_revokes_family(settings: Settings) -> None:
             "app.services.auth_service.refresh_token_repo.revoke_family",
             revoke_family,
         ),
+        pytest.raises(ReusedRefreshTokenError),
     ):
-        with pytest.raises(ReusedRefreshTokenError):
-            await auth_service.refresh(
-                session,
-                settings,
-                redis,
-                refresh_plaintext=plaintext,
-                user_agent=None,
-                ip=None,
-            )
+        await auth_service.refresh(
+            session,
+            settings,
+            redis,
+            refresh_plaintext=plaintext,
+            user_agent=None,
+            ip=None,
+        )
     revoke_family.assert_awaited_once_with(session, stored.family_id)
 
 
@@ -178,15 +182,15 @@ async def test_refresh_expired(settings: Settings) -> None:
             AsyncMock(return_value=stored),
         ),
         patch("app.services.auth_service.refresh_token_repo.revoke", AsyncMock()),
+        pytest.raises(InvalidTokenError),
     ):
-        with pytest.raises(InvalidTokenError):
-            await auth_service.refresh(
-                session,
-                settings,
-                redis,
-                refresh_plaintext=plaintext,
-                user_agent=None,
-                ip=None,
+        await auth_service.refresh(
+            session,
+            settings,
+            redis,
+            refresh_plaintext=plaintext,
+            user_agent=None,
+            ip=None,
             )
 
 
