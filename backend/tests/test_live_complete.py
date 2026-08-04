@@ -17,18 +17,16 @@ Run from backend/:
 from __future__ import annotations
 
 import json
-import os
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from unittest.mock import AsyncMock, patch
 
 from app.core.config import Settings, get_settings
 from app.core.dependencies import (
@@ -46,13 +44,11 @@ from app.graph.auth import GraphAuth
 from app.graph.client import GraphClient
 from app.llm.prompts import PROMPT_VERSION
 from app.main import create_app
-from app.models.db.audit_event import AuditEvent
 from app.models.db.draft import Draft
 from app.models.schemas.email_triage_state import EmailTriageState
-from app.repositories import draft_repo, message_repo, thread_repo, user_repo
+from app.repositories import user_repo
 from app.services import (
     auth_service,
-    draft_feedback_service,
     ingestion_service,
     pipeline_service,
 )
@@ -389,7 +385,9 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
                 elif _should_post_slack(state):
                     record["slack_skip_reason"] = "Slack tokens not configured"
                 else:
-                    record["slack_skip_reason"] = f"not eligible (draft_status={state.draft_status})"
+                    record["slack_skip_reason"] = (
+                        f"not eligible (draft_status={state.draft_status})"
+                    )
 
                 artifacts.save(
                     f"pipeline_{mailbox.split('@')[0]}_{index}",
@@ -454,7 +452,9 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
                     input_data={"email": _LIVE_USER_EMAIL},
                     output_data={
                         "status_code": login.status_code,
-                        "user": (login.json().get("user") if login.status_code == 200 else login.text),
+                        "user": (
+                            login.json().get("user") if login.status_code == 200 else login.text
+                        ),
                     },
                 )
                 assert login.status_code == 200, login.text
@@ -476,7 +476,9 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
                     output_data={
                         "me": me.json() if me.status_code == 200 else me.text,
                         "overview_status": overview.status_code,
-                        "overview": overview.json() if overview.status_code == 200 else overview.text,
+                        "overview": (
+                            overview.json() if overview.status_code == 200 else overview.text
+                        ),
                         "mailboxes_status": mailboxes_resp.status_code,
                         "mailboxes": mailboxes_resp.json()
                         if mailboxes_resp.status_code == 200
@@ -527,7 +529,8 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
                     )
                     assert detail.status_code == 200
                     draft_view = detail.json().get("draft")
-                    if draft_view and draft_view.get("id") and not draft_view.get("feedback_action"):
+                    has_feedback = draft_view and draft_view.get("feedback_action")
+                    if draft_view and draft_view.get("id") and not has_feedback:
                         draft_id = draft_view["id"]
                         # Live approve path (never sends email) — skip OpenAI side effects noise
                         # by allowing real reply-memory if OpenAI is configured.
