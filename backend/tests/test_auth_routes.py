@@ -198,3 +198,23 @@ async def test_cors_preflight_allows_skills_put_delete(app, local_settings: Sett
             assert resp.status_code in {200, 204}, method
             allow = resp.headers.get("access-control-allow-methods", "")
             assert method in allow.upper(), f"{method} missing from {allow!r}"
+
+
+@pytest.mark.asyncio
+async def test_cors_preflight_allows_reply_memory_patch(
+    app, local_settings: Settings
+) -> None:
+    """Reply-memory exclude uses PATCH; browsers preflight it cross-origin."""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.options(
+            "/api/reply-memory/00000000-0000-0000-0000-000000000001",
+            headers={
+                "Origin": local_settings.frontend_origin,
+                "Access-Control-Request-Method": "PATCH",
+                "Access-Control-Request-Headers": "authorization,content-type",
+            },
+        )
+        assert resp.status_code in {200, 204}
+        allow = resp.headers.get("access-control-allow-methods", "")
+        assert "PATCH" in allow.upper(), f"PATCH missing from {allow!r}"

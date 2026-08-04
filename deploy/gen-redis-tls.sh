@@ -1,8 +1,8 @@
 #!/bin/sh
 # Generates a self-signed CA + server cert for Redis's built-in TLS, and a
 # random password. Redis only sits on Docker's internal network here, so a
-# self-signed cert is fine — the goal is encryption-in-transit to satisfy
-# this app's production checks, not public trust.
+# self-signed cert is fine — the goal is encryption-in-transit with server
+# authentication via the CA (REDIS_SSL_CA_CERTS), not public trust.
 #
 # Certs go in /opt/inbox-triage-redis-tls (NOT under the repo/home dir):
 # the official redis image drops from root to a non-root "redis" user
@@ -16,7 +16,10 @@
 #
 # Then put the printed REDIS_PASSWORD into both:
 #   - repo-root .env         (REDIS_PASSWORD=...)
-#   - backend/.env.prod      (REDIS_URL=rediss://:<password>@redis:6379/0?ssl_cert_reqs=none)
+#   - backend/.env.prod      (REDIS_URL + REDIS_SSL_CA_CERTS — see echo below)
+#
+# redis-py TLS docs:
+#   https://redis.readthedocs.io/en/latest/connections.html
 
 set -eu
 TLS_DIR="/opt/inbox-triage-redis-tls"
@@ -49,4 +52,7 @@ echo ""
 echo "REDIS_PASSWORD=$REDIS_PASSWORD"
 echo ""
 echo "Add the line above to repo-root .env, and set in backend/.env.prod:"
-echo "REDIS_URL=rediss://:$REDIS_PASSWORD@redis:6379/0?ssl_cert_reqs=none"
+echo "REDIS_URL=rediss://:$REDIS_PASSWORD@redis:6379/0"
+echo "REDIS_SSL_CA_CERTS=/tls/ca.crt"
+echo "API_HOST=<your public hostname, e.g. 3-91-x-x.sslip.io>"
+echo "TRUST_X_FORWARDED_FOR=true"

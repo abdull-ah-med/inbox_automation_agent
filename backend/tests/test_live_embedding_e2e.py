@@ -199,6 +199,7 @@ async def test_live_embedding_similarity_tone_and_pipeline(
     prior_conv = f"live-embed-prior-{run_id}"
     follow_conv = f"live-embed-follow-{run_id}"
     unrelated_conv = f"live-embed-unrelated-{run_id}"
+    pipeline_conv = f"live-pipe-conv-{run_id}"
     prior_msg_id = f"live-prior-msg-{run_id}"
     follow_msg_id = f"live-follow-msg-{run_id}"
     unrelated_msg_id = f"live-unrelated-msg-{run_id}"
@@ -281,6 +282,21 @@ async def test_live_embedding_similarity_tone_and_pipeline(
         print(f"  classification:      {live_settings.classification_model}")
         print(f"  draft_model:         {live_settings.draft_model}")
         print(f"  slack_enabled:       {live_settings.slack_enabled}")
+
+        # Purge leftover fixtures from prior interrupted live runs.
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                delete(EmailEmbedding).where(
+                    EmailEmbedding.mailbox == mailbox,
+                    EmailEmbedding.conversation_id.like("live-embed-%"),
+                )
+            )
+            await session.execute(
+                delete(EmailEmbedding).where(
+                    EmailEmbedding.mailbox == mailbox,
+                    EmailEmbedding.conversation_id.like("live-pipe-%"),
+                )
+            )
 
         # ------------------------------------------------------------------
         # 1) Live OpenAI embed + store (prior + unrelated)
@@ -373,6 +389,7 @@ async def test_live_embedding_similarity_tone_and_pipeline(
                 embedding=follow_vector,
                 min_similarity=live_settings.embedding_min_similarity,
                 top_k=live_settings.embedding_candidate_k,
+                mailbox=follow_email.mailbox,
                 exclude_conversation_id=follow_conv,
             )
         print(f"  matches (>= {live_settings.embedding_min_similarity}): {len(matches)}")
@@ -538,14 +555,16 @@ async def test_live_embedding_similarity_tone_and_pipeline(
         assert cross is not None, "Flow B should return cross-thread context"
         assert isinstance(cross, CrossThreadContextSchema)
         assert cross.matched_conversation_id == prior_conv
-        assert cross.similarity_score >= live_settings.embedding_min_similarity
-        assert cross.thread_messages, "Graph stub should supply prior thread messages"
-        assert stub_graph.calls, "Expected list_thread_messages to be called"
-        assert stub_graph.calls[-1] == (mailbox, prior_conv)
+        # conversation_score is RRF-fused (typically << cosine). Cosine gate is
+        # already proven in STAGE 2; here we only require a positive fused score.
+        assert cross.similarity_score > 0
+        assert cross.thread_messages, "Matched prior thread messages must be loaded"
+        # Graph fetch is optional when Postgres already has the prior messages.
         results["flow_b_similarity"] = cross.similarity_score
+        results["flow_b_graph_fetched"] = bool(stub_graph.calls)
         print(
-            f"  PASS Flow B matched {prior_conv} @ {cross.similarity_score:.4f} "
-            f"({len(cross.thread_messages)} msgs)"
+            f"  PASS Flow B matched {prior_conv} @ rrf_score={cross.similarity_score:.4f} "
+            f"({len(cross.thread_messages)} msgs, graph_fetch={bool(stub_graph.calls)})"
         )
 
         # ------------------------------------------------------------------
@@ -553,7 +572,6 @@ async def test_live_embedding_similarity_tone_and_pipeline(
         # ------------------------------------------------------------------
         print_divider("STAGE 5 — Full pipeline (simulate + live LLMs)")
         pipeline_msg_id = f"live-pipe-msg-{run_id}"
-        pipeline_conv = f"live-pipe-conv-{run_id}"
         await redis.delete(dedup_key(mailbox, pipeline_msg_id))
 
         payload = SimulateIngestRequestSchema(
