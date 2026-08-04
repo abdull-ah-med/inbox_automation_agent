@@ -13,7 +13,12 @@ def test_embedding_settings_defaults() -> None:
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_dimension == 1536
     assert settings.embedding_min_similarity == 0.78
-    assert settings.embedding_top_k == 3
+    assert settings.embedding_candidate_k == 15
+    assert settings.embedding_final_conversations == 1
+    assert settings.embedding_max_input_tokens == 8000
+    assert settings.thread_verbatim_tail == 2
+    assert settings.thread_full_if_at_most == 5
+    assert settings.rrf_k == 60
 
 
 def test_create_app_production_omits_local_routers_and_docs() -> None:

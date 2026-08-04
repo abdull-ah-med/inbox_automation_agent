@@ -50,6 +50,8 @@ def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
         edited_body=draft.edited_body,
         feedback_note=draft.feedback_note,
         feedback_action=draft.feedback_action,
+        feedback_reason_code=draft.feedback_reason_code,
+        routing_category=draft.routing_category,
     )
 
 

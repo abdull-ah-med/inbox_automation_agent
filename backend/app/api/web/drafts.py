@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.dependencies import OpenAIClientDep, get_db
+from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import DraftView
-from app.models.schemas.feedback import DraftApproveSchema, DraftRejectSchema
+from app.models.schemas.feedback import DraftApproveSchema, DraftRejectSchema, DraftWrongSchema
 from app.services import draft_feedback_service, thread_view_service
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
@@ -36,6 +36,7 @@ async def approve_draft(
     session: DbSession,
     settings: AppSettings,
     openai_client: OpenAIClientDep,
+    anthropic_client: AnthropicClientDep,
     user: CurrentUser,
 ) -> DraftView:
     """Approve a draft (optionally with edited body). Does not send email."""
@@ -56,6 +57,7 @@ async def approve_draft(
         draft=updated,
         settings=settings,
         openai_client=openai_client,
+        anthropic_client=anthropic_client,
     )
     return thread_view_service.draft_response_to_view(updated)
 
@@ -73,6 +75,8 @@ async def reject_draft(
     response: Response,
     session: DbSession,
     settings: AppSettings,
+    openai_client: OpenAIClientDep,
+    anthropic_client: AnthropicClientDep,
     user: CurrentUser,
 ) -> DraftView:
     """Reject a draft with a required note. Does not send email."""
@@ -81,10 +85,18 @@ async def reject_draft(
         session,
         draft_id,
         feedback_note=body.feedback_note,
+        reason_code=body.reason_code,
         actor=user.email,
         settings=settings,
     )
     await session.commit()
+
+    await draft_feedback_service.store_rejection_memory(
+        draft=updated,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+    )
     return thread_view_service.draft_response_to_view(updated)
 
 
@@ -96,7 +108,7 @@ async def reject_draft(
 @limiter.limit("60/minute")
 async def mark_draft_wrong(
     draft_id: uuid.UUID,
-    body: DraftRejectSchema,
+    body: DraftWrongSchema,
     request: Request,
     response: Response,
     session: DbSession,
@@ -109,6 +121,7 @@ async def mark_draft_wrong(
         session,
         draft_id,
         feedback_note=body.feedback_note,
+        reason_code=body.reason_code or "other",
         actor=user.email,
         settings=settings,
     )

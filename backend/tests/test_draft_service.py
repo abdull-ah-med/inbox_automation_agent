@@ -96,7 +96,15 @@ async def test_run_draft_pending_to_drafted() -> None:
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.draft_service.skill_repo.list_active",
+            "app.services.draft_service.skill_selection_service.select_skill_contents",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_service.tone_profile_service.load_for_draft",
+            new=AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_service.rejection_memory_service.find_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -132,7 +140,15 @@ async def test_run_draft_generation_failure_requires_human() -> None:
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.draft_service.skill_repo.list_active",
+            "app.services.draft_service.skill_selection_service.select_skill_contents",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_service.tone_profile_service.load_for_draft",
+            new=AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_service.rejection_memory_service.find_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -192,7 +208,15 @@ async def test_run_draft_persists_context_match_confidence() -> None:
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.draft_service.skill_repo.list_active",
+            "app.services.draft_service.skill_selection_service.select_skill_contents",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_service.tone_profile_service.load_for_draft",
+            new=AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_service.rejection_memory_service.find_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(

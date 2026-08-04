@@ -80,6 +80,27 @@ async def list_reply_embeddings(
     return [ReplyEmbeddingSchema.model_validate(row) for row in result.scalars().all()]
 
 
+async def list_recent_replies(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    limit: int = 3,
+) -> list[str]:
+    """Newest non-excluded reply texts for a mailbox (few-shot examples)."""
+    capped = max(1, min(limit, 20))
+    stmt = (
+        select(ReplyEmbedding.reply_text)
+        .where(
+            ReplyEmbedding.mailbox == mailbox,
+            ReplyEmbedding.is_excluded.is_(False),
+        )
+        .order_by(ReplyEmbedding.created_at.desc())
+        .limit(capped)
+    )
+    result = await session.execute(stmt)
+    return [text for text in result.scalars().all() if text]
+
+
 async def set_excluded(
     session: AsyncSession,
     reply_id: uuid.UUID,

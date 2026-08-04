@@ -131,6 +131,8 @@ class DraftView(BaseModel):
     edited_body: str | None = None
     feedback_note: str | None = None
     feedback_action: str | None = None
+    feedback_reason_code: str | None = None
+    routing_category: str | None = None
 
 
 class ThreadDetail(BaseModel):

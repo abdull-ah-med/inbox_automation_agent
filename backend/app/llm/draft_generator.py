@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
+from app.llm.context_pack import pack_cross_thread, pack_same_thread
+from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
 from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
@@ -37,34 +39,6 @@ class DraftCallResult:
     latency_ms: int
 
 
-def _format_message_line(msg: EmailMessageSchema) -> str:
-    preview = msg.body_preview or msg.body_text[:240]
-    return (
-        f"- [{msg.direction.value}] from={msg.sender} "
-        f"at={msg.received_at.isoformat()} subject={msg.subject!r} preview={preview!r}"
-    )
-
-
-def _format_cross_thread_block(
-    cross_thread_context: CrossThreadContextSchema | str | None,
-) -> str:
-    """Render related-thread messages (scrubbed upstream) for the Sonnet user turn."""
-    if cross_thread_context is None:
-        return "(none)"
-    if isinstance(cross_thread_context, str):
-        return cross_thread_context.strip() or "(none)"
-
-    lines = [_format_message_line(msg) for msg in cross_thread_context.thread_messages]
-    body = "\n".join(lines) if lines else "(no messages in matched thread)"
-    return (
-        f"Related prior conversation "
-        f"(conversation_id={cross_thread_context.matched_conversation_id}, "
-        f"similarity={cross_thread_context.similarity_score:.4f}, "
-        f"{len(cross_thread_context.thread_messages)} messages, oldest first):\n"
-        f"{body}"
-    )
-
-
 def _build_user_content(
     email: EmailMessageSchema,
     thread_context: ThreadContextSchema,
@@ -72,19 +46,32 @@ def _build_user_content(
     *,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    tone_profile: str | None = None,
     skills: list[str] | None = None,
+    negative_constraints: list[str] | None = None,
     instruction: str | None = None,
+    verbatim_tail: int = 2,
+    full_if_at_most: int = 5,
 ) -> str:
-    thread_lines = [_format_message_line(msg) for msg in thread_context.messages]
-    thread_block = "\n".join(thread_lines) if thread_lines else "(no prior messages)"
+    thread_block = pack_same_thread(
+        thread_context,
+        current_message_id=email.message_id,
+        verbatim_tail=verbatim_tail,
+        full_if_at_most=full_if_at_most,
+    )
     to_list = ", ".join(email.to_recipients) if email.to_recipients else "(none)"
     cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else "(none)"
+    body = effective_body_text(
+        body_clean=email.body_clean,
+        body_text=email.body_text,
+        body_content_type=email.body_content_type,
+    )
 
     action_summary = triage.action_items_summary or "(none)"
     spam_reason = triage.spam_reason or "(none)"
     context_reason = triage.context_reason or "(none)"
 
-    cross_block = _format_cross_thread_block(cross_thread_context)
+    cross_block = pack_cross_thread(cross_thread_context)
     if tone_references:
         tone_block = "\n".join(f"- {ref}" for ref in tone_references if ref.strip())
         if not tone_block:
@@ -92,11 +79,19 @@ def _build_user_content(
     else:
         tone_block = "(none)"
 
+    profile_block = tone_profile.strip() if tone_profile and tone_profile.strip() else "(none)"
+
     if skills:
-        skill_lines = [f"- {skill.strip()}" for skill in skills if skill.strip()]
-        skills_block = "\n".join(skill_lines) if skill_lines else "(none)"
+        skill_lines = [skill.strip() for skill in skills if skill.strip()]
+        skills_block = "\n\n".join(skill_lines) if skill_lines else "(none)"
     else:
         skills_block = "(none)"
+
+    if negative_constraints:
+        constraint_lines = [f"- {item.strip()}" for item in negative_constraints if item.strip()]
+        constraints_block = "\n".join(constraint_lines) if constraint_lines else "(none)"
+    else:
+        constraints_block = "(none)"
 
     instruction_block = ""
     if instruction and instruction.strip():
@@ -115,7 +110,7 @@ def _build_user_content(
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
         f"Standing instructions (skills):\n{skills_block}\n\n"
-        f"Body:\n{email.body_text}\n\n"
+        f"Body:\n{body}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n\n"
         f"Triage result:\n"
@@ -124,9 +119,12 @@ def _build_user_content(
         f"- has_action_items: {triage.has_action_items}\n"
         f"- action_items_summary: {action_summary}\n"
         f"- needs_context: {triage.needs_context}\n"
-        f"- context_reason: {context_reason}\n\n"
+        f"- context_reason: {context_reason}\n"
+        f"- routing_category: {triage.routing_category}\n\n"
         f"Cross-thread context:\n{cross_block}\n\n"
-        f"Tone references (similar past replies):\n{tone_block}\n"
+        f"Tone profile:\n{profile_block}\n\n"
+        f"Tone references (similar past replies):\n{tone_block}\n\n"
+        f"Previously flagged issues to avoid:\n{constraints_block}\n"
         f"{instruction_block}"
     )
 
@@ -178,7 +176,9 @@ async def generate_draft(
     settings: Settings,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    tone_profile: str | None = None,
     skills: list[str] | None = None,
+    negative_constraints: list[str] | None = None,
     instruction: str | None = None,
 ) -> DraftCallResult:
     """Call Sonnet once (retry once on parse/API failure) and return a structured draft."""
@@ -194,8 +194,12 @@ async def generate_draft(
         triage,
         cross_thread_context=_scrub_cross_thread(cross_thread_context),
         tone_references=tone_references,
+        tone_profile=tone_profile,
         skills=skills,
+        negative_constraints=negative_constraints,
         instruction=instruction,
+        verbatim_tail=settings.thread_verbatim_tail,
+        full_if_at_most=settings.thread_full_if_at_most,
     )
     started = time.perf_counter()
     last_error: Exception | None = None

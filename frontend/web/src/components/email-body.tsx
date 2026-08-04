@@ -49,7 +49,10 @@ export const splitQuotedHistory = (
   return { main, quoted }
 }
 
-const linkify = (text: string): React.ReactNode[] => {
+// Common LLM draft habit: **Check spam** — render as bold, hide the markers.
+const BOLD_PATTERN = /\*\*(.+?)\*\*/g
+
+const linkify = (text: string, keyPrefix: string): React.ReactNode[] => {
   const nodes: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -63,7 +66,7 @@ const linkify = (text: string): React.ReactNode[] => {
     }
     nodes.push(
       <a
-        key={`link-${key++}`}
+        key={`${keyPrefix}-link-${key++}`}
         href={url}
         target="_blank"
         rel="noopener noreferrer"
@@ -80,10 +83,34 @@ const linkify = (text: string): React.ReactNode[] => {
   return nodes
 }
 
+const renderInline = (text: string): React.ReactNode[] => {
+  const nodes: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let key = 0
+
+  BOLD_PATTERN.lastIndex = 0
+  while ((match = BOLD_PATTERN.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(...linkify(text.slice(lastIndex, match.index), `t${key}`))
+    }
+    nodes.push(
+      <strong key={`bold-${key++}`} className="font-semibold text-gray-800 dark:text-gray-100">
+        {linkify(match[1], `b${key}`)}
+      </strong>,
+    )
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) {
+    nodes.push(...linkify(text.slice(lastIndex), `t${key}`))
+  }
+  return nodes
+}
+
 const BodyText = ({ text }: { text: string }) => {
   return (
     <>
-      {linkify(text).map((node, index) => (
+      {renderInline(text).map((node, index) => (
         <Fragment key={index}>{node}</Fragment>
       ))}
     </>
@@ -93,7 +120,8 @@ const BodyText = ({ text }: { text: string }) => {
 /**
  * Renders plain-text email/draft bodies safely: preserves line breaks,
  * wraps arbitrarily long unbroken text (tracking links, IDs) instead of
- * overflowing the container, and turns bare URLs into clickable links.
+ * overflowing the container, turns bare URLs into clickable links, and
+ * renders lightweight ``**bold**`` markers as emphasis (common in LLM drafts).
  * When collapseQuotes is on, Outlook/Gmail quoted history is hidden until expanded.
  */
 export const EmailBody = ({

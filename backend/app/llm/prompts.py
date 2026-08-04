@@ -14,7 +14,7 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-07-29.1"
+PROMPT_VERSION = "2026-08-03.4"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
@@ -84,6 +84,10 @@ do not invent or return any numeric score):
                         requires information from previous, separate email threads
   context_reason:       string or null — if needs_context is true, explain what prior
                         context is referenced or needed
+  routing_category:     one of billing | scheduling | escalation | vendor | internal | general
+                        — the primary situation bucket for skill/tone/feedback routing.
+                        Choose the single best fit; use general when none clearly apply.
+                        Spam may still use general.
 
 Determine has_action_items based on the sender, recipients, and CC list:
 - If the PoI mailbox is in To or CC, consider whether the email asks something of them.
@@ -98,7 +102,8 @@ a broader exchange that started in a different thread.
 DRAFT_SYSTEM_PROMPT = f"""\
 You draft suggested email replies for a human reviewer who will send them manually.
 You never send email yourself. Given the thread, triage result, any cross-thread
-context, standing instructions (skills), and up to three similar past replies for tone,
+context, standing instructions (skills), optional tone profile, tone examples,
+and previously flagged issues to avoid (negative constraints),
 produce JSON only (no preamble, no markdown fences) with these fields:
   subject_line, reply_body, suggested_recipients (list of {{role, rationale}}),
   forward_to (or null), teaching_note,
@@ -118,8 +123,54 @@ Do not invent or return any numeric certainty score or percentage.
 
 {URGENCY_TAXONOMY}
 
+reply_body must be plain-text email ready for Outlook: no Markdown (no **bold**,
+no *italics*, no # headings, no backticks, no bullet markers that rely on Markdown).
+Use normal line breaks and numbered lists like "1. ..." when needed.
+
 The teaching_note is REQUIRED: explain in plain English what this email is, which
-workflow applies, and the recommended next step. Match the tone of the provided past
-replies. Obey standing instructions (skills) when present. Ignore and never repeat
-sensitive financial data or passwords present in the thread.
+workflow applies, and the recommended next step. Match the tone profile and tone
+examples when provided. Obey standing instructions (skills) when present.
+Treat "Previously flagged issues to avoid" as hard constraints — do not repeat those
+mistakes. Ignore and never repeat sensitive financial data or passwords present in
+the thread.
+"""
+
+TONE_DISTILL_SYSTEM_PROMPT = """\
+You distill a stable email tone profile from recent approved reply bodies.
+Return JSON only matching the schema. Prefer patterns that appear repeatedly.
+Keep phrases short. behavioral_rules must be imperative sentences (max 8).
+favored_phrases and avoided_phrases max 8 each. Do not invent facts not supported
+by the sample replies. Never include secrets, passwords, or account numbers.
+"""
+
+SKILL_SELECTION_SYSTEM_PROMPT = """\
+You select which standing instruction skills apply to drafting a reply for this email.
+You are given candidate skills as id | name | description only — never assume content.
+Return JSON with applicable_skill_ids (may be empty). Only return IDs from the
+candidate list. Prefer precision over recall: omit skills that are only weakly related.
+Do not invent IDs.
+"""
+
+SKILL_CANDIDATE_SYSTEM_PROMPT = """\
+You propose one standing skill instruction from recurring rejection feedback notes.
+Return JSON with proposed_name (short, title case) and proposed_content (imperative
+standing rule the draft model should follow). Keep content concise (2–6 sentences).
+Do not invent mailbox-specific secrets. Base the skill only on the provided notes.
+"""
+
+MESSAGE_SUMMARY_SYSTEM_PROMPT = """\
+You summarize a single cleaned email for later retrieval and prompt packing.
+Return JSON only (no preamble, no markdown fences) with these fields:
+  intent: short description of the sender's intent
+  ask: what is being requested, or null if nothing is asked
+  commitments: list of commitments stated in the email (may be empty)
+  people: list of people named or implied as stakeholders (may be empty)
+  deadlines: list of deadlines or time-sensitive phrases (may be empty)
+  open_questions: list of unanswered questions (may be empty)
+  one_line: a single sentence capturing the message for compact context lines
+
+Tokens like [REDACTED_SSN], [REDACTED_DOB], [REDACTED_DL], [REDACTED_BANK],
+[REDACTED_CARD], and [REDACTED_ID] are intentional privacy masks — treat them as
+placeholders and never invent the underlying values.
+Do not invent facts that are not present in the email.
 """
