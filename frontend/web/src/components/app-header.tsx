@@ -15,6 +15,9 @@ export function AppHeader() {
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    // next-themes hydration-safe mount flag — no effect-free way to detect
+    // client mount before first paint.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMounted(true)
   }, [])
 

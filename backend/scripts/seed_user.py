@@ -20,14 +20,13 @@ async def _run(email: str, password: str, role: str) -> int:
     validate_password_strength(password)
     get_settings()  # ensure env loaded
     factory = get_session_factory()
-    async with factory() as session:
-        async with session.begin():
-            user = await auth_service.create_user(
-                session,
-                email=email,
-                password=password,
-                role=role,
-            )
+    async with factory() as session, session.begin():
+        user = await auth_service.create_user(
+            session,
+            email=email,
+            password=password,
+            role=role,
+        )
     print(f"Created user id={user.id} email={user.email} role={user.role}")
     await dispose_engine()
     return 0
