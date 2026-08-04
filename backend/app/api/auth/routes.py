@@ -200,7 +200,8 @@ async def logout(
     status_code=status.HTTP_200_OK,
 )
 @limiter.limit(get_settings().api_default_rate_limit)
-async def me(request: Request, user: CurrentUser) -> UserMe:
+async def me(request: Request, response: Response, user: CurrentUser) -> UserMe:
+    _ = request, response
     return user
 
 

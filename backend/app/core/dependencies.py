@@ -33,29 +33,39 @@ async def get_redis() -> Redis:
     Per redis-py docs (https://redis.readthedocs.io/en/latest/connections.html):
     use ``from_url`` with ``max_connections``, connect/read timeouts, and
     ``rediss://`` for TLS. Never open a new TCP connection per request.
+
+    Outside local, ``REDIS_SSL_CA_CERTS`` supplies ``ssl_ca_certs`` and we force
+    ``ssl_cert_reqs="required"`` so server auth is not skipped.
     """
     global _redis_client
     if _redis_client is None:
         settings = get_settings()
         # Avoid logging credentials — only scheme/host/db.
         parsed = urlparse(settings.redis_url)
+        ca_certs = settings.redis_ssl_ca_certs.strip()
         logger.info(
             "redis_connecting",
             scheme=parsed.scheme,
             host=parsed.hostname,
             db=(parsed.path or "/0").lstrip("/") or "0",
             tls=settings.redis_uses_tls,
+            ssl_ca_certs=bool(ca_certs),
             max_connections=settings.redis_max_connections,
         )
-        _redis_client = Redis.from_url(
-            settings.redis_url,
-            decode_responses=True,
-            max_connections=settings.redis_max_connections,
-            socket_connect_timeout=2.0,
-            socket_timeout=5.0,
-            retry_on_timeout=True,
-            health_check_interval=30,
-        )
+        connect_kwargs: dict[str, object] = {
+            "decode_responses": True,
+            "max_connections": settings.redis_max_connections,
+            "socket_connect_timeout": 2.0,
+            "socket_timeout": 5.0,
+            "retry_on_timeout": True,
+            "health_check_interval": 30,
+        }
+        if settings.redis_uses_tls and ca_certs:
+            # Keyword args override URL query (e.g. legacy ssl_cert_reqs=none).
+            connect_kwargs["ssl_cert_reqs"] = "required"
+            connect_kwargs["ssl_ca_certs"] = ca_certs
+            connect_kwargs["ssl_check_hostname"] = True
+        _redis_client = Redis.from_url(settings.redis_url, **connect_kwargs)
     return _redis_client
 
 

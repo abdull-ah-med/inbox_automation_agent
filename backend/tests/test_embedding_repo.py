@@ -127,6 +127,7 @@ async def test_search_similar_applies_threshold_in_sql_and_excludes_conversation
         embedding=_vector(),
         min_similarity=0.78,
         top_k=3,
+        mailbox="elise@example.com",
         exclude_conversation_id="c-self",
     )
 
@@ -143,6 +144,7 @@ async def test_search_similar_applies_threshold_in_sql_and_excludes_conversation
     assert (
         "cosine_distance" in compiled.lower() or "<=>" in compiled or "distance" in compiled.lower()
     )
+    assert "mailbox" in compiled.lower()
 
 
 @pytest.mark.asyncio
@@ -170,6 +172,7 @@ async def test_search_fts_orders_by_rank_and_excludes_conversation() -> None:
         session,
         query_text="intake packet deadline",
         top_k=5,
+        mailbox="elise@example.com",
         exclude_conversation_id="c-self",
     )
 
@@ -178,7 +181,9 @@ async def test_search_fts_orders_by_rank_and_excludes_conversation() -> None:
     assert matches[0].message_id == keep.message_id
     assert matches[0].similarity_score == pytest.approx(min(1.0, 0.42))
     session.execute.assert_awaited_once()
-    assert session.execute.await_args.args  # SQL statement compiled against EmailEmbedding
+    stmt = session.execute.await_args.args[0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+    assert "mailbox" in compiled.lower()
 
 
 @pytest.mark.asyncio

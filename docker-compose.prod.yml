@@ -54,7 +54,10 @@ services:
     env_file: !override
       - ./backend/.env.prod
     environment: !reset {}
-    volumes: !reset []
+    # Mount CA only (not redis private key) so redis-py can verify the server cert.
+    # REDIS_SSL_CA_CERTS=/tls/ca.crt in backend/.env.prod.
+    volumes: !override
+      - /opt/inbox-triage-redis-tls/ca.crt:/tls/ca.crt:ro
     ports: !override
       - "127.0.0.1:8000:8000"
 
