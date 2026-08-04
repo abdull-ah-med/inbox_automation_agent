@@ -58,3 +58,9 @@ out/
 .cursorrules
 *.mdc
 skills-lock.json
+
+# Local working docs — not for the remote
+/SYSTEM_FLOW.md
+/changes.md
+/pdf.md
+/DEPLOYMENT_BLOCKERS.md
