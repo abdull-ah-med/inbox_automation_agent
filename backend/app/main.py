@@ -16,7 +16,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api.auth.routes import router as auth_router
 from app.api.debug.graph_check import router as debug_graph_check_router
 from app.api.simulate.ingest import router as simulate_ingest_router
-from app.api.simulate.send_confirm import router as simulate_send_confirm_router
 from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
@@ -26,7 +25,6 @@ from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
 from app.api.web.tone_profiles import router as tone_profiles_router
 from app.api.webhooks.graph import router as graph_webhook_router
-from app.api.webhooks.slack_actions import router as slack_actions_router
 from app.core.config import get_settings
 from app.core.dependencies import (
     close_graph_client,
@@ -193,15 +191,22 @@ def create_app() -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware, settings=settings)
     app.add_middleware(SlowAPIMiddleware)
     if not is_local:
+        # Host must match the public hostname nginx forwards (Host $host).
+        # Include localhost for in-container /health checks.
+        # www_redirect=False: API hosts must not bounce to www.<host>.
+        # https://fastapi.tiangolo.com/advanced/middleware/#trustedhostmiddleware
         app.add_middleware(
             TrustedHostMiddleware,
             allowed_hosts=[settings.api_host, f"*.{settings.api_host}", "localhost"],
+            www_redirect=False,
         )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[settings.frontend_origin],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        # Explicit methods (not "*") required with allow_credentials=True.
+        # PATCH is used by reply-memory exclude. https://fastapi.tiangolo.com/tutorial/cors/
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
         expose_headers=[],
     )
@@ -249,7 +254,6 @@ def create_app() -> FastAPI:
     app.include_router(reply_memory_router)
     app.include_router(tone_profiles_router)
     app.include_router(graph_webhook_router)
-    app.include_router(slack_actions_router)
     if mount_dev_routes:
         if not settings.dev_api_key.strip():
             logger.warning(
@@ -257,7 +261,6 @@ def create_app() -> FastAPI:
                 hint="Set DEV_API_KEY — simulate/debug will reject requests",
             )
         app.include_router(simulate_ingest_router)
-        app.include_router(simulate_send_confirm_router)
         app.include_router(debug_graph_check_router)
 
     @app.exception_handler(InboxTriageError)

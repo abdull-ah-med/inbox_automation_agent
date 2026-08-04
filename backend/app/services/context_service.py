@@ -3,6 +3,9 @@
 Read-only Graph only (``list_thread_messages``). Failures return ``None`` so the
 pipeline can fall back to Flow A without raising into ingest.
 
+Search is mailbox-scoped so related-thread context cannot leak across
+``TARGET_MAILBOXES``.
+
 Transaction discipline: OpenAI embed and Graph HTTP run *outside* any DB
 transaction. Short ``begin()`` blocks cover store/search and thread_link writes.
 
@@ -85,12 +88,14 @@ async def resolve_cross_thread_context(
                 embedding=vector,
                 min_similarity=settings.embedding_min_similarity,
                 top_k=candidate_k,
+                mailbox=mailbox,
                 exclude_conversation_id=conversation_id,
             )
             fts_matches = await embedding_repo.search_fts(
                 session,
                 query_text=query_doc,
                 top_k=candidate_k,
+                mailbox=mailbox,
                 exclude_conversation_id=conversation_id,
             )
     except Exception:

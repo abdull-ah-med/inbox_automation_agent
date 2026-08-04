@@ -22,7 +22,7 @@ from app.models.schemas.graph import (
     IngestResultSchema,
     SimulateIngestRequestSchema,
 )
-from app.models.schemas.slack import ReviewCardDataSchema, SlackActionSchema
+from app.models.schemas.slack import ReviewCardDataSchema
 
 __all__ = [
     "ClassificationResultSchema",
@@ -43,7 +43,6 @@ __all__ = [
     "IngestResultSchema",
     "ReviewCardDataSchema",
     "SimulateIngestRequestSchema",
-    "SlackActionSchema",
     "SuggestedRecipientSchema",
     "ThreadContextSchema",
     "ThreadStateEnum",

@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qs, urlparse, urlunparse
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -93,14 +93,19 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:3000"
     cookie_domain: str = ""
     cookie_secure: bool = True
+    # Public Host header value for TrustedHostMiddleware (not localhost outside local).
+    # https://fastapi.tiangolo.com/advanced/middleware/#trustedhostmiddleware
     api_host: str = "localhost"
     auth_login_rate_limit: str = "5/minute"
     auth_refresh_rate_limit: str = "30/minute"
     api_default_rate_limit: str = "120/minute"
-    # Only enable behind a reverse proxy that sets/overwrites X-Forwarded-For.
+    # Enable only behind a reverse proxy that overwrites X-Real-IP (see rate_limit.py).
     trust_x_forwarded_for: bool = False
     # Concurrent refresh grace window (Auth0-style) to avoid false reuse detection.
     refresh_rotation_grace_seconds: int = Field(default=10, ge=0, le=60)
+    # CA bundle for redis-py TLS verify (rediss://). Required outside local.
+    # https://redis.readthedocs.io/en/latest/connections.html
+    redis_ssl_ca_certs: str = ""
 
     @field_validator(
         "enable_dev_routes",
@@ -166,6 +171,14 @@ class Settings(BaseSettings):
     def redis_has_password(self) -> bool:
         return bool(urlparse(self.redis_url).password)
 
+    @property
+    def redis_ssl_cert_reqs_query(self) -> str | None:
+        """Value of ``ssl_cert_reqs`` query param on ``REDIS_URL``, if present."""
+        raw = parse_qs(urlparse(self.redis_url).query).get("ssl_cert_reqs")
+        if not raw:
+            return None
+        return raw[0].strip().lower() or None
+
     def validate_production_security(self) -> list[str]:
         """Return human-readable config errors for non-local deployments.
 
@@ -201,6 +214,19 @@ class Settings(BaseSettings):
                 "REDIS_URL must use rediss:// (TLS) outside local — "
                 "see https://redis.readthedocs.io/en/latest/connections.html"
             )
+        else:
+            if not self.redis_ssl_ca_certs.strip():
+                errors.append(
+                    "REDIS_SSL_CA_CERTS must be set outside local "
+                    "(path to CA cert for redis-py ssl_ca_certs / server auth)"
+                )
+            cert_reqs = self.redis_ssl_cert_reqs_query
+            if cert_reqs in {"none", "optional"}:
+                errors.append(
+                    "REDIS_URL must not set ssl_cert_reqs=none|optional outside local — "
+                    "use REDIS_SSL_CA_CERTS with ssl_cert_reqs=required "
+                    "(redis-py default)"
+                )
         if not self.msal_cache_encryption_key.strip():
             errors.append(
                 "MSAL_CACHE_ENCRYPTION_KEY must be set outside local "
@@ -221,6 +247,13 @@ class Settings(BaseSettings):
         if db_host in {"", "localhost", "127.0.0.1", "::1"}:
             errors.append(
                 f"DATABASE_URL must not point at localhost outside local (got host={db_host!r})"
+            )
+        api_host = self.api_host.strip().lower()
+        if api_host in {"", "localhost", "127.0.0.1", "::1", "*"}:
+            errors.append(
+                "API_HOST must be the public hostname clients send in the Host header "
+                "(e.g. your sslip.io / domain) outside local — TrustedHostMiddleware "
+                "rejects other Host values; localhost breaks nginx-proxied traffic"
             )
         if len(self.jwt_secret.strip()) < 64:
             errors.append("JWT_SECRET must be at least 64 characters outside local")

@@ -136,9 +136,14 @@ async def search_similar(
     embedding: list[float],
     min_similarity: float,
     top_k: int,
+    mailbox: str | None = None,
     exclude_conversation_id: str | None = None,
 ) -> list[EmbeddingMatchSchema]:
-    """Return top-K cosine matches at or above ``min_similarity``."""
+    """Return top-K cosine matches at or above ``min_similarity``.
+
+    When ``mailbox`` is set, results are scoped to that mailbox so draft/context
+    retrieval cannot leak content across TARGET_MAILBOXES.
+    """
     max_distance = 1.0 - min_similarity
     distance = EmailEmbedding.embedding.cosine_distance(embedding)
     similarity = (1 - distance).label("similarity_score")
@@ -148,6 +153,8 @@ async def search_similar(
         .order_by(distance)
         .limit(top_k)
     )
+    if mailbox is not None:
+        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
@@ -170,9 +177,14 @@ async def search_fts(
     *,
     query_text: str,
     top_k: int,
+    mailbox: str | None = None,
     exclude_conversation_id: str | None = None,
 ) -> list[EmbeddingMatchSchema]:
-    """Return top-K full-text matches by ``ts_rank_cd`` on ``search_vector``."""
+    """Return top-K full-text matches by ``ts_rank_cd`` on ``search_vector``.
+
+    When ``mailbox`` is set, results are scoped to that mailbox (same isolation
+    as ``search_similar``).
+    """
     from sqlalchemy import column, func, literal_column
 
     cleaned = (query_text or "").strip()
@@ -189,6 +201,8 @@ async def search_fts(
         .order_by(rank.desc())
         .limit(top_k)
     )
+    if mailbox is not None:
+        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
