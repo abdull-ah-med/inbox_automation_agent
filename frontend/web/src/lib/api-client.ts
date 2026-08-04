@@ -14,12 +14,14 @@ import type {
   DraftView,
   MailboxOverview,
   ReplyMemoryResponse,
+  SkillCandidateResponse,
   SkillCreate,
   SkillResponse,
   SkillUpdate,
   ThreadDetail,
   ThreadList,
   TokenResponse,
+  ToneProfileResponse,
   UserMe,
 } from "@/lib/types";
 
@@ -227,13 +229,13 @@ export const api = {
         body: JSON.stringify(body ?? {}),
       });
     },
-    reject(id: string, body: { feedback_note: string }) {
+    reject(id: string, body: { feedback_note: string; reason_code: string }) {
       return apiFetch<DraftView>(`/api/drafts/${id}/reject`, {
         method: "POST",
         body: JSON.stringify(body),
       });
     },
-    markWrong(id: string, body: { feedback_note: string }) {
+    markWrong(id: string, body: { feedback_note: string; reason_code?: string }) {
       return apiFetch<DraftView>(`/api/drafts/${id}/wrong`, {
         method: "POST",
         body: JSON.stringify(body),
@@ -287,6 +289,39 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ is_excluded }),
       });
+    },
+  },
+
+  toneProfiles: {
+    list(mailbox?: string) {
+      const qs = new URLSearchParams();
+      if (mailbox) qs.set("mailbox", mailbox);
+      const query = qs.toString();
+      return apiFetch<ToneProfileResponse[]>(
+        `/api/tone-profiles${query ? `?${query}` : ""}`,
+      );
+    },
+  },
+
+  skillCandidates: {
+    list(mailbox?: string) {
+      const qs = new URLSearchParams();
+      if (mailbox) qs.set("mailbox", mailbox);
+      const query = qs.toString();
+      return apiFetch<SkillCandidateResponse[]>(
+        `/api/skill-candidates${query ? `?${query}` : ""}`,
+      );
+    },
+    accept(id: string) {
+      return apiFetch<SkillResponse>(`/api/skill-candidates/${id}/accept`, {
+        method: "POST",
+      });
+    },
+    dismiss(id: string) {
+      return apiFetch<SkillCandidateResponse>(
+        `/api/skill-candidates/${id}/dismiss`,
+        { method: "POST" },
+      );
     },
   },
 };

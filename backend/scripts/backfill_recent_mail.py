@@ -23,6 +23,7 @@ import structlog
 
 from app.core.config import get_settings
 from app.core.dependencies import close_redis, get_graph_auth, get_graph_client, get_redis
+from app.core.exceptions import GraphClientError
 from app.db.session import dispose_engine
 from app.workers.poll_fallback_worker import poll_mailbox
 
@@ -56,6 +57,9 @@ async def _run(*, days: int, mailbox: str | None) -> int:
                 lookback_override=lookback,
             )
             print(f"  done {addr}")
+        except GraphClientError as exc:
+            logger.warning("backfill_mailbox_skipped", mailbox=addr, error=str(exc))
+            print(f"  skipped {addr}: {exc}", file=sys.stderr)
         except Exception as exc:
             logger.exception("backfill_mailbox_failed", mailbox=addr)
             print(f"  FAILED {addr}: {exc}", file=sys.stderr)

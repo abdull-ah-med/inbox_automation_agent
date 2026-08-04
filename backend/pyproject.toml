@@ -33,6 +33,13 @@ dependencies = [
     "pyjwt[crypto]>=2.13.0",
     "slowapi>=0.1.10",
     "email-validator>=2.3.0",
+    # Vendored Talon runtime (quotations / bruteforce signature).
+    "lxml>=5.0,<7.0",
+    "regex>=2024.0,<2026.0",
+    "html5lib>=1.1,<2.0",
+    "cssselect>=1.2,<2.0",
+    # OpenAI embedding token budgeting (cl100k_base).
+    "tiktoken>=0.13,<0.14",
 ]
 
 [project.optional-dependencies]
@@ -51,6 +58,7 @@ include = ["app*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+extend-exclude = ["app/llm/_vendor"]
 
 [tool.ruff.lint]
 # E/F = pyflakes+pycodestyle, I = import sorting, UP = pyupgrade,
@@ -62,7 +70,8 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM"]
 python_version = "3.11"
 plugins = ["pydantic.mypy"]
 # Alembic env/versions are framework-generated and loosely typed; don't gate on them.
-exclude = ["^app/db/migrations/"]
+# Vendored Talon is third-party source mirrored under app/llm/_vendor.
+exclude = ["^app/db/migrations/", "^app/llm/_vendor/"]
 warn_unused_configs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
@@ -82,8 +91,16 @@ module = [
     "slack_sdk.*",
     "pgvector.*",
     "apscheduler.*",
+    "app.llm._vendor.talon.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "app.llm._vendor.talon.*",
+]
+ignore_errors = true
+disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

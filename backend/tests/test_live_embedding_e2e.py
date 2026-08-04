@@ -372,7 +372,7 @@ async def test_live_embedding_similarity_tone_and_pipeline(
                 session,
                 embedding=follow_vector,
                 min_similarity=live_settings.embedding_min_similarity,
-                top_k=live_settings.embedding_top_k,
+                top_k=live_settings.embedding_candidate_k,
                 exclude_conversation_id=follow_conv,
             )
         print(f"  matches (>= {live_settings.embedding_min_similarity}): {len(matches)}")

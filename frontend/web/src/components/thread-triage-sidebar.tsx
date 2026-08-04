@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { Check, Pencil, RefreshCw, TriangleAlert, X } from "lucide-react"
+import { Check, Pencil, TriangleAlert, X } from "lucide-react"
 
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
@@ -17,6 +17,10 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api-client"
 import { formatEventName, formatRelativeTime } from "@/lib/design-tokens"
+import {
+  REJECT_REASON_CODES,
+  type RejectReasonCode,
+} from "@/lib/routing"
 import type {
   AuditEntry,
   ClassificationView,
@@ -73,13 +77,6 @@ const feedbackBadge = (draft: DraftView): { label: string; tone: "green" | "blue
   return null
 }
 
-const REGENERATE_PRESETS = [
-  "Acknowledge only",
-  "Escalate",
-  "Forward to specific person",
-  "Provide action items",
-] as const
-
 export const ThreadTriageSidebar = ({
   threadId,
   thread,
@@ -100,11 +97,11 @@ export const ThreadTriageSidebar = ({
   const [editOpen, setEditOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [wrongOpen, setWrongOpen] = useState(false)
-  const [regenOpen, setRegenOpen] = useState(false)
   const [editBody, setEditBody] = useState("")
   const [rejectNote, setRejectNote] = useState("")
+  const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
   const [wrongNote, setWrongNote] = useState("")
-  const [regenInstruction, setRegenInstruction] = useState("")
+  const [wrongReason, setWrongReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
 
   const invalidateThread = async () => {
@@ -131,15 +128,16 @@ export const ThreadTriageSidebar = ({
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (feedback_note: string) => {
+    mutationFn: (payload: { feedback_note: string; reason_code: RejectReasonCode }) => {
       if (!draftId) {
         throw new Error("No draft available to reject")
       }
-      return api.drafts.reject(draftId, { feedback_note })
+      return api.drafts.reject(draftId, payload)
     },
     onSuccess: async () => {
       setRejectOpen(false)
       setRejectNote("")
+      setRejectReason("")
       setActionError(null)
       await invalidateThread()
     },
@@ -149,29 +147,19 @@ export const ThreadTriageSidebar = ({
   })
 
   const wrongMutation = useMutation({
-    mutationFn: (feedback_note: string) => {
+    mutationFn: (payload: {
+      feedback_note: string
+      reason_code?: RejectReasonCode
+    }) => {
       if (!draftId) {
         throw new Error("No draft available to mark wrong")
       }
-      return api.drafts.markWrong(draftId, { feedback_note })
+      return api.drafts.markWrong(draftId, payload)
     },
     onSuccess: async () => {
       setWrongOpen(false)
       setWrongNote("")
-      setActionError(null)
-      await invalidateThread()
-    },
-    onError: (error: Error) => {
-      setActionError(error.message)
-    },
-  })
-
-  const regenMutation = useMutation({
-    mutationFn: (instruction: string) =>
-      api.drafts.regenerate(threadId, { instruction }),
-    onSuccess: async () => {
-      setRegenOpen(false)
-      setRegenInstruction("")
+      setWrongReason("")
       setActionError(null)
       await invalidateThread()
     },
@@ -206,18 +194,19 @@ export const ThreadTriageSidebar = ({
   }
 
   const handleReject = () => {
-    if (!rejectNote.trim()) return
-    rejectMutation.mutate(rejectNote.trim())
+    if (!rejectNote.trim() || !rejectReason) return
+    rejectMutation.mutate({
+      feedback_note: rejectNote.trim(),
+      reason_code: rejectReason,
+    })
   }
 
   const handleWrong = () => {
     if (!wrongNote.trim()) return
-    wrongMutation.mutate(wrongNote.trim())
-  }
-
-  const handleRegenerate = () => {
-    if (!regenInstruction.trim()) return
-    regenMutation.mutate(regenInstruction.trim())
+    wrongMutation.mutate({
+      feedback_note: wrongNote.trim(),
+      reason_code: wrongReason || undefined,
+    })
   }
 
   const teachingNote = thread.teaching_note ?? draft?.teaching_note ?? null
@@ -230,8 +219,7 @@ export const ThreadTriageSidebar = ({
   const busy =
     approveMutation.isPending ||
     rejectMutation.isPending ||
-    wrongMutation.isPending ||
-    regenMutation.isPending
+    wrongMutation.isPending
   const suggestedActions = draft?.suggested_actions ?? []
 
   return (
@@ -406,6 +394,7 @@ export const ThreadTriageSidebar = ({
               <Button
                 type="button"
                 size="sm"
+                variant="outline"
                 tabIndex={0}
                 aria-label="Approve draft"
                 disabled={feedbackDone || busy}
@@ -429,7 +418,7 @@ export const ThreadTriageSidebar = ({
               <Button
                 type="button"
                 size="sm"
-                variant="destructive"
+                variant="outline"
                 tabIndex={0}
                 aria-label="Reject draft"
                 disabled={feedbackDone || busy}
@@ -449,18 +438,6 @@ export const ThreadTriageSidebar = ({
               >
                 <TriangleAlert aria-hidden="true" />
                 Wrong
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                tabIndex={0}
-                aria-label="Regenerate draft with different approach"
-                disabled={busy}
-                onClick={() => setRegenOpen(true)}
-              >
-                <RefreshCw aria-hidden="true" />
-                Regenerate
               </Button>
             </div>
           </div>
@@ -557,14 +534,37 @@ export const ThreadTriageSidebar = ({
               Explain why this draft should be rejected. Email is never sent.
             </DialogDescription>
           </DialogHeader>
-          <textarea
-            value={rejectNote}
-            onChange={(event) => setRejectNote(event.target.value)}
-            aria-label="Rejection note"
-            rows={4}
-            placeholder="Why is this draft wrong?"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-          />
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-500" htmlFor="reject-reason">
+                Reason
+              </label>
+              <select
+                id="reject-reason"
+                value={rejectReason}
+                onChange={(event) =>
+                  setRejectReason(event.target.value as RejectReasonCode | "")
+                }
+                aria-label="Rejection reason"
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+              >
+                <option value="">Select a reason</option>
+                {REJECT_REASON_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {code.replaceAll("_", " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={rejectNote}
+              onChange={(event) => setRejectNote(event.target.value)}
+              aria-label="Rejection note"
+              rows={4}
+              placeholder="Why is this draft wrong?"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+            />
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -580,7 +580,7 @@ export const ThreadTriageSidebar = ({
               variant="destructive"
               tabIndex={0}
               aria-label="Confirm reject draft"
-              disabled={!rejectNote.trim() || busy}
+              disabled={!rejectNote.trim() || !rejectReason || busy}
               onClick={handleReject}
             >
               {rejectMutation.isPending ? "Rejecting…" : "Reject"}
@@ -597,14 +597,37 @@ export const ThreadTriageSidebar = ({
               Tell the system what was wrong so future drafts can improve.
             </DialogDescription>
           </DialogHeader>
-          <textarea
-            value={wrongNote}
-            onChange={(event) => setWrongNote(event.target.value)}
-            aria-label="Wrong draft note"
-            rows={4}
-            placeholder="What should have been different?"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-          />
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs text-gray-500" htmlFor="wrong-reason">
+                Reason (optional)
+              </label>
+              <select
+                id="wrong-reason"
+                value={wrongReason}
+                onChange={(event) =>
+                  setWrongReason(event.target.value as RejectReasonCode | "")
+                }
+                aria-label="Wrong draft reason"
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+              >
+                <option value="">Select a reason</option>
+                {REJECT_REASON_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {code.replaceAll("_", " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <textarea
+              value={wrongNote}
+              onChange={(event) => setWrongNote(event.target.value)}
+              aria-label="Wrong draft note"
+              rows={4}
+              placeholder="What should have been different?"
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+            />
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -623,59 +646,6 @@ export const ThreadTriageSidebar = ({
               onClick={handleWrong}
             >
               {wrongMutation.isPending ? "Saving…" : "Mark Wrong"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={regenOpen} onOpenChange={setRegenOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Regenerate with a different approach</DialogTitle>
-            <DialogDescription>
-              Describe the path you want (acknowledge only, escalate, etc.). A new draft is created.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-wrap gap-2">
-            {REGENERATE_PRESETS.map((preset) => (
-              <button
-                key={preset}
-                type="button"
-                tabIndex={0}
-                aria-label={`Use preset: ${preset}`}
-                onClick={() => setRegenInstruction(preset)}
-                className="cursor-pointer rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
-              >
-                {preset}
-              </button>
-            ))}
-          </div>
-          <textarea
-            value={regenInstruction}
-            onChange={(event) => setRegenInstruction(event.target.value)}
-            aria-label="Regeneration instruction"
-            rows={4}
-            placeholder="e.g., just acknowledge receipt, no action items"
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-          />
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              tabIndex={0}
-              aria-label="Cancel regenerate"
-              onClick={() => setRegenOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              tabIndex={0}
-              aria-label="Regenerate draft"
-              disabled={!regenInstruction.trim() || busy}
-              onClick={handleRegenerate}
-            >
-              {regenMutation.isPending ? "Regenerating…" : "Regenerate Draft"}
             </Button>
           </DialogFooter>
         </DialogContent>

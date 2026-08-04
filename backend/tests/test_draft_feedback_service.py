@@ -273,6 +273,7 @@ async def test_reject_sets_note() -> None:
             session,
             draft_id,
             feedback_note="Tone is too curt",
+            reason_code="tone",
         )
 
     assert result.feedback_action == "reject"
@@ -320,6 +321,7 @@ async def test_mark_wrong() -> None:
             session,
             draft_id,
             feedback_note="Should have forwarded to Jordan",
+            reason_code="wrong_action",
         )
 
     assert result.feedback_action == "wrong"

@@ -14,6 +14,8 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.core.exceptions import TriageError
+from app.llm.context_pack import pack_same_thread
+from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
 from app.llm.prompts import PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT
 from app.models.schemas.classification import TriageResultSchema
@@ -35,17 +37,23 @@ class TriageCallResult:
 def _build_user_content(
     email: EmailMessageSchema,
     thread_context: ThreadContextSchema,
+    *,
+    verbatim_tail: int = 2,
+    full_if_at_most: int = 5,
 ) -> str:
-    thread_lines: list[str] = []
-    for msg in thread_context.messages:
-        preview = msg.body_preview or msg.body_text[:240]
-        thread_lines.append(
-            f"- [{msg.direction.value}] from={msg.sender} "
-            f"at={msg.received_at.isoformat()} preview={preview!r}"
-        )
-    thread_block = "\n".join(thread_lines) if thread_lines else "(no prior messages)"
+    thread_block = pack_same_thread(
+        thread_context,
+        current_message_id=email.message_id,
+        verbatim_tail=verbatim_tail,
+        full_if_at_most=full_if_at_most,
+    )
     to_list = ", ".join(email.to_recipients) if email.to_recipients else "(none)"
     cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else "(none)"
+    body = effective_body_text(
+        body_clean=email.body_clean,
+        body_text=email.body_text,
+        body_content_type=email.body_content_type,
+    )
 
     return (
         f"Mailbox: {email.mailbox}\n"
@@ -57,7 +65,7 @@ def _build_user_content(
         f"CC: {cc_list}\n"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
-        f"Body:\n{email.body_text}\n\n"
+        f"Body:\n{body}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n"
     )
@@ -109,6 +117,8 @@ async def triage_email(
     user_content = _build_user_content(
         scrub_email_for_llm(email),
         scrub_thread_for_llm(thread_context),
+        verbatim_tail=settings.thread_verbatim_tail,
+        full_if_at_most=settings.thread_full_if_at_most,
     )
     started = time.perf_counter()
     last_error: Exception | None = None

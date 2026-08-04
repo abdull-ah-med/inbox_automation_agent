@@ -24,10 +24,14 @@ from app.repositories import (
     audit_repo,
     draft_repo,
     message_repo,
-    skill_repo,
     thread_repo,
 )
-from app.services import audit_service, reply_memory_service
+from app.services import (
+    audit_service,
+    rejection_memory_service,
+    skill_selection_service,
+    tone_profile_service,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -121,6 +125,7 @@ async def regenerate_draft(
             has_action_items=True,
             action_items_summary=None,
             needs_context=False,
+            routing_category="general",
         )
     else:
         triage = TriageResultSchema(
@@ -138,10 +143,26 @@ async def regenerate_draft(
                 else False
             ),
             context_reason=triage_flags.context_reason,
+            routing_category="general",
         )
 
-    active_skills = await skill_repo.list_active(session)
-    skill_contents = [skill.content for skill in active_skills]
+    active_skills_contents: list[str] = []
+    try:
+        active_skills_contents = await skill_selection_service.select_skill_contents(
+            session,
+            client=client,
+            settings=settings,
+            openai_client=openai_client,
+            email=email,
+            triage=triage,
+            conversation_id=thread.conversation_id,
+        )
+    except Exception:
+        logger.exception(
+            "skill_load_failed_on_regenerate",
+            thread_id=str(thread_id),
+        )
+        active_skills_contents = []
 
     # Snapshot values needed after we release the DB transaction.
     mailbox = thread.mailbox
@@ -149,19 +170,28 @@ async def regenerate_draft(
     subject = thread.subject
     latest_body = latest.body_text
     latest_graph_id = latest.graph_message_id
+    email_text = f"{subject}\n\n{latest_body}"
+    routing_category = triage.routing_category or "general"
 
-    # Release any open transaction before OpenAI embed + Sonnet.
-    if session.in_transaction():
-        await session.commit()
-
-    tone_references = await reply_memory_service.find_similar_replies(
+    tone_profile_block, tone_references = await tone_profile_service.load_for_draft(
         session,
         openai_client=openai_client,
         settings=settings,
-        email_text=f"{subject}\n\n{latest_body}",
         mailbox=mailbox,
+        routing_category=routing_category,
+        email_text=email_text,
+    )
+    negative_constraints = await rejection_memory_service.find_negative_constraints(
+        session,
+        openai_client=openai_client,
+        settings=settings,
+        email_text=email_text,
+        mailbox=mailbox,
+        routing_category=routing_category,
         limit=3,
     )
+
+    # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
         await session.commit()
 
@@ -171,8 +201,10 @@ async def regenerate_draft(
         triage,
         client=client,
         settings=settings,
-        skills=skill_contents,
+        skills=active_skills_contents,
         tone_references=tone_references,
+        tone_profile=tone_profile_block,
+        negative_constraints=negative_constraints,
         instruction=instruction,
     )
 

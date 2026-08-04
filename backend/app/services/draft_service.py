@@ -6,14 +6,21 @@ import uuid
 
 import structlog
 from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
 from app.llm import draft_generator as draft_llm
+from app.llm.email_clean import effective_body_text
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
-from app.repositories import draft_repo, skill_repo
+from app.repositories import draft_repo
+from app.services import (
+    rejection_memory_service,
+    skill_selection_service,
+    tone_profile_service,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -27,7 +34,10 @@ async def run_draft(
     thread_id: uuid.UUID,
     cross_thread_context: CrossThreadContextSchema | str | None = None,
     tone_references: list[str] | None = None,
+    tone_profile: str | None = None,
     skills: list[str] | None = None,
+    negative_constraints: list[str] | None = None,
+    openai_client: AsyncOpenAI | None = None,
 ) -> EmailTriageState:
     """Generate and persist a draft when ``draft_status`` is PENDING.
 
@@ -56,19 +66,59 @@ async def run_draft(
         state.error_logs.append("draft_skipped:missing_triage")
         return state
 
+    email = state.original_email
+    body = effective_body_text(
+        body_clean=email.body_clean,
+        body_text=email.body_text,
+        body_content_type=email.body_content_type,
+    )
+    email_text = f"{email.subject}\n\n{body}"
+    category = state.triage.routing_category or "general"
+
     skill_contents = skills
     if skill_contents is None:
         try:
-            active_skills = await skill_repo.list_active(session)
-            skill_contents = [skill.content for skill in active_skills]
+            skill_contents = await skill_selection_service.select_skill_contents(
+                session,
+                client=client,
+                settings=settings,
+                openai_client=openai_client,
+                email=email,
+                triage=state.triage,
+                conversation_id=email.conversation_id,
+            )
         except Exception:
             logger.exception(
                 "skill_load_failed",
-                conversation_id=state.original_email.conversation_id,
-                mailbox=state.original_email.mailbox,
+                conversation_id=email.conversation_id,
+                mailbox=email.mailbox,
                 message_id=message_id,
             )
             skill_contents = []
+
+    resolved_profile = tone_profile
+    resolved_tone_refs = tone_references
+    if resolved_profile is None and resolved_tone_refs is None:
+        resolved_profile, resolved_tone_refs = await tone_profile_service.load_for_draft(
+            session,
+            openai_client=openai_client,
+            settings=settings,
+            mailbox=email.mailbox,
+            routing_category=category,
+            email_text=email_text,
+        )
+
+    resolved_constraints = negative_constraints
+    if resolved_constraints is None:
+        resolved_constraints = await rejection_memory_service.find_negative_constraints(
+            session,
+            openai_client=openai_client,
+            settings=settings,
+            email_text=email_text,
+            mailbox=email.mailbox,
+            routing_category=category,
+            limit=3,
+        )
 
     try:
         result = await draft_llm.generate_draft(
@@ -78,8 +128,10 @@ async def run_draft(
             client=client,
             settings=settings,
             cross_thread_context=cross_thread_context,
-            tone_references=tone_references,
+            tone_references=resolved_tone_refs,
+            tone_profile=resolved_profile,
             skills=skill_contents,
+            negative_constraints=resolved_constraints,
         )
     except DraftGenerationError as exc:
         logger.warning(
@@ -104,6 +156,7 @@ async def run_draft(
         draft=result.draft,
         prompt_version=result.prompt_version,
         context_match_confidence=confidence,
+        routing_category=(state.triage.routing_category if state.triage is not None else None),
     )
     state.draft = DraftSchema.model_validate(
         persisted.model_dump(include=set(DraftSchema.model_fields))

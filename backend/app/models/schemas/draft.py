@@ -39,3 +39,5 @@ class DraftResponseSchema(DraftSchema):
     context_match_confidence: float | None = None
     feedback_note: str | None = None
     feedback_action: str | None = None
+    feedback_reason_code: str | None = None
+    routing_category: str | None = None

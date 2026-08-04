@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 
 import structlog
+from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +14,13 @@ from app.core.exceptions import DraftNotFoundError
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
 from app.repositories import draft_repo, thread_repo
-from app.services import audit_service, reply_memory_service
+from app.services import (
+    audit_service,
+    rejection_memory_service,
+    reply_memory_service,
+    skill_candidate_service,
+    tone_profile_service,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -110,6 +117,7 @@ async def store_approved_reply_memory(
     draft: DraftResponseSchema,
     settings: Settings,
     openai_client: AsyncOpenAI | None,
+    anthropic_client: AsyncAnthropic | None = None,
 ) -> None:
     """Best-effort reply memory after the approve txn has committed.
 
@@ -119,6 +127,7 @@ async def store_approved_reply_memory(
     https://docs.sqlalchemy.org/en/20/errors.html#this-session-s-transaction-has-been-rolled-back-due-to-a-previous-exception-during-flush).
     Never raises to the approve HTTP path.
     """
+    mailbox = "unknown"
     try:
         factory = get_session_factory()
         async with factory() as session:
@@ -145,16 +154,76 @@ async def store_approved_reply_memory(
             draft_id=str(draft.id),
         )
 
+    await tone_profile_service.maybe_rebuild(
+        settings=settings,
+        anthropic_client=anthropic_client,
+        mailbox=mailbox,
+        routing_category=draft.routing_category,
+    )
+
+
+async def store_rejection_memory(
+    *,
+    draft: DraftResponseSchema,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+    anthropic_client: AsyncAnthropic | None = None,
+) -> None:
+    """Best-effort rejection memory after the reject txn has committed.
+
+    Dedicated session (same pattern as reply memory). Only for reject — not wrong.
+    Never raises to the reject HTTP path.
+    """
+    if not draft.feedback_note or not draft.feedback_reason_code:
+        return
+    mailbox = "unknown"
+    routing_category = draft.routing_category or "general"
+    reason_code = draft.feedback_reason_code
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            mailbox = thread.mailbox if thread is not None else "unknown"
+            if session.in_transaction():
+                await session.commit()
+            await rejection_memory_service.store_rejection(
+                session,
+                openai_client=openai_client,
+                settings=settings,
+                draft_id=draft.id,
+                mailbox=mailbox,
+                routing_category=routing_category,
+                reason_code=reason_code,
+                note=draft.feedback_note,
+            )
+            if session.in_transaction():
+                await session.commit()
+    except Exception:
+        logger.exception(
+            "rejection_memory_post_reject_failed",
+            draft_id=str(draft.id),
+        )
+        return
+
+    await skill_candidate_service.maybe_propose_from_rejects(
+        settings=settings,
+        anthropic_client=anthropic_client,
+        mailbox=mailbox,
+        routing_category=routing_category,
+        reason_code=reason_code,
+    )
+
 
 async def reject_draft(
     session: AsyncSession,
     draft_id: uuid.UUID,
     *,
     feedback_note: str,
+    reason_code: str,
     actor: str = "user",
     settings: Settings | None = None,
 ) -> DraftResponseSchema:
-    """Reject a draft with a required note. Idempotent. Does not send email."""
+    """Reject a draft with a required note and reason code. Idempotent. Does not send email."""
     existing = await draft_repo.get_draft_by_id(session, draft_id)
     if existing is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -172,6 +241,7 @@ async def reject_draft(
         session,
         draft_id,
         feedback_note=feedback_note,
+        reason_code=reason_code,
     )
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -185,6 +255,7 @@ async def reject_draft(
             payload={
                 "draft_id": str(draft_id),
                 "feedback_action": "reject",
+                "reason_code": reason_code,
             },
             actor=actor,
         )
@@ -195,7 +266,12 @@ async def reject_draft(
             event_type="draft.rejected",
         )
 
-    logger.info("draft_rejected", draft_id=str(draft_id), actor=actor)
+    logger.info(
+        "draft_rejected",
+        draft_id=str(draft_id),
+        actor=actor,
+        reason_code=reason_code,
+    )
     return updated
 
 
@@ -204,6 +280,7 @@ async def mark_wrong(
     draft_id: uuid.UUID,
     *,
     feedback_note: str,
+    reason_code: str = "other",
     actor: str = "user",
     settings: Settings | None = None,
 ) -> DraftResponseSchema:
@@ -225,6 +302,7 @@ async def mark_wrong(
         session,
         draft_id,
         feedback_note=feedback_note,
+        reason_code=reason_code,
     )
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -238,6 +316,7 @@ async def mark_wrong(
             payload={
                 "draft_id": str(draft_id),
                 "feedback_action": "wrong",
+                "reason_code": reason_code,
             },
             actor=actor,
         )
@@ -248,5 +327,10 @@ async def mark_wrong(
             event_type="draft.marked_wrong",
         )
 
-    logger.info("draft_marked_wrong", draft_id=str(draft_id), actor=actor)
+    logger.info(
+        "draft_marked_wrong",
+        draft_id=str(draft_id),
+        actor=actor,
+        reason_code=reason_code,
+    )
     return updated

@@ -21,18 +21,22 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuthState } from "@/features/auth/use-auth"
 import { api } from "@/lib/api-client"
+import { ROUTING_CATEGORIES, type RoutingCategory } from "@/lib/routing"
 import type {
   ReplyMemoryResponse,
+  SkillCandidateResponse,
   SkillCreate,
   SkillResponse,
   SkillUpdate,
+  ToneProfileResponse,
 } from "@/lib/types"
 
 const emptyForm = (): SkillCreate => ({
   name: "",
   description: "",
   content: "",
-  category: "",
+  category: "general",
+  always_apply: false,
   is_active: true,
 })
 
@@ -71,6 +75,16 @@ export default function SettingsPage() {
   } = useQuery({
     queryKey: ["reply-memory"],
     queryFn: () => api.replyMemory.list(),
+  })
+
+  const { data: toneProfiles } = useQuery({
+    queryKey: ["tone-profiles"],
+    queryFn: () => api.toneProfiles.list(),
+  })
+
+  const { data: skillCandidates, refetch: refetchCandidates } = useQuery({
+    queryKey: ["skill-candidates"],
+    queryFn: () => api.skillCandidates.list(),
   })
 
   const invalidate = async () => {
@@ -149,7 +163,8 @@ export default function SettingsPage() {
       name: skill.name,
       description: skill.description ?? "",
       content: skill.content,
-      category: skill.category ?? "",
+      category: (skill.category as RoutingCategory | null) ?? "general",
+      always_apply: skill.always_apply ?? false,
       is_active: skill.is_active,
     })
     setFormError(null)
@@ -162,11 +177,16 @@ export default function SettingsPage() {
       setFormError("Name and content are required.")
       return
     }
+    if (!form.always_apply && !form.category) {
+      setFormError("Category is required unless Always apply is enabled.")
+      return
+    }
     const payload: SkillCreate = {
       name: form.name.trim(),
       description: form.description?.trim() || undefined,
       content: form.content.trim(),
-      category: form.category?.trim() || undefined,
+      category: form.always_apply ? form.category || null : form.category,
+      always_apply: form.always_apply ?? false,
       is_active: form.is_active ?? true,
     }
     if (editing) {
@@ -182,6 +202,31 @@ export default function SettingsPage() {
       id: item.id,
       is_excluded: !item.is_excluded,
     })
+  }
+
+  const acceptCandidateMutation = useMutation({
+    mutationFn: (id: string) => api.skillCandidates.accept(id),
+    onSuccess: async () => {
+      await invalidate()
+      await refetchCandidates()
+    },
+  })
+
+  const dismissCandidateMutation = useMutation({
+    mutationFn: (id: string) => api.skillCandidates.dismiss(id),
+    onSuccess: async () => {
+      await refetchCandidates()
+    },
+  })
+
+  const handleAcceptCandidate = (candidate: SkillCandidateResponse) => {
+    if (!isAdmin) return
+    acceptCandidateMutation.mutate(candidate.id)
+  }
+
+  const handleDismissCandidate = (candidate: SkillCandidateResponse) => {
+    if (!isAdmin) return
+    dismissCandidateMutation.mutate(candidate.id)
   }
 
   const busy =
@@ -227,6 +272,8 @@ export default function SettingsPage() {
 
   const skills = data ?? []
   const replies = replyMemory ?? []
+  const profiles = toneProfiles ?? []
+  const candidates = skillCandidates ?? []
 
   return (
     <PageTransition>
@@ -287,6 +334,9 @@ export default function SettingsPage() {
                     />
                     {skill.category ? (
                       <StatusBadge label={skill.category} tone="neutral" />
+                    ) : null}
+                    {skill.always_apply ? (
+                      <StatusBadge label="Always" tone="blue" />
                     ) : null}
                   </div>
                   {skill.description ? (
@@ -349,6 +399,141 @@ export default function SettingsPage() {
           </ul>
         )}
       </div>
+
+      <section className="mt-10" aria-labelledby="skill-candidates-heading">
+        <div className="mb-5">
+          <h2
+            id="skill-candidates-heading"
+            className="text-xl font-semibold text-gray-900 dark:text-gray-100"
+          >
+            Proposed skills
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Recurring rejection themes promoted into standing skill drafts for
+            review. Accept creates an active skill; dismiss archives the proposal.
+          </p>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          {candidates.length === 0 ? (
+            <p className="p-6 text-sm text-gray-500">
+              No pending proposals. Reject drafts with the same reason a few times
+              to surface candidates.
+            </p>
+          ) : (
+            <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+              {candidates.map((candidate) => (
+                <li
+                  key={candidate.id}
+                  className="flex flex-wrap items-start justify-between gap-3 p-4"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-gray-900 dark:text-gray-100">
+                        {candidate.proposed_name}
+                      </p>
+                      <StatusBadge label={candidate.routing_category} tone="neutral" />
+                      <StatusBadge label={candidate.reason_code} tone="amber" />
+                    </div>
+                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                      {candidate.proposed_content}
+                    </p>
+                    <p className="text-xs text-gray-500">{candidate.mailbox}</p>
+                  </div>
+                  {isAdmin ? (
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        tabIndex={0}
+                        aria-label={`Accept proposed skill ${candidate.proposed_name}`}
+                        disabled={
+                          acceptCandidateMutation.isPending ||
+                          dismissCandidateMutation.isPending
+                        }
+                        onClick={() => handleAcceptCandidate(candidate)}
+                      >
+                        Accept
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        tabIndex={0}
+                        aria-label={`Dismiss proposed skill ${candidate.proposed_name}`}
+                        disabled={
+                          acceptCandidateMutation.isPending ||
+                          dismissCandidateMutation.isPending
+                        }
+                        onClick={() => handleDismissCandidate(candidate)}
+                      >
+                        Dismiss
+                      </Button>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+
+      <section className="mt-10" aria-labelledby="tone-profiles-heading">
+        <div className="mb-5">
+          <h2
+            id="tone-profiles-heading"
+            className="text-xl font-semibold text-gray-900 dark:text-gray-100"
+          >
+            Tone profiles
+          </h2>
+          <p className="mt-1 text-sm text-gray-500">
+            Distilled voice rules rebuilt automatically after enough approvals.
+            Read-only.
+          </p>
+        </div>
+        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          {profiles.length === 0 ? (
+            <p className="p-6 text-sm text-gray-500">
+              No tone profiles yet. Approve at least 10 drafts to distill a profile.
+            </p>
+          ) : (
+            <ul className="divide-y divide-gray-100 dark:divide-gray-800">
+              {profiles.map((profile: ToneProfileResponse) => (
+                <li key={profile.id} className="space-y-2 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium text-gray-900 dark:text-gray-100">
+                      {profile.mailbox}
+                    </p>
+                    <StatusBadge label={profile.routing_category} tone="neutral" />
+                    <StatusBadge
+                      label={`v${profile.version}`}
+                      tone="blue"
+                    />
+                    <span className="text-xs text-gray-500">
+                      {profile.sample_count} samples
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-300">
+                    {profile.profile.formality} · {profile.profile.typical_length}
+                    {profile.profile.greeting_pattern
+                      ? ` · ${profile.profile.greeting_pattern}`
+                      : ""}
+                    {profile.profile.sign_off_pattern
+                      ? ` · ${profile.profile.sign_off_pattern}`
+                      : ""}
+                  </p>
+                  {profile.profile.behavioral_rules.length > 0 ? (
+                    <ul className="list-disc pl-5 text-sm text-gray-600 dark:text-gray-400">
+                      {profile.profile.behavioral_rules.map((rule) => (
+                        <li key={rule}>{rule}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
 
       <section className="mt-10" aria-labelledby="tone-memory-heading">
         <div className="mb-5">
@@ -466,17 +651,27 @@ export default function SettingsPage() {
             </div>
             <div>
               <label className="text-xs text-gray-500" htmlFor="skill-category">
-                Category (optional)
+                Category
               </label>
-              <Input
+              <select
                 id="skill-category"
-                value={form.category ?? ""}
+                value={form.category ?? "general"}
                 onChange={(event) =>
-                  setForm((prev) => ({ ...prev, category: event.target.value }))
+                  setForm((prev) => ({
+                    ...prev,
+                    category: event.target.value as RoutingCategory,
+                  }))
                 }
                 aria-label="Skill category"
-                placeholder="e.g. drug-screen"
-              />
+                disabled={form.always_apply}
+                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+              >
+                {ROUTING_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="text-xs text-gray-500" htmlFor="skill-description">
@@ -509,6 +704,20 @@ export default function SettingsPage() {
                 className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
               />
             </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input
+                type="checkbox"
+                checked={form.always_apply ?? false}
+                onChange={(event) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    always_apply: event.target.checked,
+                  }))
+                }
+                aria-label="Skill always apply"
+              />
+              Always apply
+            </label>
             <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
               <input
                 type="checkbox"

@@ -21,8 +21,10 @@ from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
 from app.api.web.reply_memory import router as reply_memory_router
+from app.api.web.skill_candidates import router as skill_candidates_router
 from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
+from app.api.web.tone_profiles import router as tone_profiles_router
 from app.api.webhooks.graph import router as graph_webhook_router
 from app.api.webhooks.slack_actions import router as slack_actions_router
 from app.core.config import get_settings
@@ -243,7 +245,9 @@ def create_app() -> FastAPI:
     app.include_router(threads_router)
     app.include_router(drafts_router)
     app.include_router(skills_router)
+    app.include_router(skill_candidates_router)
     app.include_router(reply_memory_router)
+    app.include_router(tone_profiles_router)
     app.include_router(graph_webhook_router)
     app.include_router(slack_actions_router)
     if mount_dev_routes:
