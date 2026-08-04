@@ -40,6 +40,8 @@ jobs:
         run: ruff check .
 
       - name: Pytest
+        env:
+          ENVIRONMENT: local
         run: pytest
 
   frontend-ci:
