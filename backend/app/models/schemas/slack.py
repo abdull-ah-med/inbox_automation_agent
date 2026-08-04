@@ -7,13 +7,6 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import ThreadContextSchema
 
 
-class SlackActionSchema(BaseModel):
-    action_id: str
-    user_id: str
-    thread_id: str
-    conversation_id: str | None = None
-
-
 class ReviewCardDataSchema(BaseModel):
     mailbox: str
     received_at: datetime
