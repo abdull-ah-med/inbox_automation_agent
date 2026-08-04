@@ -1,0 +1,141 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [feat/web-dashboard, dev]
+  pull_request:
+    branches: [feat/web-dashboard, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: us-east-2
+  AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+  EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+
+jobs:
+  backend-ci:
+    name: Backend (lint + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.lock
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.lock
+          pip install -e .[dev]
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Pytest
+        run: pytest
+
+  frontend-ci:
+    name: Frontend (lint + typecheck + test + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Frontend/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: Frontend/web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://placeholder.invalid
+
+  deploy:
+    name: Deploy to EC2 (via SSM)
+    needs: [backend-ci, frontend-ci]
+    if: vars.ENABLE_DEPLOYMENT == 'true' && (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Send deploy command over SSM
+        env:
+          INSTANCE_ID: ${{ env.EC2_INSTANCE_ID }}
+        run: |
+          set -euo pipefail
+
+          COMMANDS_JSON=$(jq -Rs 'split("\n")' deploy/ssm-deploy.sh)
+
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy inbox-triage-automation @ ${GITHUB_SHA}" \
+            --parameters "{\"commands\":${COMMANDS_JSON}}" \
+            --query "Command.CommandId" --output text)
+
+          echo "SSM command: $COMMAND_ID"
+
+          STATUS="Pending"
+          for _ in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$INSTANCE_ID" \
+              --query "Status" --output text 2>/dev/null || echo "Pending")
+
+            case "$STATUS" in
+              Success) break ;;
+              Failed|Cancelled|TimedOut)
+                echo "Deploy failed with status: $STATUS"
+                aws ssm get-command-invocation \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$INSTANCE_ID" \
+                  --query "StandardErrorContent" --output text
+                exit 1
+                ;;
+              *) sleep 10 ;;
+            esac
+          done
+
+          if [ "$STATUS" != "Success" ]; then
+            echo "Timed out waiting for deploy command to finish (last status: $STATUS)"
+            exit 1
+          fi
+
+          echo "Deploy succeeded."
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID" \
+            --query "StandardOutputContent" --output text
