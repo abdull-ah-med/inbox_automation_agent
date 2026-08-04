@@ -9,6 +9,7 @@ Official docs:
 - https://learn.microsoft.com/en-us/graph/api/mailfolder-list-messages
 - https://learn.microsoft.com/en-us/graph/api/subscription-post-subscriptions
 - https://learn.microsoft.com/en-us/graph/throttling
+- https://learn.microsoft.com/en-us/graph/paging (nextLink is opaque; still host-pin for SSRF)
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import httpx
 import structlog
@@ -32,13 +33,14 @@ from app.models.schemas.graph import (
 logger = structlog.get_logger(__name__)
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
+_GRAPH_HOSTS = frozenset({"graph.microsoft.com"})
 DEFAULT_MESSAGE_SELECT = (
     "id,subject,bodyPreview,body,sender,from,toRecipients,ccRecipients,"
     "receivedDateTime,conversationId,isRead,hasAttachments,importance"
 )
 MAX_SUBSCRIPTION_MINUTES = 4230
+_ERROR_BODY_MAX_CHARS = 500
 
-# Graph throttling: honor Retry-After; retry up to 3 times after the first failure.
 # https://learn.microsoft.com/en-us/graph/throttling
 MAX_THROTTLE_RETRIES = 3
 DEFAULT_RETRY_AFTER_SECONDS = 5.0
@@ -59,13 +61,38 @@ def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
     return backoff
 
 
+def _path_segment(value: str) -> str:
+    """Percent-encode a single URL path segment (IDs may contain ``/``, ``@``, ``#``)."""
+    return quote(value, safe="")
+
+
+def _truncate_error_body(text: str) -> str:
+    if len(text) <= _ERROR_BODY_MAX_CHARS:
+        return text
+    return text[:_ERROR_BODY_MAX_CHARS] + "…[truncated]"
+
+
+def _assert_graph_absolute_url(url: str) -> str:
+    """Validate nextLink host/scheme; return the URL unchanged (opaque per Graph docs)."""
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise GraphClientError(
+            f"Refusing non-HTTPS Graph pagination URL (scheme={parsed.scheme!r})"
+        )
+    host = (parsed.hostname or "").lower()
+    if host not in _GRAPH_HOSTS:
+        raise GraphClientError(
+            f"Refusing Graph pagination URL with host {host!r} (allowed: {sorted(_GRAPH_HOSTS)})"
+        )
+    return url
+
+
 class GraphClient:
     """Read-only Microsoft Graph client using a long-lived httpx session + MSAL auth."""
 
     def __init__(self, auth: GraphAuth, *, timeout: float = 30.0) -> None:
         self._auth = auth
         self._timeout = timeout
-        # Long-lived client for connection pooling (httpx docs: do not create per request).
         self._http = httpx.AsyncClient(
             timeout=timeout,
             headers={"Accept": "application/json"},
@@ -92,7 +119,10 @@ class GraphClient:
         if headers:
             request_headers.update(headers)
 
-        url = absolute_url or f"{GRAPH_BASE_URL}{path}"
+        if absolute_url is not None:
+            url = _assert_graph_absolute_url(absolute_url)
+        else:
+            url = f"{GRAPH_BASE_URL}{path}"
         logger.debug("graph_request", method=method, path=path or absolute_url)
 
         response: httpx.Response | None = None
@@ -123,16 +153,17 @@ class GraphClient:
         assert response is not None
 
         if response.status_code >= 400:
+            truncated = _truncate_error_body(response.text)
             logger.error(
                 "graph_request_failed",
                 method=method,
                 path=path or absolute_url,
                 status_code=response.status_code,
-                body=response.text,
+                error_body_truncated=truncated,
             )
             raise GraphClientError(
                 f"Graph API {method} {path or absolute_url} failed "
-                f"with status {response.status_code}: {response.text}"
+                f"with status {response.status_code}: {truncated}"
             )
 
         if response.status_code == 204 or not response.content:
@@ -149,7 +180,7 @@ class GraphClient:
 
         GET /users/{mailbox}/messages/{message_id}
         """
-        path = f"/users/{mailbox}/messages/{message_id}"
+        path = f"/users/{_path_segment(mailbox)}/messages/{_path_segment(message_id)}"
         data = await self._request(
             "GET",
             path,
@@ -175,7 +206,8 @@ class GraphClient:
 
         GET /users/{mailbox}/mailFolders('{folder}')/messages
         """
-        path = f"/users/{mailbox}/mailFolders('{folder}')/messages"
+        safe_folder = folder.replace("'", "''")
+        path = f"/users/{_path_segment(mailbox)}/mailFolders('{safe_folder}')/messages"
         params: dict[str, str] = {
             "$top": str(top),
             "$orderby": orderby,
@@ -213,14 +245,15 @@ class GraphClient:
         """Fetch all messages in a thread ordered by received time.
 
         GET /users/{mailbox}/messages?$filter=conversationId eq '{id}'
+
+        Do not combine conversationId $filter with $orderby=receivedDateTime —
+        Graph returns InefficientFilter (400). Sort client-side instead.
         """
-        # Escape single quotes in OData string literals by doubling them.
         safe_conversation_id = conversation_id.replace("'", "''")
         filter_query = f"conversationId eq '{safe_conversation_id}'"
-        path = f"/users/{mailbox}/messages"
+        path = f"/users/{_path_segment(mailbox)}/messages"
         params: dict[str, str] = {
             "$filter": filter_query,
-            "$orderby": "receivedDateTime asc",
             "$select": DEFAULT_MESSAGE_SELECT,
             "$top": "50",
         }
@@ -244,6 +277,7 @@ class GraphClient:
             page = GraphMessageListSchema.model_validate(data or {"value": []})
             messages.extend(page.value)
 
+        messages.sort(key=lambda m: m.received_date_time or datetime.min.replace(tzinfo=UTC))
         return messages
 
     async def list_subscriptions(self) -> list[GraphSubscriptionSchema]:
@@ -331,7 +365,6 @@ class GraphClient:
         body = {
             "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
         }
-        # subscription_id is opaque; quote for path safety
         path = f"/subscriptions/{quote(subscription_id, safe='')}"
         data = await self._request("PATCH", path, json_body=body)
         if not data:

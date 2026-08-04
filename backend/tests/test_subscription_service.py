@@ -41,10 +41,29 @@ def _sub(
 
 
 @pytest.mark.asyncio
+async def test_subscription_match_rejects_substring_mailbox() -> None:
+    """``test@`` must not match a subscription for ``contest@``."""
+    sub = GraphSubscriptionSchema.model_validate(
+        {
+            "id": "sub-1",
+            "resource": "users/contest@company.com/mailFolders('inbox')/messages",
+            "changeType": "created",
+            "notificationUrl": "https://example.com/webhooks/graph/notifications",
+            "lifecycleNotificationUrl": "https://example.com/webhooks/graph/lifecycle",
+            "expirationDateTime": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+            "clientState": "secret",
+        }
+    )
+    assert subscription_service._subscription_matches_mailbox(sub, "contest@company.com")
+    assert not subscription_service._subscription_matches_mailbox(sub, "test@company.com")
+
+
+@pytest.mark.asyncio
 async def test_reconcile_creates_when_missing() -> None:
     settings = _settings()
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
+    redis.delete = AsyncMock(return_value=1)
     graph_client = MagicMock()
     graph_client.list_subscriptions = AsyncMock(return_value=[])
     created = _sub()
@@ -60,7 +79,9 @@ async def test_reconcile_creates_when_missing() -> None:
     assert result is not None
     assert result.id == "sub-1"
     graph_client.create_subscription.assert_awaited_once()
-    redis.set.assert_awaited()
+    # validation window open + subscription cache
+    assert redis.set.await_count >= 2
+    redis.delete.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -68,6 +89,7 @@ async def test_reconcile_recreates_when_lifecycle_url_missing() -> None:
     settings = _settings()
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
+    redis.delete = AsyncMock(return_value=1)
     stale = _sub(lifecycle=None)
     created = _sub(sub_id="sub-2")
     graph_client = MagicMock()

@@ -1,6 +1,8 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, model_validator
+
+from app.models.schemas.routing import RoutingCategory
 
 
 class ClassificationSchema(BaseModel):
@@ -8,7 +10,6 @@ class ClassificationSchema(BaseModel):
     intent: Literal["REPLY_NEEDED", "FORWARD", "DOCUMENT_REQUEST", "FYI", "ESCALATE"]
     urgency: Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
     urgency_reason: str
-    confidence: float = Field(ge=0.0, le=1.0)
     rule_hint: str | None = None
 
 
@@ -31,7 +32,7 @@ class ClassificationResultSchema(BaseModel):
 
 
 class TriageResultSchema(BaseModel):
-    """Haiku triage output — spam / action items / needs-context."""
+    """Haiku triage output — boolean flags + routing category (no numeric score)."""
 
     is_spam: bool
     spam_reason: str | None = None
@@ -39,4 +40,12 @@ class TriageResultSchema(BaseModel):
     action_items_summary: str | None = None
     needs_context: bool
     context_reason: str | None = None
-    confidence: float = Field(ge=0.0, le=1.0)
+    routing_category: RoutingCategory
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_routing_category(cls, data: object) -> object:
+        """Allow legacy fixtures/callers missing routing_category during rollout."""
+        if isinstance(data, dict) and data.get("routing_category") is None:
+            data = {**data, "routing_category": "general"}
+        return data

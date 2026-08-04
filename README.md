@@ -1,6 +1,6 @@
 # Inbox Triage Automation
 
-Read-only email triage for shared Outlook mailboxes. The system ingests mail through Microsoft Graph, classifies and drafts responses with Claude, and posts review items to Slack. A human sends the final reply from Outlook.
+Read-only email triage for shared Outlook mailboxes. The system ingests mail through Microsoft Graph, classifies and drafts responses with Claude, and surfaces actionable results in a secure web dashboard. A human sends the final reply from Outlook.
 
 **This application never writes to a mailbox.** Graph access is limited to `Mail.Read`.
 
@@ -9,24 +9,109 @@ Read-only email triage for shared Outlook mailboxes. The system ingests mail thr
 1. **Ingest** — Graph change notifications (with poll fallback) pull new messages into PostgreSQL.
 2. **Triage** — Rules and LLM classification decide spam, reply-needed, or context lookup.
 3. **Draft** — Claude generates suggested replies where appropriate.
-4. **Review** — Drafts and metadata are posted to a Slack channel for human approval.
+4. **Review** — An invite-only web dashboard shows teaching notes, state, urgency, and drafts across four mailboxes.
 5. **Audit** — Actions are logged for traceability.
+
+The web app is read-only over pipeline output. It does not send, move, delete, or draft mail in Outlook.
 
 ## Repository layout
 
 ```
-backend/          FastAPI app, Graph client, workers, services, tests
-frontend/demo/    Next.js UI demo for the triage workflow
+backend/          FastAPI app, Graph client, workers, auth, dashboard APIs, tests
+frontend/web/     Product Next.js app (login + dashboard + mailbox/thread views)
+frontend/demo/    Static UI demo (design reference only)
 ```
 
 ## Requirements
 
 - Python 3.11+
+- Node.js 20+ (for `frontend/web`)
 - PostgreSQL with pgvector
 - Redis
 - Microsoft Entra app registration (`Mail.Read`, application permissions)
 - Anthropic API key
-- Slack app (bot token + signing secret)
+- Slack app (optional / legacy review path: bot token + signing secret)
+
+## Docker
+
+### Local
+
+Runs Postgres (pgvector), Redis, and the FastAPI API (`Dockerfile` target `local`, hot reload). Frontend stays on the host.
+
+```bash
+# Ensure backend/.env exists (from .env.example) with Graph, Anthropic, JWT, etc.
+# Compose overrides DATABASE_URL and REDIS_URL to the container network.
+docker compose up --build
+```
+
+- API: http://localhost:8000 — health: `GET /health`
+- Postgres: `localhost:5432` (`postgres` / `postgres`, db `inbox_triage`)
+- Redis: `localhost:6379`
+
+Stop any host Postgres/Redis already bound to those ports first.
+
+```bash
+docker compose exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'
+```
+
+Optional host frontend: `cd frontend/web && npm run dev` (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`).
+
+### Production (EC2)
+
+Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay, which also builds and runs the Next.js frontend. Both backend and frontend bind to `127.0.0.1` only — a host nginx (with a real TLS cert) is the sole public entry point and reverse-proxies to both. Outside `ENVIRONMENT=local`, `Settings.validate_production_security()` refuses to start the app unless TLS Redis (`rediss://` + password), a non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, a `JWT_SECRET` (≥64 chars), and the Anthropic/Graph/Slack/MSAL credentials are all set — see `backend/.env.example` for the full list.
+
+0. **Provision the EC2 instance** (one-time):
+
+   - Ubuntu 22.04/24.04 LTS, `t3.small` or larger (Postgres + Redis + backend + frontend on one box)
+   - Allocate an **Elastic IP** and associate it before doing anything else — the `sslip.io` hostname below encodes this IP, so it must not change once you issue a TLS cert for it
+   - Security group: inbound `22` (SSH, restrict to your admin CIDR), `80` and `443` (from anywhere, needed for HTTP→HTTPS redirect and the certbot challenge). Nothing else needs to be open — backend (`8000`) and frontend (`3000`) only bind to `127.0.0.1`, never the instance's public interface
+   - Install Docker Engine + Compose plugin ([official install script](https://docs.docker.com/engine/install/ubuntu/)), then `sudo systemctl enable --now docker` so the stack (all services run `restart: unless-stopped`) comes back up automatically after an instance stop/reboot
+   - Install nginx and certbot: `sudo apt install -y nginx certbot python3-certbot-nginx`
+   - Clone this repo onto the instance
+
+1. **Generate the Redis TLS cert + password** (once):
+
+   ```bash
+   ./deploy/gen-redis-tls.sh
+   ```
+
+   This prints a `REDIS_PASSWORD` — add it to a repo-root `.env` (`REDIS_PASSWORD=...`, used by `docker-compose.prod.yml` for the Redis container). Also add a `POSTGRES_PASSWORD=...` (any strong random value, e.g. `openssl rand -hex 24`) to the same repo-root `.env` — it sets the Postgres container's password.
+
+2. **Fill in secrets**:
+
+   ```bash
+   cp backend/.env.example backend/.env.prod   # fill production values
+   ```
+
+   `backend/.env.prod` is the **only** source of `DATABASE_URL`/`REDIS_URL`/`ENVIRONMENT`/`FRONTEND_ORIGIN`/`COOKIE_SECURE` for the production container — set:
+
+   - `DATABASE_URL=postgresql+asyncpg://postgres:<POSTGRES_PASSWORD from step 1>@postgres:5432/inbox_triage`
+   - `REDIS_URL=rediss://:<REDIS_PASSWORD from step 1>@redis:6379/0?ssl_cert_reqs=none`
+   - `TRUST_X_FORWARDED_FOR=true` — nginx sits in front and rewrites `X-Forwarded-For`; leaving this `false` makes rate limiting key on nginx's own IP for every client instead of per-user
+
+   Also set `NEXT_PUBLIC_API_BASE_URL` (the public `https://` API URL) in the repo-root `.env` — it's passed as a frontend build arg.
+
+3. **Bring up the stack**:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+   ```
+
+   - Postgres/Redis stay on the internal Compose network (not published); backend/frontend publish to `127.0.0.1` only
+   - Migrations run on container start via the entrypoint (crashes the container if a migration fails, rather than starting on a stale schema)
+   - Seed the first user: `docker compose -f docker-compose.yml -f docker-compose.prod.yml exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'`
+
+4. **Set up nginx + TLS** on the host:
+
+   ```bash
+   sed "s/__HOST__/your.sslip.io.hostname/g" deploy/nginx.conf.template | sudo tee /etc/nginx/sites-available/inbox-triage
+   sudo ln -s /etc/nginx/sites-available/inbox-triage /etc/nginx/sites-enabled/
+   sudo certbot --nginx -d your.sslip.io.hostname
+   ```
+
+   `certbot` rewrites the config in place to add the HTTPS server block and HTTP→HTTPS redirect. It also installs a renewal timer — confirm with `sudo certbot renew --dry-run`.
+
+**Backups**: Postgres data lives in a named Docker volume on the instance's root EBS volume — there is no automated off-instance backup. At minimum, schedule a periodic `pg_dump` to S3 (or enable [AWS Backup](https://docs.aws.amazon.com/aws-backup/latest/devguide/whatisbackup.html) on the root EBS volume) before relying on this in production; losing the instance currently means losing triage history and drafts.
 
 ## Backend setup
 
@@ -35,13 +120,42 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.lock
+pip install -e ".[dev]"
 
-cp .env.example .env   # fill in Graph, Redis, DB, Slack, Anthropic values
+cp .env.example .env   # fill in Graph, Redis, DB, Anthropic, JWT, frontend origin
 alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
 Health check: `GET /health`
+
+### Create the first web user (invite-only)
+
+There is no public registration. Seed a user after migrations:
+
+```bash
+cd backend
+source venv/bin/activate
+python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'
+```
+
+## Web dashboard setup
+
+```bash
+cd frontend/web
+cp .env.example .env.local   # NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 — sign in with the seeded user.
+
+### What you get
+
+- **Login** — invite-only email/password with short-lived access tokens and rotating refresh cookies
+- **Home** — overview of all four mailboxes (counts, urgency mix, recent activity)
+- **Mailbox** — actionable thread list (spam / no-action filtered by default)
+- **Thread** — conversation plus teaching note, state, urgency, classification, draft, and audit
 
 ## Configuration
 
@@ -55,8 +169,16 @@ Settings load from `backend/.env`. Key variables:
 | `TARGET_MAILBOXES` | Comma-separated mailbox addresses to monitor |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
-| `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` / `SLACK_REVIEW_CHANNEL_ID` | Slack integration |
 | `ANTHROPIC_API_KEY` | Claude API access |
+| `JWT_SECRET` | Signing key for web access tokens (≥64 chars outside local) |
+| `FRONTEND_ORIGIN` | Allowed web origin (e.g. `http://localhost:3000`) |
+| `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` / `SLACK_REVIEW_CHANNEL_ID` | Optional Slack review path |
+
+Frontend (`frontend/web/.env.local`):
+
+| Variable | Purpose |
+|----------|---------|
+| `NEXT_PUBLIC_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
 
 ## Graph integration
 
@@ -65,15 +187,29 @@ Settings load from `backend/.env`. Key variables:
 - **Poll fallback** — Periodic poll catches messages missed by notifications
 - **Simulate ingest** — `POST /simulate/ingest` runs the intake path without calling Graph (demos/tests)
 
+## Auth and dashboard APIs
+
+- **Auth** — `/auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/me`, `/auth/change-password`
+- **Dashboard** — `/api/dashboard` (four-mailbox overview)
+- **Mailboxes** — `/api/mailboxes/{mailbox}/threads` (cursor-paginated, filterable)
+- **Threads** — `/api/threads/{id}` (messages, classification, draft, state, audit)
+
+Auth uses short-lived JWTs, HttpOnly refresh cookies, CSRF on cookie-mutating routes, CORS allowlisting, rate limits, and security headers.
+
 ## Running tests
 
 ```bash
+# Backend
 cd backend
 source venv/bin/activate
 pytest tests/ -q
+
+# Web app
+cd frontend/web
+npm test
 ```
 
-## Frontend demo
+## Frontend demo (design reference)
 
 ```bash
 cd frontend/demo
@@ -81,7 +217,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000
+Open http://localhost:3000 — static sample UI only; not the product app.
 
 ## Branches
 
@@ -90,12 +226,14 @@ Open http://localhost:3000
 | `main` | Production-ready baseline |
 | `staging` | Pre-production integration |
 | `dev` | Active development |
-| `feat/ms-graph-mail-ingestion` | Graph ingestion, subscriptions, poll fallback |
+| `feat/haiku-triage` | AI triage, drafts, embeddings, cross-thread context |
+| `feat/web-dashboard` | Invite-only auth + product web dashboard (based on `feat/haiku-triage`) |
 
 ## Security notes
 
-- Graph credentials and API keys belong in environment variables, not in source control.
+- Graph credentials, JWT secrets, and API keys belong in environment variables, not in source control.
 - Webhook endpoints validate `clientState` before processing notifications.
+- Web access is invite-only; refresh sessions expire after seven days and are revoked on password change.
 - The service does not send, move, delete, or draft mail in Outlook.
 
 ## License

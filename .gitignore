@@ -3,6 +3,8 @@ misc/
 # Secrets / env
 .env
 .env.*
+!.env.example
+!**/.env.example
 *.pem
 *.key
 *.p12
@@ -41,6 +43,7 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+backend/tests/artifacts/
 
 # Logs / local scratch
 *.log
@@ -56,3 +59,10 @@ out/
 .cursor/
 .cursorrules
 *.mdc
+skills-lock.json
+
+# Local working docs — not for the remote
+/SYSTEM_FLOW.md
+/changes.md
+/pdf.md
+/DEPLOYMENT_BLOCKERS.md

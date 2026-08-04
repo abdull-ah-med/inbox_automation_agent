@@ -3,7 +3,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import ThreadContextSchema
+from app.models.schemas.email_triage_state import DraftStatus
 
 
 class GraphNotificationResourceDataSchema(BaseModel):
@@ -30,9 +33,9 @@ class GraphNotificationItemSchema(BaseModel):
         default=None,
         alias="changeType",
     )
-    lifecycle_event: (
-        Literal["missed", "subscriptionRemoved", "reauthorizationRequired"] | None
-    ) = Field(default=None, alias="lifecycleEvent")
+    lifecycle_event: Literal["missed", "subscriptionRemoved", "reauthorizationRequired"] | None = (
+        Field(default=None, alias="lifecycleEvent")
+    )
     resource: str
     subscription_expiration_date_time: datetime | None = Field(
         default=None,
@@ -92,6 +95,14 @@ class GraphMessageSchema(BaseModel):
     body: GraphMessageBodySchema | None = None
     sender: GraphRecipientSchema | None = None
     from_: GraphRecipientSchema | None = Field(default=None, alias="from")
+    to_recipients: list[GraphRecipientSchema] = Field(
+        default_factory=list,
+        alias="toRecipients",
+    )
+    cc_recipients: list[GraphRecipientSchema] = Field(
+        default_factory=list,
+        alias="ccRecipients",
+    )
     received_date_time: datetime | None = Field(default=None, alias="receivedDateTime")
     conversation_id: str | None = Field(default=None, alias="conversationId")
     is_read: bool | None = Field(default=None, alias="isRead")
@@ -124,22 +135,29 @@ class GraphSubscriptionSchema(BaseModel):
 
 
 class SimulateIngestRequestSchema(BaseModel):
-    mailbox: str
-    message_id: str
-    conversation_id: str
-    sender: str
-    subject: str
-    body_text: str
-    body_preview: str | None = None
+    mailbox: str = Field(max_length=320)
+    message_id: str = Field(max_length=512)
+    conversation_id: str = Field(max_length=512)
+    sender: str = Field(max_length=320)
+    subject: str = Field(max_length=998)
+    body_text: str = Field(max_length=200_000)
+    body_preview: str | None = Field(default=None, max_length=512)
     received_at: datetime
+    to_recipients: list[str] = Field(default_factory=list, max_length=50)
+    cc_recipients: list[str] = Field(default_factory=list, max_length=50)
+    has_attachments: bool = False
 
 
 class IngestResultSchema(BaseModel):
     message_id: str
-    status: Literal["ingested", "duplicate", "skipped"]
+    status: Literal["ingested", "duplicate", "skipped", "retry_triage", "in_flight"]
     thread_id: str | None = None
     conversation_id: str | None = None
     thread_context: ThreadContextSchema | None = None
+    triage: TriageResultSchema | None = None
+    draft: DraftSchema | None = None
+    draft_status: DraftStatus | None = None
+    prompt_version: str | None = None
 
 
 class GraphCheckResponseSchema(BaseModel):
