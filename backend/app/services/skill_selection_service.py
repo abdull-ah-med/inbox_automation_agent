@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import structlog
@@ -15,6 +16,7 @@ from app.core.exceptions import ClassificationError
 from app.llm import skill_selector
 from app.llm.email_clean import effective_body_text
 from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.draft import AppliedSkillSchema
 from app.models.schemas.email import EmailMessageSchema
 from app.models.schemas.skill import SkillResponseSchema
 from app.repositories import skill_repo
@@ -27,15 +29,37 @@ _POOL_EMBED_THRESHOLD = 8
 _PLACEHOLDER_TS = datetime(2020, 1, 1, tzinfo=UTC)
 
 
+@dataclass(frozen=True, slots=True)
+class SelectedSkills:
+    """Skill blocks for the draft prompt plus IDs for reference tool use."""
+
+    blocks: list[str] = field(default_factory=list)
+    skill_ids: list[uuid.UUID] = field(default_factory=list)
+    applied: list[AppliedSkillSchema] = field(default_factory=list)
+
+
 def format_skill_block(skill: SkillSelectionRow) -> str:
-    return f"## Skill: {skill.name}\n{skill.content.strip()}"
+    header = f"## Skill: {skill.name} (id: {skill.id})\n{skill.content.strip()}"
+    if not skill.reference_manifest:
+        return header
+    lines = "\n".join(f"- {path}" for path in skill.reference_manifest)
+    return (
+        f"{header}\n\n"
+        f"### Available reference files\n"
+        f"{lines}\n"
+        f"(Use the read_skill_reference tool to load any of these.)"
+    )
 
 
 def _to_selector_schema(row: SkillSelectionRow) -> SkillResponseSchema:
+    ref_note = ""
+    if row.reference_manifest:
+        ref_note = f" [refs: {', '.join(row.reference_manifest[:5])}]"
+    description = (row.description or "") + ref_note
     return SkillResponseSchema(
         id=row.id,
         name=row.name,
-        description=row.description,
+        description=description or None,
         content=row.content,
         category=row.category,
         always_apply=row.always_apply,
@@ -91,7 +115,7 @@ async def _narrow_pool_by_embedding(
         return sorted(pool, key=lambda s: s.name.lower())[:_POOL_EMBED_THRESHOLD]
 
 
-async def select_skill_contents(
+async def select_skills(
     session: AsyncSession,
     *,
     client: AsyncAnthropic,
@@ -100,8 +124,8 @@ async def select_skill_contents(
     email: EmailMessageSchema,
     triage: TriageResultSchema,
     conversation_id: str | None = None,
-) -> list[str]:
-    """Return named skill content blocks for the draft user turn.
+) -> SelectedSkills:
+    """Return skill blocks + IDs for the draft user turn and tool loop.
 
     Locked algorithm:
     always_apply + Haiku selection over category/general pool (embed narrow if >8).
@@ -111,7 +135,7 @@ async def select_skill_contents(
         active = await skill_repo.list_active_for_selection(session)
     except Exception:
         logger.exception("skill_load_failed")
-        return []
+        return SelectedSkills()
 
     always = [s for s in active if s.always_apply]
     category = triage.routing_category or "general"
@@ -191,4 +215,31 @@ async def select_skill_contents(
             message_id=email.message_id,
         )
 
-    return [format_skill_block(s) for s in merged]
+    return SelectedSkills(
+        blocks=[format_skill_block(s) for s in merged],
+        skill_ids=[s.id for s in merged],
+        applied=[AppliedSkillSchema(id=s.id, name=s.name) for s in merged],
+    )
+
+
+async def select_skill_contents(
+    session: AsyncSession,
+    *,
+    client: AsyncAnthropic,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+    email: EmailMessageSchema,
+    triage: TriageResultSchema,
+    conversation_id: str | None = None,
+) -> list[str]:
+    """Backward-compatible wrapper returning only formatted skill blocks."""
+    selected = await select_skills(
+        session,
+        client=client,
+        settings=settings,
+        openai_client=openai_client,
+        email=email,
+        triage=triage,
+        conversation_id=conversation_id,
+    )
+    return selected.blocks

@@ -2,10 +2,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { Pencil, Plus, Trash2 } from "lucide-react"
+import { FileArchive, Pencil, Plus, Trash2 } from "lucide-react"
 
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
+import { ImportSkillDropzone } from "@/components/import-skill-dropzone"
+import { ImportedSkillViewer } from "@/components/imported-skill-viewer"
 import { PageTransition } from "@/components/motion"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
@@ -60,6 +62,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState<SkillCreate>(emptyForm())
   const [deleteTarget, setDeleteTarget] = useState<SkillResponse | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [viewerSkill, setViewerSkill] = useState<SkillResponse | null>(null)
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["skills"],
@@ -148,6 +151,32 @@ export default function SettingsPage() {
     },
   })
 
+  const importMutation = useMutation({
+    mutationFn: (file: File) => api.skills.import(file),
+    onSuccess: async () => {
+      await invalidate()
+    },
+  })
+
+  const handleImportSkill = async (file: File) => {
+    return importMutation.mutateAsync(file)
+  }
+
+  const handleOpenViewer = (skill: SkillResponse) => {
+    if (skill.source_kind !== "imported") return
+    setViewerSkill(skill)
+  }
+
+  const handleViewerKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    skill: SkillResponse,
+  ) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      handleOpenViewer(skill)
+    }
+  }
+
   const handleOpenCreate = () => {
     if (!isAdmin) return
     setEditing(null)
@@ -234,7 +263,8 @@ export default function SettingsPage() {
     updateMutation.isPending ||
     deleteMutation.isPending ||
     toggleMutation.isPending ||
-    excludeMutation.isPending
+    excludeMutation.isPending ||
+    importMutation.isPending
 
   if (isLoading) {
     return (
@@ -311,6 +341,16 @@ export default function SettingsPage() {
         ) : null}
       </div>
 
+      {isAdmin ? (
+        <div className="mb-5">
+          <ImportSkillDropzone
+            disabled={!isAdmin}
+            isPending={importMutation.isPending}
+            onImport={handleImportSkill}
+          />
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {skills.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">
@@ -325,18 +365,45 @@ export default function SettingsPage() {
               >
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-medium text-gray-900 dark:text-gray-100">
-                      {skill.name}
-                    </p>
+                    {skill.source_kind === "imported" ? (
+                      <button
+                        type="button"
+                        tabIndex={0}
+                        aria-label={`View imported skill ${skill.name}`}
+                        onClick={() => handleOpenViewer(skill)}
+                        onKeyDown={(event) => handleViewerKeyDown(event, skill)}
+                        className="cursor-pointer font-medium text-blue-600 hover:underline dark:text-blue-400"
+                      >
+                        {skill.name}
+                      </button>
+                    ) : (
+                      <p className="font-medium text-gray-900 dark:text-gray-100">
+                        {skill.name}
+                      </p>
+                    )}
                     <StatusBadge
                       label={skill.is_active ? "Active" : "Inactive"}
                       tone={skill.is_active ? "green" : "neutral"}
                     />
+                    {skill.source_kind === "imported" ? (
+                      <StatusBadge label="Imported" tone="blue" />
+                    ) : null}
                     {skill.category ? (
                       <StatusBadge label={skill.category} tone="neutral" />
                     ) : null}
                     {skill.always_apply ? (
                       <StatusBadge label="Always" tone="blue" />
+                    ) : null}
+                    {skill.source_kind === "imported" &&
+                    (skill.reference_file_count > 0 ||
+                      skill.asset_file_count > 0) ? (
+                      <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                        <FileArchive className="size-3.5" aria-hidden="true" />
+                        {skill.reference_file_count} refs
+                        {skill.asset_file_count > 0
+                          ? ` · ${skill.asset_file_count} assets`
+                          : ""}
+                      </span>
                     ) : null}
                   </div>
                   {skill.description ? (
@@ -799,6 +866,14 @@ export default function SettingsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ImportedSkillViewer
+        skill={viewerSkill}
+        open={viewerSkill != null}
+        onOpenChange={(open) => {
+          if (!open) setViewerSkill(null)
+        }}
+      />
     </PageTransition>
   )
 }

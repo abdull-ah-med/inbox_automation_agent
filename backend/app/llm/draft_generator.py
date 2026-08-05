@@ -1,12 +1,16 @@
 """Sonnet draft caller — reply/forward + urgency + teaching note.
 
-LLM I/O only. No DB, Redis, Graph, or Slack. Prompts come from ``prompts.py``.
+LLM I/O only (plus optional injected skill-reference loader). No Slack/Graph.
+Prompts come from ``prompts.py``.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
 
 import structlog
 from anthropic import APIError, AsyncAnthropic
@@ -27,6 +31,37 @@ logger = structlog.get_logger(__name__)
 
 # Reply + teaching note + suggested_actions JSON; 800 truncated mid-string in practice.
 DRAFT_MAX_TOKENS = 2048
+MAX_TOOL_ITERATIONS = 4
+
+READ_SKILL_REFERENCE_TOOL: dict[str, Any] = {
+    "name": "read_skill_reference",
+    "description": (
+        "Load the full contents of a reference file bundled with an active "
+        "skill. Only use when the current email requires details that are "
+        "not in the SKILL.md body but are listed under Available reference "
+        "files for that skill. Call once per file needed."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "skill_id": {
+                "type": "string",
+                "description": "UUID of the skill that lists the reference file",
+            },
+            "path": {
+                "type": "string",
+                "description": (
+                    "Exact relative_path shown in the skill's manifest, "
+                    "e.g. references/client_rules.md"
+                ),
+            },
+        },
+        "required": ["skill_id", "path"],
+        "additionalProperties": False,
+    },
+}
+
+SkillReferenceLoader = Callable[[uuid.UUID, str], Awaitable[dict[str, Any]]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +72,7 @@ class DraftCallResult:
     input_tokens: int | None
     output_tokens: int | None
     latency_ms: int
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _build_user_content(
@@ -129,33 +165,168 @@ def _build_user_content(
     )
 
 
-async def _parse_once(
+def _system_blocks() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "text",
+            "text": DRAFT_SYSTEM_PROMPT,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+
+def _usage_tokens(response: Any) -> tuple[int | None, int | None]:
+    usage = getattr(response, "usage", None)
+    input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
+    output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
+    return input_tokens, output_tokens
+
+
+async def _parse_final(
     *,
     client: AsyncAnthropic,
     model: str,
     max_tokens: int,
-    user_content: str,
+    messages: list[dict[str, Any]],
 ) -> tuple[DraftSchema, int | None, int | None]:
+    final_messages = [
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "Return the final draft now as DraftSchema JSON only. "
+                "Do not call tools."
+            ),
+        },
+    ]
     response = await client.messages.parse(
         model=model,
         max_tokens=max_tokens,
-        system=[
-            {
-                "type": "text",
-                "text": DRAFT_SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        messages=[{"role": "user", "content": user_content}],
+        system=_system_blocks(),  # type: ignore[arg-type]
+        messages=final_messages,  # type: ignore[arg-type]
         output_format=DraftSchema,
     )
     parsed = response.parsed_output
     if parsed is None:
         raise DraftGenerationError("Sonnet draft returned empty parsed_output")
-    usage = getattr(response, "usage", None)
-    input_tokens = getattr(usage, "input_tokens", None) if usage is not None else None
-    output_tokens = getattr(usage, "output_tokens", None) if usage is not None else None
-    return parsed, input_tokens, output_tokens
+    return parsed, *_usage_tokens(response)
+
+
+async def _run_tool_loop(
+    *,
+    client: AsyncAnthropic,
+    model: str,
+    max_tokens: int,
+    user_content: str,
+    reference_loader: SkillReferenceLoader | None,
+) -> tuple[DraftSchema, int | None, int | None, list[dict[str, Any]], bool]:
+    """Run optional tool iterations, then extract structured DraftSchema.
+
+    Returns (draft, input_tokens, output_tokens, tool_calls, truncated).
+    """
+    messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
+    tool_calls: list[dict[str, Any]] = []
+    truncated = False
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+    if reference_loader is None:
+        draft, in_tok, out_tok = await _parse_final(
+            client=client,
+            model=model,
+            max_tokens=max_tokens,
+            messages=messages,
+        )
+        return draft, in_tok, out_tok, tool_calls, truncated
+
+    for iteration in range(MAX_TOOL_ITERATIONS):
+        response = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=_system_blocks(),  # type: ignore[arg-type]
+            tools=[READ_SKILL_REFERENCE_TOOL],  # type: ignore[list-item]
+            messages=messages,  # type: ignore[arg-type]
+        )
+        in_tok, out_tok = _usage_tokens(response)
+        if in_tok is not None:
+            input_tokens = (input_tokens or 0) + in_tok
+        if out_tok is not None:
+            output_tokens = (output_tokens or 0) + out_tok
+
+        if response.stop_reason != "tool_use":
+            break
+
+        tool_use_blocks = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
+        if not tool_use_blocks:
+            break
+
+        messages.append({"role": "assistant", "content": response.content})
+        tool_results: list[dict[str, Any]] = []
+        for block in tool_use_blocks:
+            raw_input = getattr(block, "input", {}) or {}
+            skill_id_raw = raw_input.get("skill_id")
+            path = raw_input.get("path")
+            try:
+                skill_id = uuid.UUID(str(skill_id_raw))
+                if not isinstance(path, str) or not path.strip():
+                    raise ValueError("path is required")
+                loaded = await reference_loader(skill_id, path.strip())
+                tool_calls.append(
+                    {
+                        "skill_id": str(skill_id),
+                        "path": path.strip(),
+                        "bytes": int(loaded.get("bytes") or 0),
+                        "is_error": bool(loaded.get("is_error")),
+                        "truncated": bool(loaded.get("truncated")),
+                        "iteration": iteration + 1,
+                    }
+                )
+                result_payload: dict[str, Any] = {
+                    "type": "tool_result",
+                    "tool_use_id": getattr(block, "id", ""),
+                    "content": str(loaded.get("content") or ""),
+                }
+                if loaded.get("is_error"):
+                    result_payload["is_error"] = True
+                tool_results.append(result_payload)
+            except Exception as exc:
+                tool_calls.append(
+                    {
+                        "skill_id": str(skill_id_raw),
+                        "path": str(path),
+                        "bytes": 0,
+                        "is_error": True,
+                        "iteration": iteration + 1,
+                    }
+                )
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": getattr(block, "id", ""),
+                        "content": f"Tool error: {type(exc).__name__}: {exc}",
+                        "is_error": True,
+                    }
+                )
+        messages.append({"role": "user", "content": tool_results})
+    else:
+        truncated = True
+        logger.warning(
+            "draft_tool_loop_truncated",
+            max_iterations=MAX_TOOL_ITERATIONS,
+            tool_calls=len(tool_calls),
+        )
+
+    draft, in_tok, out_tok = await _parse_final(
+        client=client,
+        model=model,
+        max_tokens=max_tokens,
+        messages=messages,
+    )
+    if in_tok is not None:
+        input_tokens = (input_tokens or 0) + in_tok
+    if out_tok is not None:
+        output_tokens = (output_tokens or 0) + out_tok
+    return draft, input_tokens, output_tokens, tool_calls, truncated
 
 
 def _scrub_cross_thread(
@@ -180,8 +351,9 @@ async def generate_draft(
     skills: list[str] | None = None,
     negative_constraints: list[str] | None = None,
     instruction: str | None = None,
+    reference_loader: SkillReferenceLoader | None = None,
 ) -> DraftCallResult:
-    """Call Sonnet once (retry once on parse/API failure) and return a structured draft."""
+    """Call Sonnet (tool loop when loader provided) and return a structured draft."""
     if not settings.anthropic_api_key.strip():
         raise DraftGenerationError("ANTHROPIC_API_KEY is not set; cannot run Sonnet draft")
 
@@ -206,11 +378,12 @@ async def generate_draft(
 
     for attempt in range(2):
         try:
-            draft, input_tokens, output_tokens = await _parse_once(
+            draft, input_tokens, output_tokens, tool_calls, truncated = await _run_tool_loop(
                 client=client,
                 model=model,
                 max_tokens=max_tokens,
                 user_content=user_content,
+                reference_loader=reference_loader,
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
@@ -222,6 +395,8 @@ async def generate_draft(
                 latency_ms=latency_ms,
                 urgency=draft.urgency,
                 attempt=attempt + 1,
+                tool_call_count=len(tool_calls),
+                tool_loop_truncated=truncated,
             )
             return DraftCallResult(
                 draft=draft,
@@ -230,6 +405,7 @@ async def generate_draft(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 latency_ms=latency_ms,
+                tool_calls=tool_calls,
             )
         except (
             ValidationError,

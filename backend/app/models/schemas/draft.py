@@ -17,6 +17,20 @@ class SuggestedActionSchema(BaseModel):
     rationale: str
 
 
+class AppliedSkillSchema(BaseModel):
+    id: UUID
+    name: str
+
+
+class DraftToolCallSchema(BaseModel):
+    skill_id: str
+    path: str
+    is_error: bool = False
+    bytes: int | None = None
+    truncated: bool | None = None
+    iteration: int | None = None
+
+
 class DraftSchema(BaseModel):
     subject_line: str
     reply_body: str
@@ -41,3 +55,5 @@ class DraftResponseSchema(DraftSchema):
     feedback_action: str | None = None
     feedback_reason_code: str | None = None
     routing_category: str | None = None
+    applied_skills: list[AppliedSkillSchema] = Field(default_factory=list)
+    tool_calls: list[DraftToolCallSchema] | None = None

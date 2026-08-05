@@ -726,6 +726,8 @@ async def _run_phased_post_ingest(
 
     # --- Short read for draft idempotency + skills + tone + constraints, then release ---
     skill_contents: list[str] = []
+    skill_ids: list[uuid.UUID] = []
+    applied_skills: list = []
     tone_references: list[str] = []
     tone_profile_block: str | None = None
     negative_constraints: list[str] = []
@@ -735,7 +737,7 @@ async def _run_phased_post_ingest(
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
         if state.triage is not None:
             try:
-                skill_contents = await skill_selection_service.select_skill_contents(
+                selected = await skill_selection_service.select_skills(
                     session,
                     client=client,
                     settings=settings,
@@ -744,6 +746,9 @@ async def _run_phased_post_ingest(
                     triage=state.triage,
                     conversation_id=email.conversation_id,
                 )
+                skill_contents = selected.blocks
+                skill_ids = selected.skill_ids
+                applied_skills = list(selected.applied)
             except Exception:
                 logger.exception(
                     "skill_load_failed",
@@ -752,6 +757,8 @@ async def _run_phased_post_ingest(
                     message_id=message_id,
                 )
                 skill_contents = []
+                skill_ids = []
+                applied_skills = []
         tone_profile_block, tone_references = await tone_profile_service.load_for_draft(
             session,
             openai_client=openai_client,
@@ -792,6 +799,14 @@ async def _run_phased_post_ingest(
             return current
 
         try:
+            from app.services.skill_reference_service import make_reference_loader
+
+            reference_loader = None
+            if skill_ids:
+                reference_loader, _ = make_reference_loader(
+                    active_skill_ids=set(skill_ids),
+                    session_factory=session_factory,
+                )
             generated = await draft_llm.generate_draft(
                 current.original_email,
                 current.thread_context,
@@ -803,6 +818,7 @@ async def _run_phased_post_ingest(
                 tone_profile=tone_profile,
                 skills=skill_contents,
                 negative_constraints=negative_constraints,
+                reference_loader=reference_loader,
             )
         except DraftGenerationError as exc:
             logger.warning(
@@ -830,7 +846,27 @@ async def _run_phased_post_ingest(
                 routing_category=(
                     state.triage.routing_category if state.triage is not None else None
                 ),
+                tool_calls=generated.tool_calls or None,
+                applied_skills=applied_skills or None,
             )
+            if generated.tool_calls:
+                try:
+                    await audit_service.log_event(
+                        session,
+                        event_type="draft.skill_reference_read",
+                        conversation_id=email.conversation_id,
+                        mailbox=email.mailbox,
+                        payload={
+                            "draft_id": str(persisted.id),
+                            "tool_calls": generated.tool_calls,
+                        },
+                        actor="system",
+                    )
+                except Exception:
+                    logger.warning(
+                        "draft_skill_reference_audit_failed",
+                        message_id=message_id,
+                    )
             current.draft = DraftSchema.model_validate(
                 persisted.model_dump(include=set(DraftSchema.model_fields))
             )

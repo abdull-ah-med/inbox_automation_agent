@@ -39,6 +39,14 @@ class Draft(Base):
         nullable=True,
         server_default="'[]'",
     )
+    tool_calls_json: Mapped[list[Any] | dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
+    applied_skills_json: Mapped[list[Any] | dict[str, Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

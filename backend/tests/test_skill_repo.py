@@ -23,6 +23,10 @@ def _skill_row(**overrides: object) -> MagicMock:
     row.category = overrides.get("category", "escalation")
     row.always_apply = overrides.get("always_apply", False)
     row.is_active = overrides.get("is_active", True)
+    row.source_kind = overrides.get("source_kind", "inline")
+    row.imported_zip_sha256 = overrides.get("imported_zip_sha256")
+    row.raw_frontmatter = overrides.get("raw_frontmatter")
+    row.files = overrides.get("files", [])
     row.created_at = overrides.get("created_at", datetime.now(UTC))
     row.updated_at = overrides.get("updated_at", datetime.now(UTC))
     return row
@@ -76,12 +80,16 @@ async def test_create_ok() -> None:
     session.execute = AsyncMock(return_value=budget_result)
     session.flush = AsyncMock()
 
-    async def fake_refresh(obj: object) -> None:
+    async def fake_refresh(obj: object, **_kwargs: object) -> None:
         row = obj
         row.id = uuid.uuid4()  # type: ignore[attr-defined]
         row.created_at = datetime.now(UTC)  # type: ignore[attr-defined]
         row.updated_at = datetime.now(UTC)  # type: ignore[attr-defined]
         row.always_apply = False  # type: ignore[attr-defined]
+        row.files = []  # type: ignore[attr-defined]
+        row.source_kind = "inline"  # type: ignore[attr-defined]
+        row.imported_zip_sha256 = None  # type: ignore[attr-defined]
+        row.raw_frontmatter = None  # type: ignore[attr-defined]
 
     session.refresh = AsyncMock(side_effect=fake_refresh)
 
@@ -157,7 +165,9 @@ async def test_update_ok() -> None:
     update_result = MagicMock()
     update_result.scalar_one_or_none.return_value = updated_row
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[get_result, budget_result, update_result])
+    session.execute = AsyncMock(
+        side_effect=[get_result, budget_result, update_result, update_result]
+    )
     session.flush = AsyncMock()
 
     result = await skill_repo.update_skill(
@@ -210,10 +220,13 @@ async def test_delete_ok() -> None:
     existing = _skill_row(id=skill_id)
     get_result = MagicMock()
     get_result.scalar_one_or_none.return_value = existing
+    delete_files_result = MagicMock()
     delete_result = MagicMock()
     delete_result.rowcount = 1
     session = AsyncMock()
-    session.execute = AsyncMock(side_effect=[get_result, delete_result])
+    session.execute = AsyncMock(
+        side_effect=[get_result, delete_files_result, delete_result]
+    )
     session.flush = AsyncMock()
 
     assert await skill_repo.delete_skill(session, skill_id) is True

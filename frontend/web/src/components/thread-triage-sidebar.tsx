@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { Check, Pencil, TriangleAlert, X } from "lucide-react"
+import { Check, X } from "lucide-react"
 
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
@@ -28,6 +28,16 @@ import type {
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
+
+const REJECT_REASON_LABELS: Record<RejectReasonCode, string> = {
+  tone: "Tone off",
+  factual: "Factual error",
+  wrong_action: "Wrong action / no reply needed",
+  incomplete: "Incomplete",
+  policy: "Policy conflict",
+  recipients: "Wrong recipients",
+  other: "Other",
+}
 
 const Panel = ({
   title,
@@ -61,7 +71,9 @@ const Field = ({
   )
 }
 
-const feedbackBadge = (draft: DraftView): { label: string; tone: "green" | "blue" | "red" | "amber" } | null => {
+const feedbackBadge = (
+  draft: DraftView,
+): { label: string; tone: "green" | "blue" | "red" | "amber" } | null => {
   if (draft.feedback_action === "approve" && draft.edited_body) {
     return { label: "Edited & Approved", tone: "blue" }
   }
@@ -72,7 +84,7 @@ const feedbackBadge = (draft: DraftView): { label: string; tone: "green" | "blue
     return { label: "Rejected", tone: "red" }
   }
   if (draft.feedback_action === "wrong") {
-    return { label: "Marked Wrong", tone: "amber" }
+    return { label: "Marked as no reply needed", tone: "amber" }
   }
   return null
 }
@@ -94,14 +106,11 @@ export const ThreadTriageSidebar = ({
 }) => {
   const queryClient = useQueryClient()
   const [showAudit, setShowAudit] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
+  const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
-  const [wrongOpen, setWrongOpen] = useState(false)
-  const [editBody, setEditBody] = useState("")
+  const [approveBody, setApproveBody] = useState("")
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
-  const [wrongNote, setWrongNote] = useState("")
-  const [wrongReason, setWrongReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
 
   const invalidateThread = async () => {
@@ -118,7 +127,7 @@ export const ThreadTriageSidebar = ({
       return api.drafts.approve(draftId, body)
     },
     onSuccess: async () => {
-      setEditOpen(false)
+      setApproveOpen(false)
       setActionError(null)
       await invalidateThread()
     },
@@ -128,9 +137,18 @@ export const ThreadTriageSidebar = ({
   })
 
   const rejectMutation = useMutation({
-    mutationFn: (payload: { feedback_note: string; reason_code: RejectReasonCode }) => {
+    mutationFn: async (payload: {
+      feedback_note: string
+      reason_code: RejectReasonCode
+    }) => {
       if (!draftId) {
         throw new Error("No draft available to reject")
+      }
+      if (payload.reason_code === "wrong_action") {
+        return api.drafts.markWrong(draftId, {
+          feedback_note: payload.feedback_note,
+          reason_code: payload.reason_code,
+        })
       }
       return api.drafts.reject(draftId, payload)
     },
@@ -138,28 +156,6 @@ export const ThreadTriageSidebar = ({
       setRejectOpen(false)
       setRejectNote("")
       setRejectReason("")
-      setActionError(null)
-      await invalidateThread()
-    },
-    onError: (error: Error) => {
-      setActionError(error.message)
-    },
-  })
-
-  const wrongMutation = useMutation({
-    mutationFn: (payload: {
-      feedback_note: string
-      reason_code?: RejectReasonCode
-    }) => {
-      if (!draftId) {
-        throw new Error("No draft available to mark wrong")
-      }
-      return api.drafts.markWrong(draftId, payload)
-    },
-    onSuccess: async () => {
-      setWrongOpen(false)
-      setWrongNote("")
-      setWrongReason("")
       setActionError(null)
       await invalidateThread()
     },
@@ -179,18 +175,34 @@ export const ThreadTriageSidebar = ({
     }
   }
 
-  const handleOpenEdit = () => {
-    setEditBody(draft?.body ?? "")
-    setEditOpen(true)
+  const handleOpenApprove = () => {
+    setApproveBody(draft?.body ?? "")
+    setApproveOpen(true)
   }
 
-  const handleApprove = () => {
-    approveMutation.mutate(undefined)
+  const handleApproveKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      handleOpenApprove()
+    }
   }
 
-  const handleEditApprove = () => {
-    if (!editBody.trim()) return
-    approveMutation.mutate({ edited_body: editBody.trim() })
+  const handleRejectKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      setRejectOpen(true)
+    }
+  }
+
+  const handleConfirmApprove = () => {
+    if (!draft) return
+    const trimmed = approveBody.trim()
+    if (!trimmed) return
+    if (trimmed === draft.body.trim()) {
+      approveMutation.mutate(undefined)
+      return
+    }
+    approveMutation.mutate({ edited_body: trimmed })
   }
 
   const handleReject = () => {
@@ -201,14 +213,6 @@ export const ThreadTriageSidebar = ({
     })
   }
 
-  const handleWrong = () => {
-    if (!wrongNote.trim()) return
-    wrongMutation.mutate({
-      feedback_note: wrongNote.trim(),
-      reason_code: wrongReason || undefined,
-    })
-  }
-
   const teachingNote = thread.teaching_note ?? draft?.teaching_note ?? null
   const urgency = thread.urgency ?? draft?.urgency ?? classification?.urgency ?? null
   const urgencyReason = draft?.urgency_reason ?? null
@@ -216,10 +220,7 @@ export const ThreadTriageSidebar = ({
   const feedbackDone = Boolean(
     draft?.approved_at || draft?.rejected_at || draft?.feedback_action,
   )
-  const busy =
-    approveMutation.isPending ||
-    rejectMutation.isPending ||
-    wrongMutation.isPending
+  const busy = approveMutation.isPending || rejectMutation.isPending
   const suggestedActions = draft?.suggested_actions ?? []
 
   return (
@@ -384,6 +385,41 @@ export const ThreadTriageSidebar = ({
               <Field label="Feedback note" value={draft.feedback_note} />
             ) : null}
 
+            <div>
+              <p className="text-xs text-gray-400">Skills used</p>
+              {(draft.applied_skills?.length ?? 0) === 0 ? (
+                <p className="mt-1 text-sm text-gray-500">
+                  No skills applied for this draft
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {draft.applied_skills.map((skill) => {
+                    const refs = (draft.tool_calls ?? [])
+                      .filter(
+                        (call) =>
+                          call.skill_id === skill.id &&
+                          !call.is_error &&
+                          Boolean(call.path),
+                      )
+                      .map((call) => call.path)
+                    const uniqueRefs = [...new Set(refs)]
+                    return (
+                      <li key={skill.id} className="space-y-1">
+                        <StatusBadge label={skill.name} tone="blue" />
+                        {uniqueRefs.length > 0 ? (
+                          <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600 dark:text-gray-400">
+                            {uniqueRefs.map((path) => (
+                              <li key={path}>{path}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+
             {actionError ? (
               <p className="text-sm text-red-600 dark:text-red-400" role="alert">
                 {actionError}
@@ -398,7 +434,8 @@ export const ThreadTriageSidebar = ({
                 tabIndex={0}
                 aria-label="Approve draft"
                 disabled={feedbackDone || busy}
-                onClick={handleApprove}
+                onClick={handleOpenApprove}
+                onKeyDown={handleApproveKeyDown}
               >
                 <Check aria-hidden="true" />
                 Approve
@@ -408,36 +445,13 @@ export const ThreadTriageSidebar = ({
                 size="sm"
                 variant="outline"
                 tabIndex={0}
-                aria-label="Edit and approve draft"
-                disabled={feedbackDone || busy}
-                onClick={handleOpenEdit}
-              >
-                <Pencil aria-hidden="true" />
-                Edit & Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                tabIndex={0}
                 aria-label="Reject draft"
                 disabled={feedbackDone || busy}
                 onClick={() => setRejectOpen(true)}
+                onKeyDown={handleRejectKeyDown}
               >
                 <X aria-hidden="true" />
                 Reject
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                tabIndex={0}
-                aria-label="Mark draft as wrong"
-                disabled={feedbackDone || busy}
-                onClick={() => setWrongOpen(true)}
-              >
-                <TriangleAlert aria-hidden="true" />
-                Wrong
               </Button>
             </div>
           </div>
@@ -488,18 +502,21 @@ export const ThreadTriageSidebar = ({
         ) : null}
       </Panel>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+      <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Edit & approve draft</DialogTitle>
+            <DialogTitle>Approve draft</DialogTitle>
             <DialogDescription>
-              Adjust the reply body, then approve. Email is never sent from this app.
+              Review the reply body. Edit if needed, then approve. Email is never
+              sent from this app.
             </DialogDescription>
           </DialogHeader>
           <textarea
-            value={editBody}
-            onChange={(event) => setEditBody(event.target.value)}
-            aria-label="Edited draft body"
+            value={approveBody}
+            onChange={(event) => setApproveBody(event.target.value)}
+            aria-label="Draft body to approve"
+            name="approve_body"
+            autoComplete="off"
             rows={10}
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
           />
@@ -508,19 +525,19 @@ export const ThreadTriageSidebar = ({
               type="button"
               variant="outline"
               tabIndex={0}
-              aria-label="Cancel edit"
-              onClick={() => setEditOpen(false)}
+              aria-label="Cancel approve"
+              onClick={() => setApproveOpen(false)}
             >
               Cancel
             </Button>
             <Button
               type="button"
               tabIndex={0}
-              aria-label="Save edited draft and approve"
-              disabled={!editBody.trim() || busy}
-              onClick={handleEditApprove}
+              aria-label="Confirm approve draft"
+              disabled={!approveBody.trim() || busy}
+              onClick={handleConfirmApprove}
             >
-              {approveMutation.isPending ? "Saving…" : "Save & Approve"}
+              {approveMutation.isPending ? "Approving…" : "Approve"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -537,31 +554,40 @@ export const ThreadTriageSidebar = ({
           <div className="space-y-3">
             <div>
               <label className="text-xs text-gray-500" htmlFor="reject-reason">
-                Reason
+                Why is this wrong?
               </label>
               <select
                 id="reject-reason"
+                name="reject_reason"
                 value={rejectReason}
                 onChange={(event) =>
                   setRejectReason(event.target.value as RejectReasonCode | "")
                 }
                 aria-label="Rejection reason"
+                autoComplete="off"
                 className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
               >
                 <option value="">Select a reason</option>
                 {REJECT_REASON_CODES.map((code) => (
                   <option key={code} value={code}>
-                    {code.replaceAll("_", " ")}
+                    {REJECT_REASON_LABELS[code]}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">
+                &ldquo;Wrong action / no reply needed&rdquo; just flags this thread as
+                not requiring a reply. Any other reason will teach the system what
+                to change next time.
+              </p>
             </div>
             <textarea
               value={rejectNote}
               onChange={(event) => setRejectNote(event.target.value)}
               aria-label="Rejection note"
+              name="reject_note"
+              autoComplete="off"
               rows={4}
-              placeholder="Why is this draft wrong?"
+              placeholder="Why is this draft wrong…"
               className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
             />
           </div>
@@ -584,68 +610,6 @@ export const ThreadTriageSidebar = ({
               onClick={handleReject}
             >
               {rejectMutation.isPending ? "Rejecting…" : "Reject"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={wrongOpen} onOpenChange={setWrongOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mark draft as wrong</DialogTitle>
-            <DialogDescription>
-              Tell the system what was wrong so future drafts can improve.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-gray-500" htmlFor="wrong-reason">
-                Reason (optional)
-              </label>
-              <select
-                id="wrong-reason"
-                value={wrongReason}
-                onChange={(event) =>
-                  setWrongReason(event.target.value as RejectReasonCode | "")
-                }
-                aria-label="Wrong draft reason"
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-              >
-                <option value="">Select a reason</option>
-                {REJECT_REASON_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {code.replaceAll("_", " ")}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <textarea
-              value={wrongNote}
-              onChange={(event) => setWrongNote(event.target.value)}
-              aria-label="Wrong draft note"
-              rows={4}
-              placeholder="What should have been different?"
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              tabIndex={0}
-              aria-label="Cancel mark wrong"
-              onClick={() => setWrongOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              tabIndex={0}
-              aria-label="Confirm mark draft as wrong"
-              disabled={!wrongNote.trim() || busy}
-              onClick={handleWrong}
-            >
-              {wrongMutation.isPending ? "Saving…" : "Mark Wrong"}
             </Button>
           </DialogFooter>
         </DialogContent>
