@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import io
 import zipfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -24,10 +23,7 @@ from app.services.skill_archive_service import (
     MAX_SINGLE_FILE_BYTES,
     parse_skill_archive,
 )
-
-FIXTURE_ZIP = (
-    Path(__file__).resolve().parents[2] / "misc" / "samplelab-rebilling-skill.zip"
-)
+from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
 
 
 def _zip_bytes(members: dict[str, bytes | str]) -> bytes:
@@ -81,8 +77,8 @@ def test_parse_valid_archive_extracts_files_and_kinds() -> None:
 
 
 def test_parse_fixture_samplelab_rebilling_zip() -> None:
-    """Real misc fixture unpacks to three reference files."""
-    data = FIXTURE_ZIP.read_bytes()
+    """SampleLab fixture unpacks to three reference files."""
+    data = load_samplelab_rebilling_zip_bytes()
     name, description, body, _extras, files, warnings = parse_skill_archive(data)
     assert name == "samplelab-rebilling"
     assert description

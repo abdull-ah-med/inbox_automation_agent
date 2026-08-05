@@ -8,7 +8,8 @@ Level 2 — Activation: after selection, draft prompt gets full SKILL.md body +
            a reference *manifest* (paths only).
 Level 3 — Execution: reference bytes enter context only via read_skill_reference.
 
-Also asserts packaging of the real ``misc/samplelab-rebilling-skill.zip`` fixture
+Also asserts packaging of the samplelab-rebilling archive fixture (CI builds it
+in-memory; prefers ``misc/samplelab-rebilling-skill.zip`` when present locally)
 and selection precision (billing match vs scheduling miss).
 
 Live opt-in (real Anthropic Haiku + Sonnet):
@@ -22,7 +23,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,11 +39,8 @@ from app.services.skill_reference_service import (
     PER_DRAFT_REFERENCE_BUDGET,
     load_skill_reference,
 )
+from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
 from tests.live_helpers import env_flag
-
-FIXTURE_ZIP = (
-    Path(__file__).resolve().parents[2] / "misc" / "samplelab-rebilling-skill.zip"
-)
 
 EXPECTED_REFS = {
     "references/client_rules.md",
@@ -69,8 +66,7 @@ def _settings(**overrides: object) -> Settings:
 
 
 def _parse_fixture():
-    assert FIXTURE_ZIP.is_file(), f"Missing fixture zip: {FIXTURE_ZIP}"
-    return skill_archive_service.parse_skill_archive(FIXTURE_ZIP.read_bytes())
+    return skill_archive_service.parse_skill_archive(load_samplelab_rebilling_zip_bytes())
 
 
 def _selection_row(

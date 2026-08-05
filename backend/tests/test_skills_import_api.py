@@ -6,7 +6,6 @@ import io
 import uuid
 import zipfile
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,10 +27,7 @@ from app.models.schemas.skill import (
     SkillResponseSchema,
 )
 from app.repositories.skill_files_repo import SkillFileRow
-
-FIXTURE_ZIP = (
-    Path(__file__).resolve().parents[2] / "misc" / "samplelab-rebilling-skill.zip"
-)
+from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
 
 
 @pytest.fixture
@@ -142,7 +138,7 @@ async def test_import_valid_zip_201(app_factory) -> None:
                     files={
                         "file": (
                             "samplelab-rebilling-skill.zip",
-                            FIXTURE_ZIP.read_bytes(),
+                            load_samplelab_rebilling_zip_bytes(),
                             "application/zip",
                         )
                     },
