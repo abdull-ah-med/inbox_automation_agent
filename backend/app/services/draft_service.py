@@ -76,9 +76,11 @@ async def run_draft(
     category = state.triage.routing_category or "general"
 
     skill_contents = skills
+    skill_ids: list[uuid.UUID] = []
+    applied_skills: list = []
     if skill_contents is None:
         try:
-            skill_contents = await skill_selection_service.select_skill_contents(
+            selected = await skill_selection_service.select_skills(
                 session,
                 client=client,
                 settings=settings,
@@ -87,6 +89,9 @@ async def run_draft(
                 triage=state.triage,
                 conversation_id=email.conversation_id,
             )
+            skill_contents = selected.blocks
+            skill_ids = selected.skill_ids
+            applied_skills = list(selected.applied)
         except Exception:
             logger.exception(
                 "skill_load_failed",
@@ -95,6 +100,8 @@ async def run_draft(
                 message_id=message_id,
             )
             skill_contents = []
+            skill_ids = []
+            applied_skills = []
 
     resolved_profile = tone_profile
     resolved_tone_refs = tone_references
@@ -120,6 +127,12 @@ async def run_draft(
             limit=3,
         )
 
+    reference_loader = None
+    if skill_ids:
+        from app.services.skill_reference_service import make_reference_loader
+
+        reference_loader, _ = make_reference_loader(active_skill_ids=set(skill_ids))
+
     try:
         result = await draft_llm.generate_draft(
             state.original_email,
@@ -132,6 +145,7 @@ async def run_draft(
             tone_profile=resolved_profile,
             skills=skill_contents,
             negative_constraints=resolved_constraints,
+            reference_loader=reference_loader,
         )
     except DraftGenerationError as exc:
         logger.warning(
@@ -157,6 +171,8 @@ async def run_draft(
         prompt_version=result.prompt_version,
         context_match_confidence=confidence,
         routing_category=(state.triage.routing_category if state.triage is not None else None),
+        tool_calls=result.tool_calls or None,
+        applied_skills=applied_skills or None,
     )
     state.draft = DraftSchema.model_validate(
         persisted.model_dump(include=set(DraftSchema.model_fields))
@@ -173,5 +189,6 @@ async def run_draft(
         latency_ms=result.latency_ms,
         context_match_confidence=confidence,
         skills_count=len(skill_contents),
+        tool_call_count=len(result.tool_calls),
     )
     return state

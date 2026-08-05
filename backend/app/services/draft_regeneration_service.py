@@ -147,8 +147,10 @@ async def regenerate_draft(
         )
 
     active_skills_contents: list[str] = []
+    skill_ids: list[uuid.UUID] = []
+    applied_skills: list = []
     try:
-        active_skills_contents = await skill_selection_service.select_skill_contents(
+        selected = await skill_selection_service.select_skills(
             session,
             client=client,
             settings=settings,
@@ -157,12 +159,17 @@ async def regenerate_draft(
             triage=triage,
             conversation_id=thread.conversation_id,
         )
+        active_skills_contents = selected.blocks
+        skill_ids = selected.skill_ids
+        applied_skills = list(selected.applied)
     except Exception:
         logger.exception(
             "skill_load_failed_on_regenerate",
             thread_id=str(thread_id),
         )
         active_skills_contents = []
+        skill_ids = []
+        applied_skills = []
 
     # Snapshot values needed after we release the DB transaction.
     mailbox = thread.mailbox
@@ -195,6 +202,12 @@ async def regenerate_draft(
     if session.in_transaction():
         await session.commit()
 
+    reference_loader = None
+    if skill_ids:
+        from app.services.skill_reference_service import make_reference_loader
+
+        reference_loader, _ = make_reference_loader(active_skill_ids=set(skill_ids))
+
     result = await draft_llm.generate_draft(
         email,
         thread_context,
@@ -206,6 +219,7 @@ async def regenerate_draft(
         tone_profile=tone_profile_block,
         negative_constraints=negative_constraints,
         instruction=instruction,
+        reference_loader=reference_loader,
     )
 
     regen_message_id = f"{latest_graph_id}:regen:{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
@@ -215,6 +229,8 @@ async def regenerate_draft(
             thread_id=thread_id,
             message_id=regen_message_id,
             draft=result.draft,
+            tool_calls=result.tool_calls or None,
+            applied_skills=applied_skills or None,
         )
 
         try:
@@ -228,6 +244,7 @@ async def regenerate_draft(
                     "thread_id": str(thread_id),
                     "instruction_preview": instruction[:120],
                     "prompt_version": result.prompt_version,
+                    "tool_calls": result.tool_calls,
                 },
                 actor=actor,
             )

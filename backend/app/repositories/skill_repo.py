@@ -4,25 +4,30 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.exceptions import SkillBudgetExceededError, SkillNameConflictError
 from app.models.db.skill import Skill
+from app.models.db.skill_file import SkillFile
 from app.models.schemas.skill import (
     SkillCreateSchema,
     SkillResponseSchema,
+    SkillSourceKind,
     SkillUpdateSchema,
 )
+from app.repositories import skill_files_repo
 
 # Caps how many standing instructions can be injected into every draft LLM call.
 MAX_ACTIVE_SKILLS = 20
-MAX_ACTIVE_SKILLS_CHARS = 50_000
+MAX_ACTIVE_SKILLS_CHARS = 200_000
 
 
 class SkillSelectionRow(BaseModel):
@@ -38,6 +43,8 @@ class SkillSelectionRow(BaseModel):
     always_apply: bool = False
     is_active: bool = True
     embedding: list[float] | None = None
+    reference_manifest: list[str] = Field(default_factory=list)
+    has_assets: bool = False
 
 
 def _validate_category_rules(
@@ -49,29 +56,83 @@ def _validate_category_rules(
         raise ValueError("category is required when always_apply is false")
 
 
+def _file_counts(row: Skill) -> tuple[int, int]:
+    files = getattr(row, "files", None) or []
+    refs = sum(1 for f in files if f.kind == "reference")
+    assets = sum(1 for f in files if f.kind == "asset")
+    return refs, assets
+
+
 def _to_response(row: Skill) -> SkillResponseSchema:
-    return SkillResponseSchema.model_validate(row)
+    refs, assets = _file_counts(row)
+    source_kind: SkillSourceKind = (
+        "imported" if row.source_kind == "imported" else "inline"
+    )
+    return SkillResponseSchema(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        content=row.content,
+        category=row.category,
+        always_apply=row.always_apply,
+        is_active=row.is_active,
+        source_kind=source_kind,
+        imported_zip_sha256=row.imported_zip_sha256,
+        raw_frontmatter=row.raw_frontmatter,
+        reference_file_count=refs,
+        asset_file_count=assets,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def _to_selection(row: Skill) -> SkillSelectionRow:
-    return SkillSelectionRow.model_validate(row)
+    files = getattr(row, "files", None) or []
+    refs = sorted(f.relative_path for f in files if f.kind == "reference")
+    has_assets = any(f.kind == "asset" for f in files)
+    return SkillSelectionRow(
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        content=row.content,
+        category=row.category,
+        always_apply=row.always_apply,
+        is_active=row.is_active,
+        embedding=row.embedding,
+        reference_manifest=refs,
+        has_assets=has_assets,
+    )
 
 
 async def list_all(session: AsyncSession) -> list[SkillResponseSchema]:
-    stmt = select(Skill).order_by(Skill.created_at.desc())
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .order_by(Skill.created_at.desc())
+    )
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
 
 
 async def list_active(session: AsyncSession) -> list[SkillResponseSchema]:
-    stmt = select(Skill).where(Skill.is_active.is_(True)).order_by(Skill.name.asc())
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .where(Skill.is_active.is_(True))
+        .order_by(Skill.name.asc())
+    )
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
 
 
 async def list_active_for_selection(session: AsyncSession) -> list[SkillSelectionRow]:
-    """Active skills including embeddings for the routing funnel."""
-    stmt = select(Skill).where(Skill.is_active.is_(True)).order_by(Skill.name.asc())
+    """Active skills including embeddings and reference manifests for routing."""
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .where(Skill.is_active.is_(True))
+        .order_by(Skill.name.asc())
+    )
     result = await session.execute(stmt)
     return [_to_selection(row) for row in result.scalars().all()]
 
@@ -80,7 +141,46 @@ async def get_by_id(
     session: AsyncSession,
     skill_id: uuid.UUID,
 ) -> SkillResponseSchema | None:
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .where(Skill.id == skill_id)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _to_response(row)
+
+
+async def get_orm_by_id(session: AsyncSession, skill_id: uuid.UUID) -> Skill | None:
     stmt = select(Skill).where(Skill.id == skill_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_by_name(session: AsyncSession, name: str) -> SkillResponseSchema | None:
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .where(Skill.name == name)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _to_response(row)
+
+
+async def get_by_import_hash(
+    session: AsyncSession,
+    sha256: str,
+) -> SkillResponseSchema | None:
+    stmt = (
+        select(Skill)
+        .options(selectinload(Skill.files))
+        .where(Skill.imported_zip_sha256 == sha256)
+    )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -120,6 +220,10 @@ async def _assert_active_budget(
 async def create(
     session: AsyncSession,
     data: SkillCreateSchema,
+    *,
+    source_kind: SkillSourceKind = "inline",
+    imported_zip_sha256: str | None = None,
+    raw_frontmatter: dict[str, Any] | None = None,
 ) -> SkillResponseSchema:
     _validate_category_rules(always_apply=data.always_apply, category=data.category)
     if data.is_active:
@@ -132,14 +236,85 @@ async def create(
         category=data.category,
         always_apply=data.always_apply,
         is_active=data.is_active,
+        source_kind=source_kind,
+        imported_zip_sha256=imported_zip_sha256,
+        raw_frontmatter=raw_frontmatter,
     )
     session.add(row)
     try:
         await session.flush()
     except IntegrityError as exc:
         raise SkillNameConflictError(f"Skill name already exists: {data.name}") from exc
-    await session.refresh(row)
+    await session.refresh(row, attribute_names=["files"])
     return _to_response(row)
+
+
+async def upsert_imported(
+    session: AsyncSession,
+    *,
+    name: str,
+    description: str,
+    content: str,
+    category: str | None,
+    always_apply: bool,
+    imported_zip_sha256: str,
+    raw_frontmatter: dict[str, Any] | None,
+    files: list[dict[str, object]],
+    overwrite: bool,
+) -> tuple[SkillResponseSchema, bool]:
+    """Create or overwrite an imported skill + bundled files.
+
+    Returns (skill, overwritten). Writes ORM directly so SKILL.md bodies may
+    exceed the inline SkillCreateSchema max_length (10k).
+    """
+    _validate_category_rules(always_apply=always_apply, category=category)
+    existing = await get_by_name(session, name)
+    if existing is not None and not overwrite:
+        raise SkillNameConflictError(f"Skill name already exists: {name}")
+
+    if existing is None:
+        await _assert_active_budget(session, content=content)
+        row = Skill(
+            name=name,
+            description=description,
+            content=content,
+            category=category,
+            always_apply=always_apply,
+            is_active=True,
+            source_kind="imported",
+            imported_zip_sha256=imported_zip_sha256,
+            raw_frontmatter=raw_frontmatter,
+        )
+        session.add(row)
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
+        await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
+        refreshed = await get_by_id(session, row.id)
+        assert refreshed is not None
+        return refreshed, False
+
+    await _assert_active_budget(session, content=content, exclude_id=existing.id)
+    values: dict[str, Any] = {
+        "description": description,
+        "content": content,
+        "category": category,
+        "always_apply": always_apply,
+        "is_active": True,
+        "source_kind": "imported",
+        "imported_zip_sha256": imported_zip_sha256,
+        "raw_frontmatter": raw_frontmatter,
+        "updated_at": datetime.now(UTC),
+    }
+    stmt = sa_update(Skill).where(Skill.id == existing.id).values(**values).returning(Skill)
+    result = await session.execute(stmt)
+    row = result.scalar_one()
+    await session.flush()
+    await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
+    refreshed = await get_by_id(session, row.id)
+    assert refreshed is not None
+    return refreshed, True
 
 
 async def update_skill(
@@ -181,7 +356,7 @@ async def update_skill(
     if row is None:
         return None
     await session.flush()
-    return _to_response(row)
+    return await get_by_id(session, skill_id)
 
 
 async def update_embedding(
@@ -212,6 +387,7 @@ async def rank_by_cosine(
     distance = Skill.embedding.cosine_distance(query_embedding)
     stmt = (
         select(Skill)
+        .options(selectinload(Skill.files))
         .where(
             Skill.id.in_(skill_ids),
             Skill.embedding.is_not(None),
@@ -227,6 +403,8 @@ async def delete_skill(session: AsyncSession, skill_id: uuid.UUID) -> bool:
     existing = await get_by_id(session, skill_id)
     if existing is None:
         return False
+    # Explicit file delete first keeps behavior clear even without ORM cascade flush.
+    await session.execute(sa_delete(SkillFile).where(SkillFile.skill_id == skill_id))
     stmt = sa_delete(Skill).where(Skill.id == skill_id)
     result = await session.execute(stmt)
     await session.flush()

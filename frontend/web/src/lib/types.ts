@@ -108,6 +108,17 @@ export interface SuggestedAction {
   rationale: string
 }
 
+export interface AppliedSkill {
+  id: string
+  name: string
+}
+
+export interface DraftToolCall {
+  skill_id: string
+  path: string
+  is_error: boolean
+}
+
 export interface DraftView {
   id: string
   subject: string
@@ -125,6 +136,20 @@ export interface DraftView {
   feedback_action: string | null
   feedback_reason_code: string | null
   routing_category: string | null
+  applied_skills: AppliedSkill[]
+  tool_calls: DraftToolCall[] | null
+}
+
+export type SkillSourceKind = "inline" | "imported"
+export type SkillFileKind = "reference" | "asset"
+
+export interface SkillFileMeta {
+  id: string
+  relative_path: string
+  kind: SkillFileKind
+  mime_type: string
+  size_bytes: number
+  created_at: string
 }
 
 export interface SkillResponse {
@@ -135,8 +160,23 @@ export interface SkillResponse {
   category: string | null
   always_apply: boolean
   is_active: boolean
+  source_kind: SkillSourceKind
+  imported_zip_sha256: string | null
+  raw_frontmatter: Record<string, unknown> | null
+  reference_file_count: number
+  asset_file_count: number
   created_at: string
   updated_at: string
+}
+
+export interface ImportSkillResult {
+  skill_id: string
+  name: string
+  description: string
+  reference_files: string[]
+  asset_files: string[]
+  warnings: string[]
+  overwritten: boolean
 }
 
 export interface SkillCreate {

@@ -116,6 +116,17 @@ class SuggestedActionView(BaseModel):
     rationale: str
 
 
+class AppliedSkillView(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class DraftToolCallView(BaseModel):
+    skill_id: str
+    path: str
+    is_error: bool = False
+
+
 class DraftView(BaseModel):
     id: uuid.UUID
     subject: str
@@ -133,6 +144,8 @@ class DraftView(BaseModel):
     feedback_action: str | None = None
     feedback_reason_code: str | None = None
     routing_category: str | None = None
+    applied_skills: list[AppliedSkillView] = Field(default_factory=list)
+    tool_calls: list[DraftToolCallView] | None = None
 
 
 class ThreadDetail(BaseModel):

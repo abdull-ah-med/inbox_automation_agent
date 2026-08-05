@@ -13,8 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.db.draft import Draft
 from app.models.db.thread import Thread
 from app.models.schemas.draft import (
+    AppliedSkillSchema,
     DraftResponseSchema,
     DraftSchema,
+    DraftToolCallSchema,
     SuggestedActionSchema,
     SuggestedRecipientSchema,
 )
@@ -95,6 +97,77 @@ def _parse_suggested_actions(
     return actions
 
 
+def _parse_applied_skills(raw: object) -> list[AppliedSkillSchema]:
+    if not isinstance(raw, list):
+        return []
+    out: list[AppliedSkillSchema] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        skill_id = item.get("id")
+        name = item.get("name")
+        if skill_id is None or not isinstance(name, str) or not name.strip():
+            continue
+        try:
+            out.append(AppliedSkillSchema(id=uuid.UUID(str(skill_id)), name=name.strip()))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _parse_tool_calls(raw: object) -> list[DraftToolCallSchema] | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        return None
+    out: list[DraftToolCallSchema] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        skill_id = item.get("skill_id")
+        path = item.get("path")
+        if not isinstance(skill_id, str) or not isinstance(path, str):
+            continue
+        out.append(
+            DraftToolCallSchema(
+                skill_id=skill_id,
+                path=path,
+                is_error=bool(item.get("is_error")),
+                bytes=item.get("bytes") if isinstance(item.get("bytes"), int) else None,
+                truncated=(
+                    item.get("truncated")
+                    if isinstance(item.get("truncated"), bool)
+                    else None
+                ),
+                iteration=(
+                    item.get("iteration")
+                    if isinstance(item.get("iteration"), int)
+                    else None
+                ),
+            )
+        )
+    return out
+
+
+def _applied_skills_payload(
+    applied_skills: list[AppliedSkillSchema] | list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    if not applied_skills:
+        return None
+    out: list[dict[str, Any]] = []
+    for item in applied_skills:
+        if isinstance(item, AppliedSkillSchema):
+            out.append({"id": str(item.id), "name": item.name})
+            continue
+        if isinstance(item, dict):
+            skill_id = item.get("id")
+            name = item.get("name")
+            if skill_id is None or not isinstance(name, str) or not name.strip():
+                continue
+            out.append({"id": str(skill_id), "name": name.strip()})
+    return out or None
+
+
 def _to_response(row: Draft) -> DraftResponseSchema:
     suggested, forward_to = _parse_recipients(row.recipients)
     urgency_raw = row.urgency if row.urgency in _VALID_URGENCY else "NORMAL"
@@ -120,6 +193,8 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         feedback_reason_code=feedback_reason if isinstance(feedback_reason, str) else None,
         routing_category=routing if isinstance(routing, str) else None,
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
+        applied_skills=_parse_applied_skills(row.applied_skills_json),
+        tool_calls=_parse_tool_calls(row.tool_calls_json),
     )
 
 
@@ -157,6 +232,8 @@ async def create_draft(
     prompt_version: str,
     context_match_confidence: float | None = None,
     routing_category: str | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    applied_skills: list[AppliedSkillSchema] | list[dict[str, Any]] | None = None,
 ) -> DraftResponseSchema:
     """Insert a draft or return the existing row on ``message_id`` conflict.
 
@@ -177,6 +254,8 @@ async def create_draft(
         context_match_confidence=context_match_confidence,
         suggested_actions=_suggested_actions_payload(draft),
         routing_category=routing_category,
+        tool_calls_json=tool_calls,
+        applied_skills_json=_applied_skills_payload(applied_skills),
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["message_id"],
@@ -200,6 +279,8 @@ async def create_regenerated_draft(
     message_id: str,
     draft: DraftSchema,
     context_match_confidence: float | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    applied_skills: list[AppliedSkillSchema] | list[dict[str, Any]] | None = None,
 ) -> DraftResponseSchema:
     """Insert a new draft row for regeneration (unique message_id required)."""
     row = Draft(
@@ -213,6 +294,8 @@ async def create_regenerated_draft(
         urgency_reason=draft.urgency_reason,
         context_match_confidence=context_match_confidence,
         suggested_actions=_suggested_actions_payload(draft),
+        tool_calls_json=tool_calls,
+        applied_skills_json=_applied_skills_payload(applied_skills),
     )
     session.add(row)
     await session.flush()

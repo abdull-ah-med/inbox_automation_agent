@@ -135,6 +135,12 @@ def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
     assert "suggested_actions" in DraftSchema.model_fields
 
 
+def test_draft_prompt_documents_read_skill_reference_tool() -> None:
+    assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
+    assert PROMPT_VERSION == "2026-08-05.1"
+    assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
+
+
 def test_draft_prompt_requires_plain_text_reply_body() -> None:
     lowered = DRAFT_SYSTEM_PROMPT.lower()
     assert "plain-text" in lowered or "plain text" in lowered

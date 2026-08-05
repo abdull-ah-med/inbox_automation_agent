@@ -9,6 +9,7 @@ from app.models.db.rejection_memory import RejectionMemory
 from app.models.db.reply_embedding import ReplyEmbedding
 from app.models.db.skill import Skill
 from app.models.db.skill_candidate import SkillCandidate
+from app.models.db.skill_file import SkillFile
 from app.models.db.thread import Thread
 from app.models.db.thread_link import ThreadLink
 from app.models.db.tone_profile import ToneProfile
@@ -26,6 +27,7 @@ __all__ = [
     "ReplyEmbedding",
     "Skill",
     "SkillCandidate",
+    "SkillFile",
     "Thread",
     "ThreadLink",
     "ToneProfile",
