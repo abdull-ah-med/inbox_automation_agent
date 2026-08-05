@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,10 +21,7 @@ from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, Thr
 from app.models.schemas.skill import ImportSkillResultSchema
 from app.repositories.skill_repo import SkillSelectionRow
 from app.services import skill_archive_service, skill_selection_service
-
-FIXTURE_ZIP = (
-    Path(__file__).resolve().parents[2] / "misc" / "samplelab-rebilling-skill.zip"
-)
+from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
 
 
 @pytest.fixture
@@ -122,7 +118,7 @@ async def test_import_fixture_then_draft_reads_client_rules(
                 files={
                     "file": (
                         "samplelab-rebilling-skill.zip",
-                        FIXTURE_ZIP.read_bytes(),
+                        load_samplelab_rebilling_zip_bytes(),
                         "application/zip",
                     )
                 },
@@ -132,9 +128,9 @@ async def test_import_fixture_then_draft_reads_client_rules(
     assert resp.status_code == 201
     assert resp.json()["name"] == "samplelab-rebilling"
     import_mock.assert_awaited()
-    # Also parse the real archive locally to prove fixture validity
+    # Also parse the archive locally to prove fixture validity
     name, _desc, body, _extras, files, warnings = skill_archive_service.parse_skill_archive(
-        FIXTURE_ZIP.read_bytes()
+        load_samplelab_rebilling_zip_bytes()
     )
     assert name == "samplelab-rebilling"
     assert warnings == []
