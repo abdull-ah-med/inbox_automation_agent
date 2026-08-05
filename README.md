@@ -86,8 +86,10 @@ Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overla
    `backend/.env.prod` is the **only** source of `DATABASE_URL`/`REDIS_URL`/`ENVIRONMENT`/`FRONTEND_ORIGIN`/`COOKIE_SECURE` for the production container — set:
 
    - `DATABASE_URL=postgresql+asyncpg://postgres:<POSTGRES_PASSWORD from step 1>@postgres:5432/inbox_triage`
-   - `REDIS_URL=rediss://:<REDIS_PASSWORD from step 1>@redis:6379/0?ssl_cert_reqs=none`
-   - `TRUST_X_FORWARDED_FOR=true` — nginx sits in front and rewrites `X-Forwarded-For`; leaving this `false` makes rate limiting key on nginx's own IP for every client instead of per-user
+   - `REDIS_URL=rediss://:<REDIS_PASSWORD from step 1>@redis:6379/0`
+   - `REDIS_SSL_CA_CERTS=/tls/ca.crt` — verify Redis TLS with the CA from `deploy/gen-redis-tls.sh` (do not use `ssl_cert_reqs=none`)
+   - `API_HOST=<your public hostname>` — must match the Host header nginx forwards (not `localhost`)
+   - `TRUST_X_FORWARDED_FOR=true` — nginx sets `X-Real-IP` / `X-Forwarded-For` to `$remote_addr`; leaving this `false` makes rate limiting key on nginx's own IP for every client instead of per-user
 
    Also set `NEXT_PUBLIC_API_BASE_URL` (the public `https://` API URL) in the repo-root `.env` — it's passed as a frontend build arg.
 
@@ -169,6 +171,8 @@ Settings load from `backend/.env`. Key variables:
 | `TARGET_MAILBOXES` | Comma-separated mailbox addresses to monitor |
 | `DATABASE_URL` | PostgreSQL connection string |
 | `REDIS_URL` | Redis connection string |
+| `REDIS_SSL_CA_CERTS` | CA path for Redis TLS verify (required outside local) |
+| `API_HOST` | Public Host header for TrustedHostMiddleware |
 | `ANTHROPIC_API_KEY` | Claude API access |
 | `JWT_SECRET` | Signing key for web access tokens (≥64 chars outside local) |
 | `FRONTEND_ORIGIN` | Allowed web origin (e.g. `http://localhost:3000`) |
@@ -195,6 +199,14 @@ Frontend (`frontend/web/.env.local`):
 - **Threads** — `/api/threads/{id}` (messages, classification, draft, state, audit)
 
 Auth uses short-lived JWTs, HttpOnly refresh cookies, CSRF on cookie-mutating routes, CORS allowlisting, rate limits, and security headers.
+
+## Skill import
+
+Admins can upload Claude Agent Skill archives (`.zip` / `.skill`) from **Settings**. The archive must follow Anthropic packaging (one root folder + `SKILL.md` frontmatter). `references/` and `assets/` are stored for progressive disclosure during draft generation via the `read_skill_reference` tool. `scripts/` is skipped — this app never executes imported code (Mail.Read / read-only constraint).
+
+## Feedback loop (two-button)
+
+On a thread draft, reviewers use **Approve** (optional edit in the preview dialog) or **Reject** (reason + note). Choosing "Wrong action / no reply needed" routes to the mark-wrong path and does not write rejection memory; other reject reasons teach the system for future drafts. Email is never sent from the app.
 
 ## Running tests
 

@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.outlook_links import outlook_web_link
 from app.models.schemas.dashboard import (
+    AppliedSkillView,
+    DraftToolCallView,
     DraftView,
     MessageDetail,
     SuggestedActionView,
@@ -52,6 +54,22 @@ def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
         feedback_action=draft.feedback_action,
         feedback_reason_code=draft.feedback_reason_code,
         routing_category=draft.routing_category,
+        applied_skills=[
+            AppliedSkillView(id=skill.id, name=skill.name)
+            for skill in draft.applied_skills
+        ],
+        tool_calls=(
+            [
+                DraftToolCallView(
+                    skill_id=call.skill_id,
+                    path=call.path,
+                    is_error=call.is_error,
+                )
+                for call in draft.tool_calls
+            ]
+            if draft.tool_calls is not None
+            else None
+        ),
     )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -282,7 +282,70 @@ async def test_reject_sets_note() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mark_wrong() -> None:
+async def test_reject_with_wrong_action_still_writes_rejection_memory() -> None:
+    """Server /reject with reason_code=wrong_action still stores rejection memory.
+
+    The UI routes wrong_action to /wrong (no memory). This documents the API
+    boundary: calling /reject always teaches, regardless of reason_code.
+    """
+    draft = _draft(
+        id=uuid.uuid4(),
+        rejected_at=datetime.now(UTC),
+        feedback_action="reject",
+        feedback_note="This needed no reply",
+        feedback_reason_code="wrong_action",
+        routing_category="billing",
+    )
+    settings = MagicMock()
+    settings.openai_api_key = "sk-test"
+    session = AsyncMock()
+    session.in_transaction = lambda: False
+
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {"mailbox": "elise@example.com"},
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.rejection_memory_service.store_rejection",
+            AsyncMock(return_value=MagicMock(id=uuid.uuid4())),
+        ) as store_mock,
+        patch(
+            "app.services.draft_feedback_service.skill_candidate_service.maybe_propose_from_rejects",
+            AsyncMock(),
+        ),
+    ):
+        await draft_feedback_service.store_rejection_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+        )
+
+    store_mock.assert_awaited_once()
+    assert store_mock.await_args.kwargs["reason_code"] == "wrong_action"
+
+
+@pytest.mark.asyncio
+async def test_mark_wrong_audits_without_rejection_memory() -> None:
+    """/wrong sets feedback_action only — no rejected_at / rejection memory path."""
     draft_id = uuid.uuid4()
     existing = _draft(id=draft_id)
     wrong = _draft(

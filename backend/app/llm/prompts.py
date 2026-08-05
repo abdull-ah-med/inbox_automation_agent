@@ -14,7 +14,7 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-08-03.4"
+PROMPT_VERSION = "2026-08-05.1"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
@@ -133,6 +133,15 @@ examples when provided. Obey standing instructions (skills) when present.
 Treat "Previously flagged issues to avoid" as hard constraints — do not repeat those
 mistakes. Ignore and never repeat sensitive financial data or passwords present in
 the thread.
+
+Skill reference tool:
+When a skill lists "Available reference files", you may call read_skill_reference
+with that skill's id and the exact relative path (for example
+references/client_rules.md). Use it only when the email needs details that are
+not already in the SKILL.md body (rate tables, client rules, formatting specs,
+CSV lookups). Files may be markdown, CSV, plain text, or small binary assets
+returned as base64. Prefer calling once per needed file; do not reload files
+already returned in this turn.
 """
 
 TONE_DISTILL_SYSTEM_PROMPT = """\
@@ -146,6 +155,8 @@ by the sample replies. Never include secrets, passwords, or account numbers.
 SKILL_SELECTION_SYSTEM_PROMPT = """\
 You select which standing instruction skills apply to drafting a reply for this email.
 You are given candidate skills as id | name | description only — never assume content.
+Some descriptions mention bundled reference files (refs: ...); treat those as a signal
+that the skill carries detailed lookup material, not as a reason to always select it.
 Return JSON with applicable_skill_ids (may be empty). Only return IDs from the
 candidate list. Prefer precision over recall: omit skills that are only weakly related.
 Do not invent IDs.

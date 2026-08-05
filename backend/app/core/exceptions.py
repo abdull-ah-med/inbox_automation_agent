@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import uuid
+
+
 class InboxTriageError(Exception):
     """Base exception for inbox triage domain errors."""
 
@@ -68,6 +73,30 @@ class SkillNameConflictError(InboxTriageError):
 
 class SkillBudgetExceededError(InboxTriageError):
     """Raised when activating a skill would exceed active count or char budget."""
+
+
+class SkillArchiveError(InboxTriageError):
+    """Base error for Claude skill archive import failures."""
+
+
+class SkillPackagingError(SkillArchiveError):
+    """Raised when a skill zip does not follow Anthropic packaging rules."""
+
+
+class SkillPathTraversalError(SkillArchiveError):
+    """Raised when a skill archive contains unsafe paths."""
+
+
+class SkillPackageTooLargeError(SkillArchiveError):
+    """Raised when archive or uncompressed sizes exceed safety limits."""
+
+
+class SkillAlreadyImportedError(SkillArchiveError):
+    """Raised when the same archive hash was already imported without overwrite."""
+
+    def __init__(self, message: str, *, skill_id: uuid.UUID) -> None:
+        super().__init__(message)
+        self.skill_id = skill_id
 
 
 class ThreadNotFoundError(InboxTriageError):

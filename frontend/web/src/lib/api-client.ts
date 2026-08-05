@@ -12,10 +12,12 @@ import { messageForStatus } from "@/lib/error-messages";
 import type {
   DashboardOverview,
   DraftView,
+  ImportSkillResult,
   MailboxOverview,
   ReplyMemoryResponse,
   SkillCandidateResponse,
   SkillCreate,
+  SkillFileMeta,
   SkillResponse,
   SkillUpdate,
   ThreadDetail,
@@ -108,13 +110,26 @@ async function refreshAccessToken(): Promise<boolean> {
   return refreshPromise;
 }
 
+function detailFromErrorBody(body: unknown): string | null {
+  if (body == null || typeof body !== "object") return null;
+  const detail = (body as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+  return null;
+}
+
 async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
   retried = false,
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  if (!headers.has("Content-Type") && init.body) {
+  const isFormData =
+    typeof FormData !== "undefined" && init.body instanceof FormData;
+  if (!headers.has("Content-Type") && init.body && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
   const token = getAccessToken();
@@ -154,6 +169,99 @@ async function apiFetch<T>(
     return undefined as T;
   }
   return (await resp.json()) as T;
+}
+
+/** Multipart upload helper — surfaces server `detail` text verbatim for import UX. */
+async function apiFetchMultipart<T>(
+  path: string,
+  form: FormData,
+  retried = false,
+): Promise<T> {
+  const headers = new Headers();
+  const token = getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const resp = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers,
+    body: form,
+    credentials: "include",
+  });
+
+  if (
+    resp.status === 401 &&
+    !retried &&
+    !path.startsWith("/auth/login") &&
+    !path.startsWith("/auth/refresh") &&
+    !path.startsWith("/auth/logout")
+  ) {
+    const ok = await refreshAccessToken();
+    if (ok) return apiFetchMultipart<T>(path, form, true);
+  }
+
+  if (!resp.ok) {
+    let body: unknown;
+    try {
+      body = await resp.json();
+    } catch {
+      body = undefined;
+    }
+    const verbatim = detailFromErrorBody(body);
+    throw new ApiError(
+      verbatim ?? messageForStatus(resp.status),
+      resp.status,
+      body,
+    );
+  }
+
+  if (resp.status === 204) {
+    return undefined as T;
+  }
+  return (await resp.json()) as T;
+}
+
+async function apiFetchBytes(
+  path: string,
+  retried = false,
+): Promise<{ blob: Blob; contentType: string }> {
+  const headers = new Headers();
+  const token = getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+
+  const resp = await fetch(`${API_BASE}${path}`, {
+    method: "GET",
+    headers,
+    credentials: "include",
+  });
+
+  if (
+    resp.status === 401 &&
+    !retried &&
+    !path.startsWith("/auth/login") &&
+    !path.startsWith("/auth/refresh") &&
+    !path.startsWith("/auth/logout")
+  ) {
+    const ok = await refreshAccessToken();
+    if (ok) return apiFetchBytes(path, true);
+  }
+
+  if (!resp.ok) {
+    let body: unknown;
+    try {
+      body = await resp.json();
+    } catch {
+      body = undefined;
+    }
+    throw new ApiError(messageForStatus(resp.status), resp.status, body);
+  }
+
+  const contentType = resp.headers.get("Content-Type") ?? "application/octet-stream";
+  const blob = await resp.blob();
+  return { blob, contentType };
 }
 
 export const api = {
@@ -272,6 +380,27 @@ export const api = {
       return apiFetch<void>(`/api/skills/${id}`, {
         method: "DELETE",
       });
+    },
+    import(file: File, options?: { overwrite?: boolean; category?: string }) {
+      const form = new FormData();
+      form.append("file", file);
+      if (options?.overwrite != null) {
+        form.append("overwrite", String(options.overwrite));
+      }
+      if (options?.category) {
+        form.append("category", options.category);
+      }
+      return apiFetchMultipart<ImportSkillResult>("/api/skills/import", form);
+    },
+    listFiles(id: string) {
+      return apiFetch<SkillFileMeta[]>(`/api/skills/${id}/files`);
+    },
+    async getFile(id: string, relativePath: string) {
+      const encoded = relativePath
+        .split("/")
+        .map((segment) => encodeURIComponent(segment))
+        .join("/");
+      return apiFetchBytes(`/api/skills/${id}/files/${encoded}`);
     },
   },
 
