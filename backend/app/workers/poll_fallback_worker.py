@@ -16,7 +16,7 @@ from app.core.redis_keys import (
     SCHEDULER_POLL_LOCK_KEY,
     poll_cursor_key,
 )
-from app.core.redis_lock import acquire_lock
+from app.core.redis_lock import acquire_lock, extend_lock, release_lock
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
 from app.models.schemas.graph import GraphMessageSchema
@@ -27,7 +27,10 @@ logger = structlog.get_logger(__name__)
 _TRIAGE_ELIGIBLE = frozenset({"ingested", "retry_triage"})
 # Well-known Graph folder names. Poller covers Inbox + Junk (spam often lands here).
 _POLL_FOLDERS: tuple[str, ...] = ("inbox", "junkemail")
-
+# Heartbeat interval while polling so the leader lock cannot expire mid-run.
+_POLL_LOCK_HEARTBEAT_SECONDS = 30
+# Per-mailbox budget used when sizing the leader lock TTL.
+_POLL_LOCK_SECONDS_PER_MAILBOX = 120
 
 def _to_graph_datetime(value: datetime) -> str:
     """Format UTC datetime for Graph OData $filter (YYYY-MM-DDTHH:MM:SSZ)."""
@@ -258,9 +261,11 @@ async def poll_mailbox(
 async def run_poll_all_mailboxes() -> None:
     """Poll every configured mailbox concurrently (bounded by a semaphore).
 
-    Uses a Redis NX lock so only one Uvicorn worker runs the poll interval.
-    Uses the process-scoped GraphClient singleton — do not aclose it here; the
-    FastAPI lifespan closes the shared pool on shutdown.
+    Uses a Redis owner-token lock so only one Uvicorn worker runs the poll
+    interval. TTL is sized for worst-case work and refreshed with a heartbeat;
+    the lock is released in ``finally`` so a finished leader does not block the
+    next interval. Uses the process-scoped GraphClient singleton — do not
+    aclose it here; the FastAPI lifespan closes the shared pool on shutdown.
     """
     settings = get_settings()
     if not settings.mailbox_list:
@@ -268,14 +273,41 @@ async def run_poll_all_mailboxes() -> None:
         return
 
     redis = await get_redis()
-    lock_ttl = max(settings.poll_interval_seconds - 5, 30)
-    # Owner-token NX lock (Redis lock pattern) — TTL alone releases; no unsafe DEL.
+    mailbox_count = max(len(settings.mailbox_list), 1)
+    # TTL must exceed the critical section (Redis distributed lock guidance).
     # https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
+    lock_ttl = max(
+        settings.poll_interval_seconds * 2,
+        mailbox_count * _POLL_LOCK_SECONDS_PER_MAILBOX,
+        300,
+    )
     token = await acquire_lock(redis, SCHEDULER_POLL_LOCK_KEY, ttl_seconds=lock_ttl)
     if token is None:
         logger.info("poll_skipped_not_leader")
         return
 
+    heartbeat_stop = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        while not heartbeat_stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    heartbeat_stop.wait(),
+                    timeout=_POLL_LOCK_HEARTBEAT_SECONDS,
+                )
+                return
+            except TimeoutError:
+                extended = await extend_lock(
+                    redis,
+                    SCHEDULER_POLL_LOCK_KEY,
+                    token,
+                    ttl_seconds=lock_ttl,
+                )
+                if not extended:
+                    logger.warning("poll_lock_heartbeat_lost")
+                    return
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
     auth = await get_graph_auth(settings, redis)
     graph_client = get_graph_client(auth)
     semaphore = asyncio.Semaphore(settings.poll_concurrency)
@@ -287,4 +319,9 @@ async def run_poll_all_mailboxes() -> None:
             except Exception:
                 logger.exception("poll_mailbox_failed", mailbox=mailbox)
 
-    await asyncio.gather(*(_poll_one(mailbox) for mailbox in settings.mailbox_list))
+    try:
+        await asyncio.gather(*(_poll_one(mailbox) for mailbox in settings.mailbox_list))
+    finally:
+        heartbeat_stop.set()
+        await heartbeat_task
+        await release_lock(redis, SCHEDULER_POLL_LOCK_KEY, token)

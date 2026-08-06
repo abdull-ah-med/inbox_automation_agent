@@ -43,6 +43,7 @@ def triage_flags_from_event(event: AuditEvent) -> TriageFlags:
         spam_reason=_payload_str(payload, "spam_reason"),
         context_reason=_payload_str(payload, "context_reason"),
         action_items_summary=_payload_str(payload, "action_items_summary"),
+        routing_category=_payload_str(payload, "routing_category"),
         outcome=event.event_type,
     )
 

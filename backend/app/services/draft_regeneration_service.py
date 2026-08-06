@@ -119,15 +119,22 @@ async def regenerate_draft(
         thread.conversation_id,
         mailbox=thread.mailbox,
     )
+    latest_draft = await draft_repo.get_latest_by_thread(session, thread_id)
+    draft_routing = (
+        latest_draft.routing_category
+        if latest_draft is not None and latest_draft.routing_category
+        else None
+    )
     if triage_flags is None:
         triage = TriageResultSchema(
             is_spam=False,
             has_action_items=True,
             action_items_summary=None,
             needs_context=False,
-            routing_category="general",
+            routing_category=draft_routing or "general",
         )
     else:
+        routing = triage_flags.routing_category or draft_routing or "general"
         triage = TriageResultSchema(
             is_spam=bool(triage_flags.is_spam) if triage_flags.is_spam is not None else False,
             spam_reason=triage_flags.spam_reason,
@@ -143,7 +150,7 @@ async def regenerate_draft(
                 else False
             ),
             context_reason=triage_flags.context_reason,
-            routing_category="general",
+            routing_category=routing,
         )
 
     active_skills_contents: list[str] = []

@@ -24,6 +24,11 @@ MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS = 30
 
 SCHEDULER_POLL_LOCK_KEY = "scheduler:lock:poll"
 SCHEDULER_RENEW_LOCK_KEY = "scheduler:lock:renew"
+SCHEDULER_RECONCILE_LOCK_KEY = "scheduler:lock:reconcile"
+
+# Owner-token lock TTLs. Work must finish (or release) before expiry.
+# https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
+RECONCILE_LOCK_TTL_SECONDS = 600
 
 WEBHOOK_VALIDATION_PENDING_KEY = "graph:webhook:validation_pending"
 

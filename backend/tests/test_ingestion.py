@@ -1147,8 +1147,8 @@ async def test_webhook_rejects_oversized_body_without_content_length() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_rate_limit_uses_peer_not_xff() -> None:
-    """X-Forwarded-For must not create a new rate-limit bucket."""
+async def test_webhook_rate_limit_acks_without_enqueue() -> None:
+    """Over-limit Graph traffic must still ACK 202 (never 429)."""
     from app.core.dependencies import get_redis, get_settings
 
     app = FastAPI()
@@ -1164,15 +1164,29 @@ async def test_webhook_rate_limit_uses_peer_not_xff() -> None:
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_redis] = lambda: redis
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/webhooks/graph/notifications",
-            json={"value": []},
-            headers={"X-Forwarded-For": "203.0.113.99"},
-        )
+    with patch(
+        "app.api.webhooks.graph.enqueue",
+    ) as enqueue_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "secret",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+                headers={"X-Forwarded-For": "203.0.113.99"},
+            )
 
-    assert response.status_code == 429
+    assert response.status_code == 202
+    enqueue_mock.assert_not_called()
     # Rate key must be derived from peer (testclient), not spoofed XFF.
     call_args = redis.eval.await_args
     assert call_args is not None

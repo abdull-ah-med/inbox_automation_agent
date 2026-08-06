@@ -230,6 +230,22 @@ async def test_create_user_rejects_weak_password(settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_grace_rejects_plaintext_when_encryption_configured() -> None:
+    """Invalid Fernet tokens must not fall back to plaintext JSON."""
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    settings = Settings(
+        environment="local",
+        jwt_secret="z" * 64,
+        refresh_rotation_grace_seconds=10,
+        msal_cache_encryption_key=key,
+    )
+    forged = '{"refresh_plaintext":"stolen","access_token":"x","user":{}}'
+    assert auth_service._decode_refresh_grace(settings, forged) is None
+
+
+@pytest.mark.asyncio
 async def test_refresh_grace_roundtrip_encrypted() -> None:
     """Grace cache encrypts with MSAL Fernet key (cryptography Fernet)."""
     from cryptography.fernet import Fernet
