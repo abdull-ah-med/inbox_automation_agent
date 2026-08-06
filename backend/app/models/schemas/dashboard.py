@@ -34,6 +34,7 @@ class TriageFlags(BaseModel):
     spam_reason: str | None = None
     context_reason: str | None = None
     action_items_summary: str | None = None
+    routing_category: str | None = None
     outcome: str | None = None
 
 

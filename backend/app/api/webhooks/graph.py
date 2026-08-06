@@ -114,10 +114,13 @@ async def _enforce_webhook_guards(
     settings: Settings,
     redis: Redis,
 ) -> Response | None:
-    """Return an error Response if body size or rate limit is exceeded; else None.
+    """Buffer body and apply size / rate guards.
 
-    Oversized / abusive traffic is rejected with 413/429 (not from Graph under
-    normal operation). Graph notifications stay well under the body cap.
+    Oversized bodies return 413 (not legitimate Graph traffic under normal
+    operation). Rate-limit excess never returns 429: Microsoft Graph retries
+    non-2xx for hours and may mark the endpoint unhealthy
+    (https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks).
+    Over-limit requests ACK with 202 and set ``request.state.webhook_skip_processing``.
 
     Body size is enforced by reading at most ``webhook_max_body_bytes + 1`` bytes
     (Content-Length alone is insufficient for chunked / missing-length requests).
@@ -140,12 +143,12 @@ async def _enforce_webhook_guards(
     count = int(await redis.eval(_RATE_LIMIT_INCR_EXPIRE, 1, key, "60"))
     if count > settings.webhook_rate_limit_per_minute:
         logger.warning(
-            "graph_webhook_rate_limited",
+            "graph_webhook_rate_limited_ack",
             client_ip=ip,
             count=count,
             limit=settings.webhook_rate_limit_per_minute,
         )
-        return Response(status_code=status.HTTP_429_TOO_MANY_REQUESTS)
+        request.state.webhook_skip_processing = True
     return None
 
 
@@ -341,6 +344,9 @@ async def receive_graph_notifications(
     if guard is not None:
         return guard
 
+    if getattr(request.state, "webhook_skip_processing", False):
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
     expected = _configured_client_state(settings)
     if expected is None:
         # ACK with 202 so Graph does not retry for 4 hours on permanent misconfig.
@@ -394,6 +400,9 @@ async def receive_graph_lifecycle(
     guard = await _enforce_webhook_guards(request, settings, redis)
     if guard is not None:
         return guard
+
+    if getattr(request.state, "webhook_skip_processing", False):
+        return Response(status_code=status.HTTP_202_ACCEPTED)
 
     expected = _configured_client_state(settings)
     if expected is None:

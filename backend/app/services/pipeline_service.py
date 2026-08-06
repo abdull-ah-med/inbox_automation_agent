@@ -20,7 +20,7 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import draft_repo, thread_repo
+from app.repositories import draft_repo, skill_repo, thread_repo
 from app.services import (
     audit_service,
     context_service,
@@ -172,6 +172,7 @@ def _audit_payload(state: EmailTriageState) -> dict[str, object]:
                 "is_spam": triage.is_spam,
                 "has_action_items": triage.has_action_items,
                 "needs_context": triage.needs_context,
+                "routing_category": triage.routing_category,
             }
         )
     if state.error_logs:
@@ -724,7 +725,7 @@ async def _run_phased_post_ingest(
             message_id=message_id,
         )
 
-    # --- Short read for draft idempotency + skills + tone + constraints, then release ---
+    # --- Short DB reads, then release before OpenAI / Haiku ---
     skill_contents: list[str] = []
     skill_ids: list[uuid.UUID] = []
     applied_skills: list = []
@@ -733,22 +734,13 @@ async def _run_phased_post_ingest(
     negative_constraints: list[str] = []
     email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
     routing_category = state.triage.routing_category if state.triage is not None else "general"
+
     async with session_factory() as session:
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
+        active_skills: list = []
         if state.triage is not None:
             try:
-                selected = await skill_selection_service.select_skills(
-                    session,
-                    client=client,
-                    settings=settings,
-                    openai_client=openai_client,
-                    email=email,
-                    triage=state.triage,
-                    conversation_id=email.conversation_id,
-                )
-                skill_contents = selected.blocks
-                skill_ids = selected.skill_ids
-                applied_skills = list(selected.applied)
+                active_skills = await skill_repo.list_active_for_selection(session)
             except Exception:
                 logger.exception(
                     "skill_load_failed",
@@ -756,9 +748,42 @@ async def _run_phased_post_ingest(
                     mailbox=email.mailbox,
                     message_id=message_id,
                 )
-                skill_contents = []
-                skill_ids = []
-                applied_skills = []
+                active_skills = []
+        await session.commit()
+
+    if state.triage is not None:
+        try:
+            selected = await skill_selection_service.select_from_active(
+                active_skills,
+                client=client,
+                settings=settings,
+                openai_client=openai_client,
+                email=email,
+                triage=state.triage,
+            )
+            skill_contents = selected.blocks
+            skill_ids = selected.skill_ids
+            applied_skills = list(selected.applied)
+            async with session_factory() as session:
+                await skill_selection_service.log_skills_selected(
+                    session,
+                    email=email,
+                    conversation_id=email.conversation_id,
+                    selected=selected,
+                )
+                await session.commit()
+        except Exception:
+            logger.exception(
+                "skill_load_failed",
+                conversation_id=email.conversation_id,
+                mailbox=email.mailbox,
+                message_id=message_id,
+            )
+            skill_contents = []
+            skill_ids = []
+            applied_skills = []
+
+    async with session_factory() as session:
         tone_profile_block, tone_references = await tone_profile_service.load_for_draft(
             session,
             openai_client=openai_client,

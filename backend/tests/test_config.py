@@ -169,6 +169,7 @@ def test_validate_production_security_rejects_ssl_cert_reqs_none() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     errors = settings.validate_production_security()
     assert any("ssl_cert_reqs" in e for e in errors)
@@ -196,10 +197,36 @@ def test_validate_production_security_skips_slack_when_disabled() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     errors = settings.validate_production_security()
     assert not any("SLACK_" in e for e in errors)
     assert errors == []
+
+
+def test_validate_production_security_requires_trust_x_forwarded_for() -> None:
+    settings = Settings(
+        environment="production",
+        anthropic_api_key="sk-ant-prod-key",
+        graph_client_id="00000000-0000-0000-0000-000000000000",
+        graph_client_secret="graph-secret-prod",
+        graph_tenant_id="11111111-1111-1111-1111-111111111111",
+        target_mailboxes="user@example.com",
+        graph_webhook_client_state="x" * 32,
+        redis_url="rediss://:secret@redis.example:6380/0",
+        redis_ssl_ca_certs="/tls/ca.crt",
+        msal_cache_encryption_key="e0xmjKk-RnBXRjYz-Tsvjar3_Glouxk2n5tNImpxYLc=",
+        database_url="postgresql+asyncpg://app:secret@db.example:5432/inbox_triage",
+        enable_dev_routes=False,
+        slack_enabled=False,
+        jwt_secret="x" * 64,
+        cookie_secure=True,
+        frontend_origin="https://app.example.com",
+        api_host="app.example.com",
+        trust_x_forwarded_for=False,
+    )
+    errors = settings.validate_production_security()
+    assert any("TRUST_X_FORWARDED_FOR" in e for e in errors)
 
 
 def test_validate_production_security_passes_when_hardened() -> None:
@@ -223,5 +250,6 @@ def test_validate_production_security_passes_when_hardened() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     assert settings.validate_production_security() == []

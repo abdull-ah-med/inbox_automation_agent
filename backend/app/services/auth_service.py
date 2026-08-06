@@ -283,19 +283,20 @@ def _encode_refresh_grace(settings: Settings, payload_json: str) -> str:
 
 
 def _decode_refresh_grace(settings: Settings, raw: str) -> str | None:
-    """Decrypt grace payload; fall back to plaintext for pre-encryption entries."""
+    """Decrypt grace payload. No plaintext fallback when encryption is configured.
+
+    Pre-encryption grace entries expire within ``refresh_rotation_grace_seconds``
+    (≤60s). Accepting InvalidToken as plaintext would let a Redis writer forge
+    grace payloads during rotation.
+    """
     key = _grace_encryption_key(settings)
     if key is None:
         return raw
     try:
-        decrypted = decrypt_cache_blob(raw, key)
+        return decrypt_cache_blob(raw, key)
     except CacheEncryptionError:
         logger.exception("refresh_grace_encryption_key_invalid")
         return None
-    if decrypted is not None:
-        return decrypted
-    logger.warning("refresh_grace_plaintext_fallback")
-    return raw
 
 
 async def _store_refresh_grace(

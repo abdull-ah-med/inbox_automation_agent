@@ -105,12 +105,19 @@ async def test_regenerate_creates_new_draft() -> None:
                     has_action_items=True,
                     needs_context=False,
                     action_items_summary="Send docs",
+                    routing_category="billing",
                 )
             ),
         ),
         patch(
-            "app.services.draft_regeneration_service.skill_selection_service.select_skill_contents",
-            AsyncMock(return_value=[]),
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.skill_selection_service.select_skills",
+            AsyncMock(
+                return_value=MagicMock(blocks=[], skill_ids=[], applied=[]),
+            ),
         ),
         patch(
             "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",

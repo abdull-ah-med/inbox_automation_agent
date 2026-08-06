@@ -261,6 +261,13 @@ class Settings(BaseSettings):
             errors.append("COOKIE_SECURE must be true outside local")
         if not self.frontend_origin.strip().lower().startswith("https://"):
             errors.append("FRONTEND_ORIGIN must be an https:// URL outside local")
+        if not self.trust_x_forwarded_for:
+            errors.append(
+                "TRUST_X_FORWARDED_FOR must be true outside local when behind a "
+                "reverse proxy that sets X-Real-IP / X-Forwarded-For "
+                "(see deploy/nginx.conf.template) — otherwise login rate limits "
+                "collapse onto 127.0.0.1 and lock out all users"
+            )
         return errors
 
 

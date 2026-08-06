@@ -63,7 +63,7 @@ async def test_reconcile_creates_when_missing() -> None:
     settings = _settings()
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=1)
+    redis.eval = AsyncMock(return_value=1)
     graph_client = MagicMock()
     graph_client.list_subscriptions = AsyncMock(return_value=[])
     created = _sub()
@@ -79,9 +79,9 @@ async def test_reconcile_creates_when_missing() -> None:
     assert result is not None
     assert result.id == "sub-1"
     graph_client.create_subscription.assert_awaited_once()
-    # validation window open + subscription cache
-    assert redis.set.await_count >= 2
-    redis.delete.assert_awaited()
+    # validation window begin/end via Redis Lua + subscription cache SET
+    assert redis.eval.await_count >= 2
+    assert redis.set.await_count >= 1
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_reconcile_recreates_when_lifecycle_url_missing() -> None:
     settings = _settings()
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock(return_value=1)
+    redis.eval = AsyncMock(return_value=1)
     stale = _sub(lifecycle=None)
     created = _sub(sub_id="sub-2")
     graph_client = MagicMock()
@@ -204,6 +204,7 @@ async def test_lifecycle_subscription_removed_reconciles() -> None:
     redis.get = AsyncMock(return_value='{"subscription_id":"sub-1"}')
     redis.delete = AsyncMock(return_value=1)
     redis.set = AsyncMock(return_value=True)
+    redis.eval = AsyncMock(return_value=1)
     graph_client = MagicMock()
     graph_client.list_subscriptions = AsyncMock(return_value=[])
     graph_client.create_subscription = AsyncMock(return_value=_sub())

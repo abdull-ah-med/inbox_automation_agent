@@ -29,6 +29,27 @@ from app.models.schemas.graph import (
 
 logger = structlog.get_logger(__name__)
 
+# Refcount the validation window so concurrent create_subscription handshakes
+# cannot close each other. INCR opens / refreshes TTL; DECR closes at zero.
+# https://redis.io/docs/latest/commands/incr/
+_BEGIN_VALIDATION_WINDOW = """
+local count = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return count
+"""
+
+_END_VALIDATION_WINDOW = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+local count = redis.call('DECR', KEYS[1])
+if count <= 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+return count
+"""
+
 
 def _inbox_resource(mailbox: str) -> str:
     return f"users/{mailbox}/mailFolders('inbox')/messages"
@@ -54,21 +75,33 @@ def _subscription_matches_mailbox(sub: GraphSubscriptionSchema, mailbox: str) ->
 
 
 async def begin_webhook_validation_window(redis: Redis) -> None:
-    """Allow Graph validationToken echoes while create_subscription is in flight."""
-    await redis.set(
+    """Allow Graph validationToken echoes while create_subscription is in flight.
+
+    Uses a refcount so overlapping creates (multi-mailbox reconcile) keep the
+    window open until the last create finishes.
+    """
+    await redis.eval(
+        _BEGIN_VALIDATION_WINDOW,
+        1,
         WEBHOOK_VALIDATION_PENDING_KEY,
-        "1",
-        ex=VALIDATION_PENDING_TTL_SECONDS,
+        str(VALIDATION_PENDING_TTL_SECONDS),
     )
 
 
 async def end_webhook_validation_window(redis: Redis) -> None:
-    await redis.delete(WEBHOOK_VALIDATION_PENDING_KEY)
+    """Decrement the validation-window refcount; delete at zero."""
+    await redis.eval(_END_VALIDATION_WINDOW, 1, WEBHOOK_VALIDATION_PENDING_KEY)
 
 
 async def webhook_validation_window_open(redis: Redis) -> bool:
     raw = await redis.get(WEBHOOK_VALIDATION_PENDING_KEY)
-    return isinstance(raw, str) and bool(raw)
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        return int(raw) > 0
+    except ValueError:
+        # Legacy single-flag values (e.g. "1" from SET) still count as open.
+        return True
 
 
 def _is_expired_or_near_expiry(

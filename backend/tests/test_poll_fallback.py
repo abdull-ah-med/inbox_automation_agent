@@ -564,6 +564,14 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
             AsyncMock(return_value="owner-token"),
         ),
         patch(
+            "app.workers.poll_fallback_worker.extend_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.release_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
             "app.workers.poll_fallback_worker.get_graph_auth",
             AsyncMock(return_value=auth),
         ),

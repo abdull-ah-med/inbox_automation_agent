@@ -66,6 +66,27 @@ async def release_lock(redis: Redis, key: str, token: str) -> bool:
     return bool(deleted)
 
 
+_EXTEND_LOCK_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('expire', KEYS[1], ARGV[2])
+else
+  return 0
+end
+"""
+
+
+async def extend_lock(
+    redis: Redis,
+    key: str,
+    token: str,
+    *,
+    ttl_seconds: int,
+) -> bool:
+    """Refresh TTL only if ``token`` still owns ``key``."""
+    extended = await redis.eval(_EXTEND_LOCK_SCRIPT, 1, key, token, str(ttl_seconds))
+    return bool(extended)
+
+
 async def compare_delete(redis: Redis, key: str, expected_value: str) -> bool:
     """Delete ``key`` only when its current value equals ``expected_value``."""
     deleted = await redis.eval(_COMPARE_DELETE_SCRIPT, 1, key, expected_value)

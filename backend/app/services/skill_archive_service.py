@@ -222,14 +222,11 @@ def parse_skill_archive(
             if path in seen_paths:
                 raise SkillPackagingError(f"Duplicate archive path: {path}")
             seen_paths.add(path)
+            # Declared size is a cheap pre-check only; actual bytes are enforced
+            # after zf.read() (zip local headers are attacker-controlled).
             if info.file_size > MAX_SINGLE_FILE_BYTES:
                 raise SkillPackageTooLargeError(
                     f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
-                )
-            total_uncompressed += info.file_size
-            if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
-                raise SkillPackageTooLargeError(
-                    "Uncompressed archive exceeds 25 MB limit (zip bomb guard)"
                 )
             members.append((path, info))
 
@@ -265,6 +262,15 @@ def parse_skill_archive(
                 raise SkillPackagingError(f"Missing {skill_md_path}")
 
         skill_raw = zf.read(skill_md_info)
+        if len(skill_raw) > MAX_SINGLE_FILE_BYTES:
+            raise SkillPackageTooLargeError(
+                f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {skill_md_path}"
+            )
+        total_uncompressed += len(skill_raw)
+        if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
+            raise SkillPackageTooLargeError(
+                "Uncompressed archive exceeds 25 MB limit (zip bomb guard)"
+            )
         meta, body = _parse_skill_md(skill_raw)
         name, description, extras = _validate_frontmatter(meta, root_dir=root_dir)
 
@@ -280,6 +286,15 @@ def parse_skill_archive(
             if kind is None:
                 continue
             payload = zf.read(info)
+            if len(payload) > MAX_SINGLE_FILE_BYTES:
+                raise SkillPackageTooLargeError(
+                    f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
+                )
+            total_uncompressed += len(payload)
+            if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
+                raise SkillPackageTooLargeError(
+                    "Uncompressed archive exceeds 25 MB limit (zip bomb guard)"
+                )
             files.append(
                 {
                     "relative_path": relative,
