@@ -134,12 +134,24 @@ def test_dedup_key_prefix() -> None:
 def test_redis_key_helpers() -> None:
     from app.core.redis_keys import (
         MSAL_TOKEN_CACHE_KEY,
+        inbox_subscription_key,
+        legacy_subscription_key,
         poll_cursor_key,
+        sent_items_subscription_key,
         subscription_key,
     )
 
-    assert subscription_key("a@b.com") == "graph:sub:a@b.com"
+    assert subscription_key("a@b.com") == "graph:sub:inbox:a@b.com"
+    assert inbox_subscription_key("a@b.com") == "graph:sub:inbox:a@b.com"
+    assert sent_items_subscription_key("a@b.com") == "graph:sub:sentitems:a@b.com"
+    assert subscription_key("a@b.com", "sentitems") == "graph:sub:sentitems:a@b.com"
+    assert legacy_subscription_key("a@b.com") == "graph:sub:a@b.com"
     assert poll_cursor_key("a@b.com") == "graph:poll:last_checked:a@b.com"
+    assert poll_cursor_key("a@b.com", "inbox") == "graph:poll:last_checked:a@b.com"
+    assert (
+        poll_cursor_key("a@b.com", "sentitems")
+        == "graph:poll:last_checked:sentitems:a@b.com"
+    )
     assert MSAL_TOKEN_CACHE_KEY == "msal:token_cache"
 
 

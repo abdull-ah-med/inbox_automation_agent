@@ -1,4 +1,4 @@
-"""Draft feedback API — approve / reject / mark-wrong (never sends email)."""
+"""Draft feedback API — approve / reject / mark-wrong / urgency (never sends email)."""
 
 from __future__ import annotations
 
@@ -11,10 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
+from app.core.exceptions import DraftNotFoundError
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import DraftView
 from app.models.schemas.feedback import DraftApproveSchema, DraftRejectSchema, DraftWrongSchema
-from app.services import draft_feedback_service, thread_view_service
+from app.models.schemas.urgency_feedback import (
+    UrgencyEditRequestSchema,
+    UrgencyEditResponseSchema,
+)
+from app.repositories import draft_repo, thread_repo
+from app.services import draft_feedback_service, thread_view_service, urgency_feedback_service
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -46,6 +52,8 @@ async def approve_draft(
         session,
         draft_id,
         edited_body=body.edited_body,
+        approval_note=body.approval_note,
+        approval_scope=body.approval_scope,
         actor=user.email,
         settings=settings,
     )
@@ -98,6 +106,56 @@ async def reject_draft(
         anthropic_client=anthropic_client,
     )
     return thread_view_service.draft_response_to_view(updated)
+
+
+@router.post(
+    "/{draft_id}/urgency",
+    response_model=UrgencyEditResponseSchema,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def edit_draft_urgency(
+    draft_id: uuid.UUID,
+    body: UrgencyEditRequestSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    openai_client: OpenAIClientDep,
+    user: CurrentUser,
+) -> UrgencyEditResponseSchema:
+    """Manually edit draft urgency with a required reason. Does not send email."""
+    _ = request, response
+    existing = await draft_repo.get_draft_by_id(session, draft_id)
+    if existing is None:
+        raise DraftNotFoundError(f"Draft not found: {draft_id}")
+    previous = existing.urgency
+    thread = await thread_repo.get_by_id(session, existing.thread_id)
+    mailbox = thread.mailbox if thread is not None else "unknown"
+
+    result = await urgency_feedback_service.apply_manual_urgency_edit(
+        session,
+        draft_id,
+        body,
+        actor=user.email,
+        user_id=user.id,
+        settings=settings,
+    )
+    await session.commit()
+
+    await urgency_feedback_service.store_urgency_feedback_memory(
+        draft_id=draft_id,
+        thread_id=result.thread_id,
+        mailbox=mailbox,
+        routing_category=existing.routing_category,
+        previous_urgency=previous,
+        new_urgency=body.new_urgency,
+        reason=body.reason,
+        edited_by_user_id=user.id,
+        settings=settings,
+        openai_client=openai_client,
+    )
+    return result
 
 
 @router.post(

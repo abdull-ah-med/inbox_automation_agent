@@ -31,6 +31,7 @@ export interface ThreadSummary {
   subject: string
   state: string
   urgency: string | null
+  urgency_reason: string | null
   category: string | null
   last_message_at: string | null
   last_sender: string | null
@@ -136,6 +137,8 @@ export interface DraftView {
   feedback_action: string | null
   feedback_reason_code: string | null
   routing_category: string | null
+  approval_note: string | null
+  approval_scope: "once" | "similar" | null
   applied_skills: AppliedSkill[]
   tool_calls: DraftToolCall[] | null
 }
@@ -246,4 +249,22 @@ export interface ThreadDetail {
   draft: DraftView | null
   triage: TriageFlags | null
   audit_log: AuditEntry[]
+  sent_reply?: SentReplyView | null
+  draft_vs_sent_diff?: DraftVsSentDiff | null
+}
+
+export interface SentReplyView {
+  id: string
+  thread_id: string
+  message_id: string
+  draft_id: string | null
+  sent_body_snapshot: string
+  sent_at: string
+  matched_by: "approved_draft" | "time_window" | "manual"
+  created_at?: string | null
+}
+
+export interface DraftVsSentDiff {
+  added: string[]
+  removed: string[]
 }

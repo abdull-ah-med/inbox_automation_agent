@@ -4,6 +4,20 @@ import { useRef, useState } from "react"
 import { FileArchive, Upload } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import {
+  SkillDuplicateCandidatesError,
+  type ImportSkillOptions,
+  type SkillDuplicateCandidate,
+} from "@/lib/api-client"
 import type { ImportSkillResult } from "@/lib/types"
 
 export const MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
@@ -33,7 +47,10 @@ export const validateSkillArchiveClient = (
 type ImportSkillDropzoneProps = {
   disabled?: boolean
   isPending?: boolean
-  onImport: (file: File) => Promise<ImportSkillResult>
+  onImport: (
+    file: File,
+    options?: ImportSkillOptions,
+  ) => Promise<ImportSkillResult>
   onImported?: (result: ImportSkillResult) => void
 }
 
@@ -48,9 +65,14 @@ export const ImportSkillDropzone = ({
   const [clientError, setClientError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [result, setResult] = useState<ImportSkillResult | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [candidates, setCandidates] = useState<SkillDuplicateCandidate[]>([])
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [retryPending, setRetryPending] = useState(false)
 
   const handlePickClick = () => {
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     inputRef.current?.click()
   }
 
@@ -61,8 +83,20 @@ export const ImportSkillDropzone = ({
     }
   }
 
-  const handleFile = async (file: File | null) => {
-    if (!file || disabled || isPending) return
+  const handleImportSuccess = (imported: ImportSkillResult) => {
+    setResult(imported)
+    onImported?.(imported)
+    setDialogOpen(false)
+    setPendingFile(null)
+    setCandidates([])
+    setNewName("")
+  }
+
+  const handleFile = async (
+    file: File | null,
+    options?: ImportSkillOptions,
+  ) => {
+    if (!file || disabled || isPending || retryPending) return
     setClientError(null)
     setServerError(null)
     setResult(null)
@@ -74,10 +108,16 @@ export const ImportSkillDropzone = ({
     }
 
     try {
-      const imported = await onImport(file)
-      setResult(imported)
-      onImported?.(imported)
+      const imported = await onImport(file, options)
+      handleImportSuccess(imported)
     } catch (error) {
+      if (error instanceof SkillDuplicateCandidatesError) {
+        setPendingFile(file)
+        setCandidates(error.candidates)
+        setNewName("")
+        setDialogOpen(true)
+        return
+      }
       const message =
         error instanceof Error && error.message.trim()
           ? error.message
@@ -94,7 +134,7 @@ export const ImportSkillDropzone = ({
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     setDragging(true)
   }
 
@@ -106,12 +146,69 @@ export const ImportSkillDropzone = ({
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     setDragging(false)
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     const file = event.dataTransfer.files?.[0] ?? null
     void handleFile(file)
   }
 
-  const busy = disabled || isPending
+  const handleOverwrite = async (candidateId: string) => {
+    if (!pendingFile) return
+    setRetryPending(true)
+    setServerError(null)
+    try {
+      const imported = await onImport(pendingFile, {
+        overwrite: true,
+        overwriteSkillId: candidateId,
+      })
+      handleImportSuccess(imported)
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Import failed"
+      setServerError(message)
+    } finally {
+      setRetryPending(false)
+    }
+  }
+
+  const handleCreateAsNew = async () => {
+    if (!pendingFile) return
+    const trimmed = newName.trim()
+    if (!trimmed) {
+      setServerError("Enter a new skill name to create alongside the similar skill")
+      return
+    }
+    setRetryPending(true)
+    setServerError(null)
+    try {
+      const imported = await onImport(pendingFile, {
+        overwrite: false,
+        nameOverride: trimmed,
+      })
+      handleImportSuccess(imported)
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : "Import failed"
+      setServerError(message)
+    } finally {
+      setRetryPending(false)
+    }
+  }
+
+  const handleDialogOpenChange = (open: boolean) => {
+    if (retryPending) return
+    setDialogOpen(open)
+    if (!open) {
+      setPendingFile(null)
+      setCandidates([])
+      setNewName("")
+    }
+  }
+
+  const busy = disabled || isPending || retryPending
 
   return (
     <div className="space-y-3">
@@ -152,7 +249,7 @@ export const ImportSkillDropzone = ({
             onKeyDown={handlePickKeyDown}
           >
             <Upload aria-hidden="true" />
-            {isPending ? "Importing…" : "Choose file"}
+            {isPending || retryPending ? "Importing…" : "Choose file"}
           </Button>
           <input
             ref={inputRef}
@@ -224,6 +321,93 @@ export const ImportSkillDropzone = ({
           ) : null}
         </div>
       ) : null}
+
+      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
+        <DialogContent size="lg" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>Similar skill found</DialogTitle>
+            <DialogDescription>
+              This archive looks similar to an existing skill. Overwrite one of
+              the matches, or create it as a new skill with a different name.
+            </DialogDescription>
+          </DialogHeader>
+
+          <ul className="space-y-3">
+            {candidates.map((candidate) => (
+              <li
+                key={candidate.id}
+                className="flex flex-col gap-2 border-b border-border pb-3 last:border-b-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div>
+                  <p className="text-sm font-medium text-foreground">
+                    {candidate.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {Math.round(candidate.similarity * 100)}% similar
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  tabIndex={0}
+                  aria-label={`Overwrite skill ${candidate.name}`}
+                  disabled={retryPending}
+                  onClick={() => {
+                    void handleOverwrite(candidate.id)
+                  }}
+                >
+                  Overwrite
+                </Button>
+              </li>
+            ))}
+          </ul>
+
+          <div className="space-y-2">
+            <label
+              htmlFor="skill-name-override"
+              className="text-sm font-medium text-foreground"
+            >
+              Create as new skill
+            </label>
+            <Input
+              id="skill-name-override"
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              placeholder="new-skill-name"
+              aria-label="New skill name"
+              disabled={retryPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              Lowercase letters, numbers, and hyphens only (max 64 characters).
+            </p>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              tabIndex={0}
+              aria-label="Cancel duplicate skill prompt"
+              disabled={retryPending}
+              onClick={() => handleDialogOpenChange(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              tabIndex={0}
+              aria-label="Create skill with new name"
+              disabled={retryPending || !newName.trim()}
+              onClick={() => {
+                void handleCreateAsNew()
+              }}
+            >
+              Create as new
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -34,6 +34,12 @@ class Draft(Base):
     feedback_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     feedback_reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     routing_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    approval_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    approval_note_persisted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     suggested_actions: Mapped[list[Any] | None] = mapped_column(
         JSONB,
         nullable=True,

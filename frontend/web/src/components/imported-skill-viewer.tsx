@@ -150,7 +150,7 @@ export const ImportedSkillViewer = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{skill.name}</DialogTitle>
           <DialogDescription>

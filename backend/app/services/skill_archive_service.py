@@ -16,6 +16,7 @@ import hashlib
 import io
 import mimetypes
 import re
+import uuid
 import zipfile
 from typing import Any
 
@@ -26,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import (
-    SkillAlreadyImportedError,
+    SkillDuplicateCandidatesError,
     SkillNameConflictError,
     SkillPackageTooLargeError,
     SkillPackagingError,
@@ -34,7 +35,8 @@ from app.core.exceptions import (
 )
 from app.models.schemas.skill import ImportSkillResultSchema
 from app.repositories import skill_repo
-from app.services import skill_embedding_service
+from app.repositories.skill_repo import SkillSimilarityHit
+from app.services import embedding_service, skill_embedding_service
 
 logger = structlog.get_logger(__name__)
 
@@ -131,6 +133,22 @@ def _parse_skill_md(raw: bytes) -> tuple[dict[str, Any], str]:
     return meta, body
 
 
+def _validate_skill_name(name: str) -> str:
+    """Validate Anthropic skill name rules (without root-folder matching)."""
+    cleaned = name.strip()
+    if not cleaned:
+        raise SkillPackagingError("Skill name must be non-empty")
+    if not _NAME_RE.fullmatch(cleaned):
+        raise SkillPackagingError(
+            "Skill name must be lowercase letters, numbers, and hyphens only (max 64 chars)"
+        )
+    if cleaned in _RESERVED_NAMES:
+        raise SkillPackagingError(f"Skill name '{cleaned}' is reserved")
+    if _XML_TAG_RE.search(cleaned):
+        raise SkillPackagingError("Skill name/description cannot contain XML tags")
+    return cleaned
+
+
 def _validate_frontmatter(
     meta: dict[str, Any],
     *,
@@ -140,13 +158,7 @@ def _validate_frontmatter(
     description = meta.get("description")
     if not isinstance(name, str) or not name.strip():
         raise SkillPackagingError("SKILL.md frontmatter requires a non-empty name")
-    name = name.strip()
-    if not _NAME_RE.fullmatch(name):
-        raise SkillPackagingError(
-            "Skill name must be lowercase letters, numbers, and hyphens only (max 64 chars)"
-        )
-    if name in _RESERVED_NAMES:
-        raise SkillPackagingError(f"Skill name '{name}' is reserved")
+    name = _validate_skill_name(name)
     if name != root_dir:
         raise SkillPackagingError(
             f"Archive root folder '{root_dir}' must match skill name '{name}'"
@@ -157,7 +169,7 @@ def _validate_frontmatter(
     description = description.strip()
     if len(description) > 1024:
         raise SkillPackagingError("Skill description must be at most 1024 characters")
-    if _XML_TAG_RE.search(description) or _XML_TAG_RE.search(name):
+    if _XML_TAG_RE.search(description):
         raise SkillPackagingError("Skill name/description cannot contain XML tags")
 
     extras = {k: v for k, v in meta.items() if k not in {"name", "description"}}
@@ -241,9 +253,7 @@ def parse_skill_archive(
                 "(my-skill/SKILL.md), not files directly in the ZIP root"
             )
         if len(top_levels) != 1:
-            raise SkillPackagingError(
-                "Archive must contain exactly one root skill folder"
-            )
+            raise SkillPackagingError("Archive must contain exactly one root skill folder")
         root_dir = next(iter(top_levels))
 
         skill_md_path = f"{root_dir}/SKILL.md"
@@ -251,11 +261,7 @@ def parse_skill_archive(
         if skill_md_info is None:
             # Case-insensitive fallback for Skill.md
             skill_md_info = next(
-                (
-                    info
-                    for path, info in members
-                    if path.lower() == skill_md_path.lower()
-                ),
+                (info for path, info in members if path.lower() == skill_md_path.lower()),
                 None,
             )
             if skill_md_info is None:
@@ -307,6 +313,41 @@ def parse_skill_archive(
         return name, description, body, extras, files, warnings
 
 
+async def _find_duplicate_candidates(
+    session: AsyncSession,
+    *,
+    name: str,
+    description: str,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+) -> list[SkillSimilarityHit]:
+    """Embed name+description and return similar active skills (excludes exact name)."""
+    if openai_client is None or not settings.openai_api_key.strip():
+        return []
+    # Same source builder as post-import indexing, without body (pre-import only).
+    text = skill_embedding_service.build_embedding_source(
+        name=name,
+        description=description,
+    )
+    try:
+        vector = await embedding_service.embed_text(
+            text,
+            client=openai_client,
+            settings=settings,
+        )
+    except Exception:
+        logger.exception("skill_import_embed_failed", name=name)
+        return []
+
+    hits = await skill_repo.find_similar(
+        session,
+        embedding=vector,
+        threshold=settings.skill_similarity_threshold,
+        limit=3,
+    )
+    return [hit for hit in hits if hit.name != name]
+
+
 async def import_skill_archive(
     session: AsyncSession,
     *,
@@ -315,22 +356,36 @@ async def import_skill_archive(
     settings: Settings,
     openai_client: AsyncOpenAI | None,
     overwrite: bool = False,
+    overwrite_skill_id: uuid.UUID | None = None,
+    name_override: str | None = None,
     category: str | None = "billing",
     always_apply: bool = False,
 ) -> ImportSkillResultSchema:
     """Validate, persist, and embed an imported Claude skill archive."""
     digest = hashlib.sha256(archive_bytes).hexdigest()
     existing_hash = await skill_repo.get_by_import_hash(session, digest)
-    if existing_hash is not None and not overwrite:
-        raise SkillAlreadyImportedError(
-            f"Skill archive already imported as '{existing_hash.name}'",
-            skill_id=existing_hash.id,
+    has_name_override = bool(name_override and name_override.strip())
+    # Exact same zip → same overwrite/create-new dialog as semantic matches.
+    # Allow through when overwrite=true or creating under a new name.
+    if existing_hash is not None and not overwrite and not has_name_override:
+        raise SkillDuplicateCandidatesError(
+            candidates=[
+                {
+                    "id": existing_hash.id,
+                    "name": existing_hash.name,
+                    "similarity": 1.0,
+                }
+            ],
         )
 
     name, description, body, extras, files, warnings = parse_skill_archive(
         archive_bytes,
         original_filename=original_filename,
     )
+    effective_name_override: str | None = None
+    if has_name_override:
+        effective_name_override = _validate_skill_name(name_override or "")
+        name = effective_name_override
 
     # Imported skills without a category become general unless always_apply.
     resolved_category = category
@@ -338,6 +393,47 @@ async def import_skill_archive(
         resolved_category = None
     elif resolved_category is None:
         resolved_category = "general"
+
+    existing_by_name = await skill_repo.get_by_name(session, name)
+    if existing_by_name is not None and not overwrite and overwrite_skill_id is None:
+        raise SkillDuplicateCandidatesError(
+            candidates=[
+                {
+                    "id": existing_by_name.id,
+                    "name": existing_by_name.name,
+                    "similarity": 1.0,
+                }
+            ],
+        )
+
+    # Skip the duplicate prompt when forcing a new name or explicitly overwriting,
+    # but still compute similar hits so overwrite-without-id can target the top match.
+    similar: list[SkillSimilarityHit] = []
+    if effective_name_override is None:
+        similar = await _find_duplicate_candidates(
+            session,
+            name=name,
+            description=description,
+            settings=settings,
+            openai_client=openai_client,
+        )
+        if similar and not overwrite and overwrite_skill_id is None:
+            raise SkillDuplicateCandidatesError(
+                candidates=[
+                    {
+                        "id": hit.id,
+                        "name": hit.name,
+                        "similarity": hit.similarity,
+                    }
+                    for hit in similar
+                ],
+            )
+
+    target_skill_id = overwrite_skill_id
+    if overwrite and target_skill_id is None and similar:
+        target_skill_id = similar[0].id
+    if overwrite and target_skill_id is None and existing_hash is not None:
+        target_skill_id = existing_hash.id
 
     try:
         skill, overwritten = await skill_repo.upsert_imported(
@@ -350,7 +446,8 @@ async def import_skill_archive(
             imported_zip_sha256=digest,
             raw_frontmatter=extras or None,
             files=files,
-            overwrite=overwrite or (existing_hash is not None),
+            overwrite=overwrite or target_skill_id is not None,
+            target_skill_id=target_skill_id,
         )
     except SkillNameConflictError:
         raise

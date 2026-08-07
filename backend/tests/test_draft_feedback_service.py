@@ -526,3 +526,191 @@ async def test_approve_reply_memory_failure_does_not_raise() -> None:
             settings=settings,
             openai_client=AsyncMock(),
         )
+
+
+@pytest.mark.asyncio
+async def test_approve_with_learning_context_audits_scope_without_note_text() -> None:
+    draft_id = uuid.uuid4()
+    existing = _draft(id=draft_id)
+    approved = _draft(
+        id=draft_id,
+        thread_id=existing.thread_id,
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        edited_body="Edited hello",
+        approval_note="Soften tone",
+        approval_scope="similar",
+    )
+    session = AsyncMock()
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.draft_repo.get_draft_by_id",
+            AsyncMock(return_value=existing),
+        ),
+        patch(
+            "app.services.draft_feedback_service.draft_repo.approve_draft",
+            AsyncMock(return_value=approved),
+        ) as approve_mock,
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {"conversation_id": "c1", "mailbox": "elise@example.com"},
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.audit_service.log_event",
+            AsyncMock(),
+        ) as audit_mock,
+    ):
+        result = await draft_feedback_service.approve_draft(
+            session,
+            draft_id,
+            edited_body="Edited hello",
+            approval_note="Soften tone",
+            approval_scope="similar",
+            actor="elise@example.com",
+        )
+
+    assert result.approval_scope == "similar"
+    approve_mock.assert_awaited_once()
+    assert approve_mock.await_args.kwargs["approval_note"] == "Soften tone"
+    assert approve_mock.await_args.kwargs["approval_scope"] == "similar"
+    assert audit_mock.await_count == 2
+    learning_call = audit_mock.await_args_list[1]
+    assert learning_call.kwargs["event_type"] == "draft.approved.learning_context"
+    assert learning_call.kwargs["payload"] == {
+        "draft_id": str(draft_id),
+        "scope": "similar",
+        "has_note": True,
+    }
+    assert "Soften tone" not in str(learning_call.kwargs["payload"])
+
+
+@pytest.mark.asyncio
+async def test_store_approved_reply_memory_skips_when_scope_once() -> None:
+    from app.core.config import Settings
+
+    draft = _draft(
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        reply_body="Approved body",
+        approval_note="One-off",
+        approval_scope="once",
+    )
+    session = AsyncMock()
+    session.in_transaction = lambda: False
+    settings = Settings(
+        target_mailboxes="elise@example.com",
+        openai_api_key="sk-test",
+        jwt_secret="c" * 64,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {"conversation_id": "c1", "mailbox": "elise@example.com", "subject": "Subj"},
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.reply_memory_service.store_approved_reply",
+            AsyncMock(),
+        ) as store_mock,
+        patch(
+            "app.services.draft_feedback_service.tone_profile_service.maybe_rebuild",
+            AsyncMock(),
+        ),
+    ):
+        await draft_feedback_service.store_approved_reply_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=AsyncMock(),
+        )
+
+    store_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_store_approved_reply_memory_passes_learning_note_for_similar() -> None:
+    from app.core.config import Settings
+
+    draft = _draft(
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        reply_body="Approved body",
+        edited_body="Edited body",
+        approval_note="Lead with invoice",
+        approval_scope="similar",
+    )
+    session = AsyncMock()
+    session.in_transaction = lambda: False
+    settings = Settings(
+        target_mailboxes="elise@example.com",
+        openai_api_key="sk-test",
+        jwt_secret="c" * 64,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {"conversation_id": "c1", "mailbox": "elise@example.com", "subject": "Subj"},
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.reply_memory_service.store_approved_reply",
+            AsyncMock(),
+        ) as store_mock,
+        patch(
+            "app.services.draft_feedback_service.tone_profile_service.maybe_rebuild",
+            AsyncMock(),
+        ),
+    ):
+        await draft_feedback_service.store_approved_reply_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=AsyncMock(),
+        )
+
+    store_mock.assert_awaited_once()
+    assert store_mock.await_args.kwargs["learning_note"] == "Lead with invoice"
+    assert store_mock.await_args.kwargs["final_body"] == "Edited body"

@@ -41,11 +41,42 @@ def triage_lock_key(mailbox: str, message_id: str) -> str:
     return f"triage:lock:{mailbox}:{message_id}"
 
 
-def subscription_key(mailbox: str) -> str:
+def inbox_subscription_key(mailbox: str) -> str:
+    return f"graph:sub:inbox:{mailbox}"
+
+
+def sent_items_subscription_key(mailbox: str) -> str:
+    return f"graph:sub:sentitems:{mailbox}"
+
+
+def subscription_key(mailbox: str, folder: str = "inbox") -> str:
+    """Redis key for a mailbox folder subscription.
+
+    ``folder="inbox"`` uses the new inbox key. Legacy callers that omit
+    ``folder`` still resolve to inbox. The pre-folder key ``graph:sub:{mailbox}``
+    is read as a one-shot fallback in ``subscription_service``.
+    """
+    normalized = folder.strip().lower().replace(" ", "")
+    if normalized == "sentitems":
+        return sent_items_subscription_key(mailbox)
+    return inbox_subscription_key(mailbox)
+
+
+def legacy_subscription_key(mailbox: str) -> str:
+    """Pre-folder Redis key used only for one-shot migration reads."""
     return f"graph:sub:{mailbox}"
 
 
-def poll_cursor_key(mailbox: str) -> str:
+def poll_cursor_key(mailbox: str, folder: str = "inbox") -> str:
+    """Watermark for the interval poller.
+
+    Inbound folders (inbox / junkemail) share ``graph:poll:last_checked:{mailbox}``.
+    Sent Items uses a separate key so outbound catch-up cannot move the inbound
+    watermark (and vice versa).
+    """
+    normalized = folder.strip().lower().replace(" ", "")
+    if normalized == "sentitems":
+        return f"graph:poll:last_checked:sentitems:{mailbox}"
     return f"graph:poll:last_checked:{mailbox}"
 
 

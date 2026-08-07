@@ -7,12 +7,14 @@ from app.models.db.message import Message
 from app.models.db.refresh_token import RefreshToken
 from app.models.db.rejection_memory import RejectionMemory
 from app.models.db.reply_embedding import ReplyEmbedding
+from app.models.db.sent_reply import SentReply
 from app.models.db.skill import Skill
 from app.models.db.skill_candidate import SkillCandidate
 from app.models.db.skill_file import SkillFile
 from app.models.db.thread import Thread
 from app.models.db.thread_link import ThreadLink
 from app.models.db.tone_profile import ToneProfile
+from app.models.db.urgency_feedback import UrgencyFeedback
 from app.models.db.user import User
 
 __all__ = [
@@ -25,11 +27,13 @@ __all__ = [
     "RefreshToken",
     "RejectionMemory",
     "ReplyEmbedding",
+    "SentReply",
     "Skill",
     "SkillCandidate",
     "SkillFile",
     "Thread",
     "ThreadLink",
     "ToneProfile",
+    "UrgencyFeedback",
     "User",
 ]

@@ -256,6 +256,8 @@ async def test_lifecycle_missed_triggers_poll() -> None:
 
     poll_fn.assert_awaited_once()
     assert poll_fn.await_args.kwargs["lookback_override"] is not None
+    assert poll_fn.await_args.kwargs.get("outbound_only") in (None, False)
+    assert poll_fn.await_args.kwargs.get("folders") is None
 
 
 @pytest.mark.asyncio

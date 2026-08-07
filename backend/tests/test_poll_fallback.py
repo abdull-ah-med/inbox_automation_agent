@@ -531,6 +531,107 @@ async def test_poll_mailbox_in_flight_does_not_advance_cursor() -> None:
 
 
 @pytest.mark.asyncio
+async def test_poll_mailbox_outbound_only_uses_sentitems_cursor() -> None:
+    """Sent Items polls write a separate Redis watermark and skip triage."""
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)
+    redis.set = AsyncMock(return_value=True)
+    msg = GraphMessageSchema.model_validate(
+        {
+            "id": "sent-1",
+            "subject": "Re: Hello",
+            "receivedDateTime": "2026-07-09T12:00:00Z",
+            "conversationId": "conv-1",
+        }
+    )
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(return_value=[msg])
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.handle_outbound_notification",
+            AsyncMock(
+                return_value=IngestResultSchema(message_id="sent-1", status="outbound")
+            ),
+        ) as outbound,
+        patch(
+            "app.workers.poll_fallback_worker.ingestion_service.ingest_graph_message",
+            new_callable=AsyncMock,
+        ) as ingest,
+        patch(
+            "app.workers.poll_fallback_worker.pipeline_service.run_post_ingest_triage",
+            new_callable=AsyncMock,
+        ) as triage,
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+            folders=("sentitems",),
+            outbound_only=True,
+        )
+
+    folders = [c.kwargs["folder"] for c in graph_client.list_messages.await_args_list]
+    assert folders == ["sentitems"]
+    outbound.assert_awaited_once()
+    ingest.assert_not_awaited()
+    triage.assert_not_awaited()
+    assert redis.set.await_args.args[0] == poll_cursor_key("user@example.com", "sentitems")
+    assert redis.set.await_args.args[1] == "2026-07-09T12:00:01Z"
+
+
+@pytest.mark.asyncio
+async def test_poll_mailbox_outbound_reads_sentitems_cursor() -> None:
+    redis = AsyncMock()
+
+    async def _get(key: str) -> str | None:
+        if key == poll_cursor_key("user@example.com", "sentitems"):
+            return "2026-07-09T10:00:00Z"
+        return None
+
+    redis.get = AsyncMock(side_effect=_get)
+    redis.set = AsyncMock(return_value=True)
+    graph_client = MagicMock()
+    graph_client.list_messages = AsyncMock(return_value=[])
+
+    class _CM:
+        async def __aenter__(self) -> MagicMock:
+            return MagicMock()
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with patch(
+        "app.workers.poll_fallback_worker.get_session_factory",
+        return_value=lambda: _CM(),
+    ):
+        await poll_mailbox(
+            "user@example.com",
+            redis=redis,
+            graph_client=graph_client,
+            folders=("sentitems",),
+            outbound_only=True,
+        )
+
+    redis.get.assert_awaited_with(poll_cursor_key("user@example.com", "sentitems"))
+    assert graph_client.list_messages.await_args.kwargs["filter_query"] == (
+        "receivedDateTime ge 2026-07-09T10:00:00Z"
+    )
+    assert redis.set.await_args.args[0] == poll_cursor_key("user@example.com", "sentitems")
+
+
+@pytest.mark.asyncio
 async def test_run_poll_all_mailboxes_skips_empty() -> None:
     with patch(
         "app.workers.poll_fallback_worker.get_settings",
@@ -586,9 +687,77 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
     ):
         await run_poll_all_mailboxes()
 
-    assert poll.await_count == 2
+    # Each mailbox: inbound poll + Sent Items outbound poll.
+    assert poll.await_count == 4
     mailboxes = {call.kwargs.get("mailbox") or call.args[0] for call in poll.await_args_list}
     assert mailboxes == {"a@example.com", "b@example.com"}
+    outbound_calls = [
+        call
+        for call in poll.await_args_list
+        if call.kwargs.get("outbound_only") is True
+    ]
+    assert len(outbound_calls) == 2
+    for call in outbound_calls:
+        assert call.kwargs["folders"] == ("sentitems",)
+
+
+@pytest.mark.asyncio
+async def test_run_poll_all_mailboxes_outbound_runs_after_inbound_failure() -> None:
+    """Inbound exception must not skip the Sent Items poll for that mailbox."""
+    settings = MagicMock(
+        mailbox_list=["a@example.com"],
+        poll_concurrency=3,
+        poll_interval_seconds=300,
+    )
+    redis = AsyncMock()
+    auth = MagicMock()
+    graph_client = MagicMock()
+    calls: list[bool] = []
+
+    async def _poll(*_args: object, **kwargs: object) -> None:
+        outbound = bool(kwargs.get("outbound_only"))
+        calls.append(outbound)
+        if not outbound:
+            raise RuntimeError("inbound boom")
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_settings",
+            return_value=settings,
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_redis",
+            AsyncMock(return_value=redis),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.acquire_lock",
+            AsyncMock(return_value="owner-token"),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.extend_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.release_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_graph_auth",
+            AsyncMock(return_value=auth),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_graph_client",
+            return_value=graph_client,
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.poll_mailbox",
+            new_callable=AsyncMock,
+            side_effect=_poll,
+        ),
+    ):
+        await run_poll_all_mailboxes()
+
+    assert calls == [False, True]
 
 
 @pytest.mark.asyncio

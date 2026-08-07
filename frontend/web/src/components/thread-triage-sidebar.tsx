@@ -6,6 +6,7 @@ import { Check, X } from "lucide-react"
 
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
+import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -15,10 +16,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Select } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api-client"
 import { formatEventName, formatRelativeTime } from "@/lib/design-tokens"
 import {
   REJECT_REASON_CODES,
+  REJECT_REASON_LABELS,
   type RejectReasonCode,
 } from "@/lib/routing"
 import type {
@@ -28,16 +32,6 @@ import type {
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
-
-const REJECT_REASON_LABELS: Record<RejectReasonCode, string> = {
-  tone: "Tone off",
-  factual: "Factual error",
-  wrong_action: "Wrong action / no reply needed",
-  incomplete: "Incomplete",
-  policy: "Policy conflict",
-  recipients: "Wrong recipients",
-  other: "Other",
-}
 
 const Panel = ({
   title,
@@ -109,6 +103,8 @@ export const ThreadTriageSidebar = ({
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [approveBody, setApproveBody] = useState("")
+  const [approvalNote, setApprovalNote] = useState("")
+  const [approvalScope, setApprovalScope] = useState<"once" | "similar" | "">("")
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
@@ -120,7 +116,11 @@ export const ThreadTriageSidebar = ({
   const draftId = draft?.id
 
   const approveMutation = useMutation({
-    mutationFn: (body?: { edited_body?: string }) => {
+    mutationFn: (body?: {
+      edited_body?: string
+      approval_note?: string
+      approval_scope?: "once" | "similar"
+    }) => {
       if (!draftId) {
         throw new Error("No draft available to approve")
       }
@@ -128,6 +128,8 @@ export const ThreadTriageSidebar = ({
     },
     onSuccess: async () => {
       setApproveOpen(false)
+      setApprovalNote("")
+      setApprovalScope("")
       setActionError(null)
       await invalidateThread()
     },
@@ -177,6 +179,8 @@ export const ThreadTriageSidebar = ({
 
   const handleOpenApprove = () => {
     setApproveBody(draft?.body ?? "")
+    setApprovalNote("")
+    setApprovalScope("")
     setApproveOpen(true)
   }
 
@@ -198,11 +202,26 @@ export const ThreadTriageSidebar = ({
     if (!draft) return
     const trimmed = approveBody.trim()
     if (!trimmed) return
-    if (trimmed === draft.body.trim()) {
+    const note = approvalNote.trim()
+    if (note && !approvalScope) return
+
+    const payload: {
+      edited_body?: string
+      approval_note?: string
+      approval_scope?: "once" | "similar"
+    } = {}
+    if (trimmed !== draft.body.trim()) {
+      payload.edited_body = trimmed
+    }
+    if (note && approvalScope) {
+      payload.approval_note = note
+      payload.approval_scope = approvalScope
+    }
+    if (Object.keys(payload).length === 0) {
       approveMutation.mutate(undefined)
       return
     }
-    approveMutation.mutate({ edited_body: trimmed })
+    approveMutation.mutate(payload)
   }
 
   const handleReject = () => {
@@ -253,7 +272,17 @@ export const ThreadTriageSidebar = ({
               value={
                 urgency ? (
                   <div className="space-y-1">
-                    <StatusBadge label={urgency} tone={urgencyTone(urgency)} />
+                    <div className="flex items-center">
+                      <StatusBadge label={urgency} tone={urgencyTone(urgency)} />
+                      {draftId && !feedbackDone ? (
+                        <UrgencyEditPopover
+                          draftId={draftId}
+                          threadId={threadId}
+                          currentUrgency={urgency}
+                          disabled={busy}
+                        />
+                      ) : null}
+                    </div>
                     {urgencyReason ? (
                       <p className="text-xs text-gray-500">{urgencyReason}</p>
                     ) : null}
@@ -384,6 +413,21 @@ export const ThreadTriageSidebar = ({
             {draft.feedback_note ? (
               <Field label="Feedback note" value={draft.feedback_note} />
             ) : null}
+            {draft.approval_note ? (
+              <div className="space-y-1">
+                <Field label="Learning context" value={draft.approval_note} />
+                {draft.approval_scope ? (
+                  <StatusBadge
+                    label={
+                      draft.approval_scope === "similar"
+                        ? "Applies to similar emails"
+                        : "This thread only"
+                    }
+                    tone="blue"
+                  />
+                ) : null}
+              </div>
+            ) : null}
 
             <div>
               <p className="text-xs text-gray-400">Skills used</p>
@@ -503,7 +547,7 @@ export const ThreadTriageSidebar = ({
       </Panel>
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>Approve draft</DialogTitle>
             <DialogDescription>
@@ -511,15 +555,75 @@ export const ThreadTriageSidebar = ({
               sent from this app.
             </DialogDescription>
           </DialogHeader>
-          <textarea
-            value={approveBody}
-            onChange={(event) => setApproveBody(event.target.value)}
-            aria-label="Draft body to approve"
-            name="approve_body"
-            autoComplete="off"
-            rows={10}
-            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
-          />
+          <div className="space-y-4">
+            <div>
+              <p className="mb-1 text-xs text-gray-500">Draft body</p>
+              <Textarea
+                value={approveBody}
+                onChange={(event) => setApproveBody(event.target.value)}
+                aria-label="Draft body to approve"
+                name="approve_body"
+                autoComplete="off"
+                rows={14}
+                className="min-h-[16rem]"
+              />
+            </div>
+            <div className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+              <div>
+                <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Learning note
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  Optional. Add guidance only if you want to teach the system —
+                  for example after an edit, or a rule that should apply to
+                  similar emails later.
+                </p>
+              </div>
+              <Textarea
+                value={approvalNote}
+                onChange={(event) => setApprovalNote(event.target.value)}
+                aria-label="Approval learning note"
+                name="approval_note"
+                autoComplete="off"
+                rows={3}
+                placeholder="e.g. Soften tone and lead with the invoice number…"
+              />
+              <fieldset className="space-y-2">
+                <legend className="text-xs text-gray-500">
+                  If you add a note, where should it apply?
+                </legend>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={approvalScope === "once" ? "default" : "outline"}
+                    tabIndex={0}
+                    aria-label="Apply learning to this thread only"
+                    aria-pressed={approvalScope === "once"}
+                    onClick={() => setApprovalScope("once")}
+                  >
+                    Just this thread
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={approvalScope === "similar" ? "default" : "outline"}
+                    tabIndex={0}
+                    aria-label="Apply learning to similar emails"
+                    aria-pressed={approvalScope === "similar"}
+                    onClick={() => setApprovalScope("similar")}
+                  >
+                    Similar emails in the future
+                  </Button>
+                </div>
+                {approvalNote.trim() && !approvalScope ? (
+                  <p className="text-xs text-amber-600 dark:text-amber-400" role="status">
+                    Choose a scope when providing a learning note.
+                  </p>
+                ) : null}
+              </fieldset>
+            </div>
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -534,7 +638,11 @@ export const ThreadTriageSidebar = ({
               type="button"
               tabIndex={0}
               aria-label="Confirm approve draft"
-              disabled={!approveBody.trim() || busy}
+              disabled={
+                !approveBody.trim() ||
+                busy ||
+                (Boolean(approvalNote.trim()) && !approvalScope)
+              }
               onClick={handleConfirmApprove}
             >
               {approveMutation.isPending ? "Approving…" : "Approve"}
@@ -544,7 +652,7 @@ export const ThreadTriageSidebar = ({
       </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
-        <DialogContent>
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>Reject draft</DialogTitle>
             <DialogDescription>
@@ -556,7 +664,7 @@ export const ThreadTriageSidebar = ({
               <label className="text-xs text-gray-500" htmlFor="reject-reason">
                 Why is this wrong?
               </label>
-              <select
+              <Select
                 id="reject-reason"
                 name="reject_reason"
                 value={rejectReason}
@@ -565,7 +673,7 @@ export const ThreadTriageSidebar = ({
                 }
                 aria-label="Rejection reason"
                 autoComplete="off"
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
+                className="mt-1"
               >
                 <option value="">Select a reason</option>
                 {REJECT_REASON_CODES.map((code) => (
@@ -573,22 +681,21 @@ export const ThreadTriageSidebar = ({
                     {REJECT_REASON_LABELS[code]}
                   </option>
                 ))}
-              </select>
+              </Select>
               <p className="mt-1 text-xs text-gray-500">
                 &ldquo;Wrong action / no reply needed&rdquo; just flags this thread as
                 not requiring a reply. Any other reason will teach the system what
                 to change next time.
               </p>
             </div>
-            <textarea
+            <Textarea
               value={rejectNote}
               onChange={(event) => setRejectNote(event.target.value)}
               aria-label="Rejection note"
               name="reject_note"
               autoComplete="off"
-              rows={4}
+              rows={6}
               placeholder="Why is this draft wrong…"
-              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
             />
           </div>
           <DialogFooter>

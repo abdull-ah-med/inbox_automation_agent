@@ -22,6 +22,7 @@ class ReplyEmbeddingSchema(BaseModel):
     mailbox: str
     reply_text: str
     original_email_preview: str | None = None
+    learning_note: str | None = None
     is_excluded: bool = False
     created_at: datetime | None = None
 
@@ -34,6 +35,7 @@ async def store_reply_embedding(
     embedding: list[float],
     reply_text: str,
     email_preview: str | None = None,
+    learning_note: str | None = None,
 ) -> ReplyEmbeddingSchema:
     """Insert reply embedding; idempotent on ``draft_id``."""
     existing_stmt = select(ReplyEmbedding).where(ReplyEmbedding.draft_id == draft_id)
@@ -49,6 +51,7 @@ async def store_reply_embedding(
             embedding=embedding,
             reply_text=reply_text,
             original_email_preview=email_preview,
+            learning_note=learning_note,
         )
         .on_conflict_do_nothing(index_elements=["draft_id"])
         .returning(ReplyEmbedding)

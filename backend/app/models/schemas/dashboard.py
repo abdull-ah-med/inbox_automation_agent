@@ -45,6 +45,7 @@ class ThreadSummary(BaseModel):
     subject: str
     state: str
     urgency: str | None = None
+    urgency_reason: str | None = None
     category: str | None = None
     last_message_at: datetime | None = None
     last_sender: str | None = None
@@ -145,8 +146,26 @@ class DraftView(BaseModel):
     feedback_action: str | None = None
     feedback_reason_code: str | None = None
     routing_category: str | None = None
+    approval_note: str | None = None
+    approval_scope: str | None = None
     applied_skills: list[AppliedSkillView] = Field(default_factory=list)
     tool_calls: list[DraftToolCallView] | None = None
+
+
+class SentReplyView(BaseModel):
+    id: uuid.UUID
+    thread_id: uuid.UUID
+    message_id: uuid.UUID
+    draft_id: uuid.UUID | None = None
+    sent_body_snapshot: str
+    sent_at: datetime
+    matched_by: Literal["approved_draft", "time_window", "manual"]
+    created_at: datetime | None = None
+
+
+class DraftVsSentDiff(BaseModel):
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
 
 
 class ThreadDetail(BaseModel):
@@ -156,3 +175,5 @@ class ThreadDetail(BaseModel):
     draft: DraftView | None = None
     triage: TriageFlags | None = None
     audit_log: list[AuditEntry] = Field(default_factory=list)
+    sent_reply: SentReplyView | None = None
+    draft_vs_sent_diff: DraftVsSentDiff | None = None

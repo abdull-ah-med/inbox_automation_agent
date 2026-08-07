@@ -6,6 +6,7 @@ import { useParams } from "next/navigation"
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
 import { PageTransition } from "@/components/motion"
+import { SentReplyPanel } from "@/components/sent-reply-panel"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
@@ -59,11 +60,14 @@ export default function ThreadDetailPage() {
     )
   }
 
-  const { thread, classification, draft, triage, messages, audit_log } = data
+  const { thread, classification, draft, triage, messages, audit_log, sent_reply, draft_vs_sent_diff } =
+    data
   const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
   const urgency = classification?.urgency || draft?.urgency || thread.urgency
   const subject = thread.subject || "(no subject)"
+  const showSentReply =
+    thread.state === "RESOLVED" && sent_reply != null
 
   return (
     <PageTransition>
@@ -135,6 +139,13 @@ export default function ThreadDetailPage() {
           />
         </aside>
         <div className="lg:col-span-3">
+          {showSentReply && sent_reply ? (
+            <SentReplyPanel
+              sentReply={sent_reply}
+              draft={draft}
+              diff={draft_vs_sent_diff}
+            />
+          ) : null}
           <ThreadEmailPanel
             subject={thread.subject}
             messages={messages}

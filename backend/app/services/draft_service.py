@@ -20,6 +20,7 @@ from app.services import (
     rejection_memory_service,
     skill_selection_service,
     tone_profile_service,
+    urgency_feedback_service,
 )
 
 logger = structlog.get_logger(__name__)
@@ -127,6 +128,16 @@ async def run_draft(
             limit=3,
         )
 
+    urgency_hints = await urgency_feedback_service.find_urgency_hints(
+        session,
+        openai_client=openai_client,
+        settings=settings,
+        email_text=email_text,
+        mailbox=email.mailbox,
+        routing_category=category,
+        limit=3,
+    )
+
     reference_loader = None
     if skill_ids:
         from app.services.skill_reference_service import make_reference_loader
@@ -145,6 +156,7 @@ async def run_draft(
             tone_profile=resolved_profile,
             skills=skill_contents,
             negative_constraints=resolved_constraints,
+            urgency_hints=urgency_hints,
             reference_loader=reference_loader,
         )
     except DraftGenerationError as exc:

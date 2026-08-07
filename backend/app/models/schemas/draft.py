@@ -55,5 +55,7 @@ class DraftResponseSchema(DraftSchema):
     feedback_action: str | None = None
     feedback_reason_code: str | None = None
     routing_category: str | None = None
+    approval_note: str | None = None
+    approval_scope: str | None = None
     applied_skills: list[AppliedSkillSchema] = Field(default_factory=list)
     tool_calls: list[DraftToolCallSchema] | None = None

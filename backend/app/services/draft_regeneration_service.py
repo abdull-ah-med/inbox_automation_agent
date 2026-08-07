@@ -31,6 +31,7 @@ from app.services import (
     rejection_memory_service,
     skill_selection_service,
     tone_profile_service,
+    urgency_feedback_service,
 )
 
 logger = structlog.get_logger(__name__)
@@ -204,6 +205,15 @@ async def regenerate_draft(
         routing_category=routing_category,
         limit=3,
     )
+    urgency_hints = await urgency_feedback_service.find_urgency_hints(
+        session,
+        openai_client=openai_client,
+        settings=settings,
+        email_text=email_text,
+        mailbox=mailbox,
+        routing_category=routing_category,
+        limit=3,
+    )
 
     # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
@@ -225,6 +235,7 @@ async def regenerate_draft(
         tone_references=tone_references,
         tone_profile=tone_profile_block,
         negative_constraints=negative_constraints,
+        urgency_hints=urgency_hints,
         instruction=instruction,
         reference_loader=reference_loader,
     )
