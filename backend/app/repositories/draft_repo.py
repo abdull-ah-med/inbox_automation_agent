@@ -135,14 +135,10 @@ def _parse_tool_calls(raw: object) -> list[DraftToolCallSchema] | None:
                 is_error=bool(item.get("is_error")),
                 bytes=item.get("bytes") if isinstance(item.get("bytes"), int) else None,
                 truncated=(
-                    item.get("truncated")
-                    if isinstance(item.get("truncated"), bool)
-                    else None
+                    item.get("truncated") if isinstance(item.get("truncated"), bool) else None
                 ),
                 iteration=(
-                    item.get("iteration")
-                    if isinstance(item.get("iteration"), int)
-                    else None
+                    item.get("iteration") if isinstance(item.get("iteration"), int) else None
                 ),
             )
         )
@@ -192,6 +188,8 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         feedback_action=row.feedback_action if isinstance(row.feedback_action, str) else None,
         feedback_reason_code=feedback_reason if isinstance(feedback_reason, str) else None,
         routing_category=routing if isinstance(routing, str) else None,
+        approval_note=row.approval_note if isinstance(row.approval_note, str) else None,
+        approval_scope=row.approval_scope if isinstance(row.approval_scope, str) else None,
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
         applied_skills=_parse_applied_skills(row.applied_skills_json),
         tool_calls=_parse_tool_calls(row.tool_calls_json),
@@ -308,6 +306,8 @@ async def approve_draft(
     draft_id: uuid.UUID,
     *,
     edited_body: str | None = None,
+    approval_note: str | None = None,
+    approval_scope: str | None = None,
 ) -> DraftResponseSchema | None:
     existing = await get_draft_by_id(session, draft_id)
     if existing is None:
@@ -315,7 +315,14 @@ async def approve_draft(
 
     already_approved = existing.approved_at is not None and existing.feedback_action == "approve"
     current_body = existing.edited_body or existing.reply_body
-    if already_approved and (edited_body is None or edited_body == current_body):
+    learning_unchanged = (
+        approval_note == existing.approval_note and approval_scope == existing.approval_scope
+    )
+    if (
+        already_approved
+        and (edited_body is None or edited_body == current_body)
+        and learning_unchanged
+    ):
         return existing
 
     values: dict[str, Any] = {
@@ -326,6 +333,10 @@ async def approve_draft(
         values["approved_at"] = datetime.now(UTC)
     if edited_body is not None:
         values["edited_body"] = edited_body
+    if approval_note is not None or approval_scope is not None:
+        values["approval_note"] = approval_note
+        values["approval_scope"] = approval_scope
+        values["approval_note_persisted_at"] = datetime.now(UTC)
 
     stmt = update(Draft).where(Draft.id == draft_id).values(**values).returning(Draft)
     result = await session.execute(stmt)
@@ -391,6 +402,28 @@ async def mark_wrong(
             feedback_reason_code=reason_code,
             approved_at=None,
         )
+        .returning(Draft)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return _to_response(row)
+
+
+async def set_urgency(
+    session: AsyncSession,
+    draft_id: uuid.UUID,
+    *,
+    urgency: str,
+    urgency_reason: str,
+) -> DraftResponseSchema | None:
+    """Update draft urgency + reason."""
+    stmt = (
+        update(Draft)
+        .where(Draft.id == draft_id)
+        .values(urgency=urgency, urgency_reason=urgency_reason)
         .returning(Draft)
     )
     result = await session.execute(stmt)
@@ -511,3 +544,13 @@ async def get_latest_by_thread(
     if row is None:
         return None
     return _to_response(row)
+
+
+async def list_by_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> list[DraftResponseSchema]:
+    """Return all drafts for a thread, newest first."""
+    stmt = select(Draft).where(Draft.thread_id == thread_id).order_by(Draft.created_at.desc())
+    result = await session.execute(stmt)
+    return [_to_response(row) for row in result.scalars().all()]

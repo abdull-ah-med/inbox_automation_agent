@@ -184,6 +184,10 @@ async def test_thread_view_assembles_detail() -> None:
             "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
             AsyncMock(return_value=None),
         ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=None),
+        ),
     ):
         detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
     assert detail.thread.subject == "Hello"
@@ -193,3 +197,122 @@ async def test_thread_view_assembles_detail() -> None:
     assert "outlook.office365.com/owa/" in detail.messages[0].outlook_url
     assert "ItemID=" in detail.messages[0].outlook_url
     assert detail.classification is None
+    assert detail.sent_reply is None
+    assert detail.draft_vs_sent_diff is None
+
+
+@pytest.mark.asyncio
+async def test_thread_view_includes_sent_reply_and_diff() -> None:
+    from app.models.schemas.draft import DraftResponseSchema
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    thread_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    draft_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-1",
+        subject="Hello",
+        state="RESOLVED",
+        urgency="HIGH",
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sales@example.com",
+        mailbox_key="sales",
+        subject="Hello",
+        state="RESOLVED",
+        urgency="HIGH",
+        last_message_at=now,
+        last_sender="sales@example.com",
+        preview="sent",
+        staleness_hours=0,
+        message_count=2,
+    )
+    message = MessageSchema(
+        id=message_id,
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-msg-001",
+        direction="outbound",
+        sender="sales@example.com",
+        body_text="Line A\nLine C",
+        body_preview="Line A",
+        received_at=now,
+        to_recipients=["client@example.com"],
+        cc_recipients=[],
+    )
+    draft = DraftResponseSchema.model_validate(
+        {
+            "id": draft_id,
+            "thread_id": thread_id,
+            "created_at": now,
+            "subject_line": "Re: Hello",
+            "reply_body": "Line A\nLine B",
+            "teaching_note": "Note",
+            "urgency": "HIGH",
+            "urgency_reason": "Urgent",
+            "suggested_recipients": [],
+            "forward_to": None,
+            "suggested_actions": [],
+        }
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=message_id,
+        draft_id=draft_id,
+        sent_body_snapshot="Line A\nLine C",
+        sent_at=now,
+        matched_by="approved_draft",
+        created_at=now,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=draft),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+    assert detail.sent_reply is not None
+    assert detail.sent_reply.matched_by == "approved_draft"
+    assert detail.draft_vs_sent_diff is not None
+    assert "Line C" in detail.draft_vs_sent_diff.added
+    assert "Line B" in detail.draft_vs_sent_diff.removed

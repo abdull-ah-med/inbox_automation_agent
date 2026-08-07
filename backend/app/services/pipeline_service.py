@@ -33,6 +33,7 @@ from app.services import (
     summary_service,
     tone_profile_service,
     triage_service,
+    urgency_feedback_service,
 )
 from app.services.triage_service import decide_triage_outcome
 
@@ -96,14 +97,22 @@ async def _apply_draft_outcome_state(
         return
     if state.draft_status == "DRAFTED":
         urgency = state.draft.urgency if state.draft is not None else None
+        urgency_reason = state.draft.urgency_reason if state.draft is not None else None
         new_state = ThreadStateEnum.DRAFTED.value
     elif state.draft_status == "REQUIRES_HUMAN":
         urgency = None
+        urgency_reason = None
         new_state = ThreadStateEnum.REQUIRES_HUMAN.value
     else:
         return
     try:
-        await thread_repo.set_thread_outcome(session, thread_id, state=new_state, urgency=urgency)
+        await thread_repo.set_thread_outcome(
+            session,
+            thread_id,
+            state=new_state,
+            urgency=urgency,
+            urgency_reason=urgency_reason,
+        )
     except Exception:
         logger.exception(
             "thread_state_update_failed",
@@ -732,6 +741,7 @@ async def _run_phased_post_ingest(
     tone_references: list[str] = []
     tone_profile_block: str | None = None
     negative_constraints: list[str] = []
+    urgency_hints: list[str] = []
     email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
     routing_category = state.triage.routing_category if state.triage is not None else "general"
 
@@ -801,6 +811,15 @@ async def _run_phased_post_ingest(
             routing_category=routing_category,
             limit=3,
         )
+        urgency_hints = await urgency_feedback_service.find_urgency_hints(
+            session,
+            openai_client=openai_client,
+            settings=settings,
+            email_text=email_text,
+            mailbox=email.mailbox,
+            routing_category=routing_category,
+            limit=3,
+        )
         await session.commit()
 
     async def _generate_and_persist_draft(
@@ -810,6 +829,7 @@ async def _run_phased_post_ingest(
         tone_references: list[str] | None = None,
         tone_profile: str | None = None,
         negative_constraints: list[str] | None = None,
+        urgency_hints: list[str] | None = None,
     ) -> EmailTriageState:
         if existing is not None:
             current.draft = DraftSchema.model_validate(
@@ -843,6 +863,7 @@ async def _run_phased_post_ingest(
                 tone_profile=tone_profile,
                 skills=skill_contents,
                 negative_constraints=negative_constraints,
+                urgency_hints=urgency_hints,
                 reference_loader=reference_loader,
             )
         except DraftGenerationError as exc:
@@ -917,6 +938,7 @@ async def _run_phased_post_ingest(
             tone_references=tone_references,
             tone_profile=tone_profile_block,
             negative_constraints=negative_constraints,
+            urgency_hints=urgency_hints,
         )
     else:
         _embed_result, state = await asyncio.gather(
@@ -931,6 +953,7 @@ async def _run_phased_post_ingest(
                 tone_references=tone_references,
                 tone_profile=tone_profile_block,
                 negative_constraints=negative_constraints,
+                urgency_hints=urgency_hints,
             ),
         )
         _ = _embed_result

@@ -54,6 +54,7 @@ class ThreadSchema(BaseModel):
     subject: str
     state: str
     urgency: str | None = None
+    urgency_reason: str | None = None
     category: str | None = None
     last_message_at: datetime | None = None
     last_updated_at: datetime
@@ -125,6 +126,7 @@ async def set_thread_outcome(
     *,
     state: str,
     urgency: str | None = None,
+    urgency_reason: str | None = None,
 ) -> ThreadSchema | None:
     """Persist the pipeline's latest state (and optional urgency) for a thread.
 
@@ -136,7 +138,31 @@ async def set_thread_outcome(
     values: dict[str, object] = {"state": state}
     if urgency is not None:
         values["urgency"] = urgency
+    if urgency_reason is not None:
+        values["urgency_reason"] = urgency_reason
     stmt = update(Thread).where(Thread.id == thread_id).values(**values).returning(Thread)
+    result = await session.execute(stmt)
+    thread = result.scalar_one_or_none()
+    if thread is None:
+        return None
+    await session.flush()
+    return ThreadSchema.model_validate(thread)
+
+
+async def set_urgency(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    *,
+    urgency: str,
+    urgency_reason: str,
+) -> ThreadSchema | None:
+    """Update thread urgency + reason without changing state."""
+    stmt = (
+        update(Thread)
+        .where(Thread.id == thread_id)
+        .values(urgency=urgency, urgency_reason=urgency_reason)
+        .returning(Thread)
+    )
     result = await session.execute(stmt)
     thread = result.scalar_one_or_none()
     if thread is None:
@@ -264,6 +290,7 @@ async def list_by_mailbox(
                 subject=thread.subject,
                 state=thread.state,
                 urgency=thread.urgency,
+                urgency_reason=thread.urgency_reason,
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=sender,
@@ -369,6 +396,7 @@ async def list_recent_for_mailboxes(
             subject=thread.subject,
             state=thread.state,
             urgency=thread.urgency,
+            urgency_reason=thread.urgency_reason,
             category=thread.category,
             last_message_at=thread.last_message_at,
             last_sender=sender,
@@ -487,6 +515,7 @@ async def list_needs_attention(
                 subject=thread.subject,
                 state=thread.state,
                 urgency=thread.urgency,
+                urgency_reason=thread.urgency_reason,
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=sender,
@@ -594,6 +623,7 @@ async def build_thread_summary(
         subject=thread.subject,
         state=thread.state,
         urgency=thread.urgency,
+        urgency_reason=thread.urgency_reason,
         category=thread.category,
         last_message_at=thread.last_message_at,
         last_sender=sender,

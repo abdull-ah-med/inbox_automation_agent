@@ -27,6 +27,7 @@ const thread: ThreadSummary = {
   subject: "Invoice question",
   state: "AWAITING_ACTION",
   urgency: "NORMAL",
+  urgency_reason: null,
   category: "billing",
   last_message_at: new Date().toISOString(),
   last_sender: "client@example.com",
@@ -56,6 +57,8 @@ const baseDraft = (): DraftView => ({
   feedback_action: null,
   feedback_reason_code: null,
   routing_category: "billing",
+  approval_note: null,
+  approval_scope: null,
   applied_skills: [],
   tool_calls: null,
 })
@@ -101,8 +104,19 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     renderSidebar()
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveAttribute("data-size", "lg")
+    expect(dialog.className).toContain("sm:max-w-2xl")
     const textarea = within(dialog).getByLabelText("Draft body to approve")
     expect(textarea).toHaveValue("Happy to help with the invoice.")
+  })
+
+  it("opens reject dialog at lg size", async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    await user.click(screen.getByRole("button", { name: "Reject draft" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveAttribute("data-size", "lg")
+    expect(dialog.className).toContain("sm:max-w-2xl")
   })
 
   it("approving without edits calls approve with no body", async () => {
@@ -128,6 +142,70 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await waitFor(() => {
       expect(approveMock).toHaveBeenCalledWith("draft-1", {
         edited_body: "Revised reply body.",
+      })
+    })
+  })
+
+  it("disables approve when learning note lacks scope", async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    await user.click(screen.getByRole("button", { name: "Approve draft" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.type(
+      within(dialog).getByLabelText("Approval learning note"),
+      "Soften the tone",
+    )
+    const confirm = within(dialog).getByRole("button", { name: "Confirm approve draft" })
+    expect(confirm).toBeDisabled()
+    expect(within(dialog).getByRole("status")).toHaveTextContent(
+      "Choose a scope when providing a learning note.",
+    )
+  })
+
+  it("approving with learning note and similar scope sends both fields", async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    await user.click(screen.getByRole("button", { name: "Approve draft" }))
+    const dialog = await screen.findByRole("dialog")
+    const textarea = within(dialog).getByLabelText("Draft body to approve")
+    await user.clear(textarea)
+    await user.type(textarea, "Revised reply body.")
+    await user.type(
+      within(dialog).getByLabelText("Approval learning note"),
+      "Lead with invoice number",
+    )
+    await user.click(
+      within(dialog).getByRole("button", { name: "Apply learning to similar emails" }),
+    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm approve draft" }))
+    await waitFor(() => {
+      expect(approveMock).toHaveBeenCalledWith("draft-1", {
+        edited_body: "Revised reply body.",
+        approval_note: "Lead with invoice number",
+        approval_scope: "similar",
+      })
+    })
+  })
+
+  it("approving with once scope sends once without requiring body edit", async () => {
+    const user = userEvent.setup()
+    renderSidebar()
+    await user.click(screen.getByRole("button", { name: "Approve draft" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.type(
+      within(dialog).getByLabelText("Approval learning note"),
+      "One-off exception",
+    )
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Apply learning to this thread only",
+      }),
+    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm approve draft" }))
+    await waitFor(() => {
+      expect(approveMock).toHaveBeenCalledWith("draft-1", {
+        approval_note: "One-off exception",
+        approval_scope: "once",
       })
     })
   })

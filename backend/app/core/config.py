@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimension: int = Field(default=1536, ge=1, le=3072)
     embedding_min_similarity: float = Field(default=0.78, ge=0.0, le=1.0)
+    urgency_feedback_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
+    skill_similarity_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     # Hybrid retrieval: over-fetch per leg, then collapse to conversations.
     embedding_candidate_k: int = Field(default=15, ge=1, le=50)
     embedding_final_conversations: int = Field(default=1, ge=1, le=5)
@@ -238,9 +240,7 @@ class Settings(BaseSettings):
             if not self.slack_signing_secret.strip():
                 errors.append("SLACK_SIGNING_SECRET must be set when ENVIRONMENT is not local")
             if not self.slack_review_channel_id.strip():
-                errors.append(
-                    "SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local"
-                )
+                errors.append("SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local")
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
         db_host = (urlparse(self.database_url).hostname or "").lower()

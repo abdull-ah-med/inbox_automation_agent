@@ -99,5 +99,18 @@ class SkillAlreadyImportedError(SkillArchiveError):
         self.skill_id = skill_id
 
 
+class SkillDuplicateCandidatesError(SkillArchiveError):
+    """Raised when import finds semantically similar existing skills."""
+
+    def __init__(
+        self,
+        message: str = "Similar skills already exist",
+        *,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        super().__init__(message)
+        self.candidates = candidates
+
+
 class ThreadNotFoundError(InboxTriageError):
     """Raised when a thread id does not exist for regeneration or lookup."""

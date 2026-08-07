@@ -27,6 +27,7 @@ from app.core.exceptions import (
     SkillAlreadyImportedError,
     SkillArchiveError,
     SkillBudgetExceededError,
+    SkillDuplicateCandidatesError,
     SkillNameConflictError,
     SkillNotFoundError,
     SkillPackageTooLargeError,
@@ -50,6 +51,14 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 
 MAX_UPLOAD_BYTES = skill_archive_service.MAX_ARCHIVE_BYTES
+
+
+def _skill_name_from_already_imported(message: str) -> str:
+    """Best-effort name from ``Skill archive already imported as '…'``."""
+    marker = " as '"
+    if marker not in message or not message.endswith("'"):
+        return "existing skill"
+    return message.rsplit(marker, 1)[-1][:-1] or "existing skill"
 
 
 @router.get(
@@ -83,6 +92,8 @@ async def import_skill(
     _admin: CurrentAdmin,
     file: UploadFile = File(...),  # noqa: B008
     overwrite: bool = Form(default=False),
+    overwrite_skill_id: uuid.UUID | None = Form(default=None),  # noqa: B008
+    name_override: str | None = Form(default=None),
     category: str | None = Form(default="billing"),
 ) -> ImportSkillResultSchema:
     """Import a Claude Agent Skill archive (.zip or .skill)."""
@@ -115,12 +126,39 @@ async def import_skill(
             settings=settings,
             openai_client=openai_client,
             overwrite=overwrite,
+            overwrite_skill_id=overwrite_skill_id,
+            name_override=name_override,
             category=category,
         )
     except SkillAlreadyImportedError as exc:
+        # Same zip hash — surface via the overwrite / create-as-new dialog.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={"message": str(exc), "skill_id": str(exc.skill_id)},
+            detail={
+                "code": "duplicate_candidates",
+                "candidates": [
+                    {
+                        "id": str(exc.skill_id),
+                        "name": _skill_name_from_already_imported(str(exc)),
+                        "similarity": 1.0,
+                    }
+                ],
+            },
+        ) from exc
+    except SkillDuplicateCandidatesError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "duplicate_candidates",
+                "candidates": [
+                    {
+                        "id": str(c["id"]),
+                        "name": c["name"],
+                        "similarity": c["similarity"],
+                    }
+                    for c in exc.candidates
+                ],
+            },
         ) from exc
     except SkillNameConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

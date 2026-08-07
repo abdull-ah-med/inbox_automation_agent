@@ -60,6 +60,10 @@ _MAILBOX_FROM_RESOURCE = re.compile(
     r"^users/([^/]+)/",
     re.IGNORECASE,
 )
+_SENT_ITEMS_FOLDER = re.compile(
+    r"mailfolders\('sentitems'\)",
+    re.IGNORECASE,
+)
 
 
 def extract_message_id_from_resource(resource: str) -> str | None:
@@ -74,6 +78,12 @@ def extract_mailbox_from_resource(resource: str) -> str | None:
     if not match:
         return None
     return unquote(match.group(1))
+
+
+def is_sent_items_resource(resource: str) -> bool:
+    """True when the Graph resource path targets the Sent Items well-known folder."""
+    normalized = resource.strip().lower().replace(" ", "")
+    return _SENT_ITEMS_FOLDER.search(normalized) is not None
 
 
 def _sender_address(message: GraphMessageSchema) -> str:
@@ -128,11 +138,7 @@ def _ensure_body_clean_from_row(
     body_clean_version: int | None,
 ) -> tuple[str, int]:
     """Return (body_clean, version), recomputing when missing or stale."""
-    if (
-        body_clean
-        and body_clean.strip()
-        and body_clean_version == email_clean.CLEAN_VERSION
-    ):
+    if body_clean and body_clean.strip() and body_clean_version == email_clean.CLEAN_VERSION:
         return body_clean, body_clean_version
     cleaned = email_clean.clean_email_body(body_text, content_type=body_content_type)
     return cleaned.body_clean, email_clean.CLEAN_VERSION
@@ -259,10 +265,7 @@ async def _thread_context_from_db(
             body_clean=row.body_clean,
             body_clean_version=row.body_clean_version,
         )
-        if (
-            row.body_clean != body_clean
-            or row.body_clean_version != clean_version
-        ):
+        if row.body_clean != body_clean or row.body_clean_version != clean_version:
             await message_repo.update_body_clean(
                 session,
                 message_id=row.id,
@@ -454,6 +457,15 @@ async def ingest_notification(
         )
         return IngestResultSchema(message_id=message_id, status="skipped")
 
+    if is_sent_items_resource(notification.resource):
+        return await handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+
     return await ingest_graph_message(
         session=session,
         redis=redis,
@@ -461,6 +473,100 @@ async def ingest_notification(
         mailbox=mailbox,
         message_id=message_id,
     )
+
+
+async def handle_outbound_notification(
+    *,
+    session: AsyncSession,
+    redis: Redis,
+    graph_client: GraphClient,
+    mailbox: str,
+    message_id: str,
+) -> IngestResultSchema:
+    """Persist a Sent Items message as OUTBOUND and resolve the thread.
+
+    Does **not** run triage/draft pipeline. Uses the same Redis dedup keys as
+    inbound ingest so webhook retries remain idempotent.
+    """
+    from app.services import sent_reply_service
+
+    claim = await claim_ingest_dedup(redis, mailbox, message_id)
+    if claim == "completed":
+        logger.info("outbound_ingestion_duplicate", mailbox=mailbox, message_id=message_id)
+        return IngestResultSchema(message_id=message_id, status="duplicate")
+    if claim == "in_flight":
+        logger.info("outbound_ingestion_in_flight", mailbox=mailbox, message_id=message_id)
+        return IngestResultSchema(message_id=message_id, status="in_flight")
+
+    try:
+        message = await graph_client.get_message(mailbox, message_id)
+        conversation_id = message.conversation_id
+        if not conversation_id:
+            raise GraphClientError(f"Message {message_id} is missing conversationId")
+
+        received_at = message.received_date_time or datetime.now(UTC)
+        subject = message.subject or "(no subject)"
+
+        thread = await thread_repo.upsert_thread(
+            session,
+            mailbox=mailbox,
+            conversation_id=conversation_id,
+            subject=subject,
+            last_message_at=received_at,
+        )
+
+        email_msg = _to_email_message_schema(
+            mailbox=mailbox,
+            conversation_id=conversation_id,
+            message=message,
+        )
+        # Sent Items notifications are always treated as outbound from this mailbox.
+        email_msg = email_msg.model_copy(update={"direction": EmailDirectionEnum.OUTBOUND})
+
+        persisted = await message_repo.create_message(
+            session,
+            thread_id=thread.id,
+            graph_message_id=message.id,
+            direction=EmailDirectionEnum.OUTBOUND.value,
+            sender=email_msg.sender,
+            body_text=email_msg.body_text,
+            body_preview=email_msg.body_preview,
+            received_at=email_msg.received_at,
+            to_recipients=email_msg.to_recipients,
+            cc_recipients=email_msg.cc_recipients,
+            has_attachments=email_msg.has_attachments,
+            body_content_type=email_msg.body_content_type,
+            body_clean=email_msg.body_clean,
+            body_clean_version=email_clean.CLEAN_VERSION,
+            body_clean_computed_at=datetime.now(UTC),
+        )
+
+        await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread.id,
+            message=persisted,
+            conversation_id=conversation_id,
+            mailbox=mailbox,
+        )
+
+        await complete_ingest_dedup(redis, mailbox, message_id)
+
+        logger.info(
+            "outbound_ingestion_complete",
+            mailbox=mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+            conversation_id=conversation_id,
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        await release_ingest_dedup(redis, mailbox, message_id)
+        raise
 
 
 async def ingest_simulated_message(

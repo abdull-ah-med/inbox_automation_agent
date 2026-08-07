@@ -213,3 +213,53 @@ async def test_approve_not_found_404(app) -> None:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(f"/api/drafts/{uuid.uuid4()}/approve", json={})
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_approve_note_without_scope_422(app) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            f"/api/drafts/{uuid.uuid4()}/approve",
+            json={"approval_note": "Soften tone"},
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_approve_with_learning_context_ok(app) -> None:
+    draft = _draft_response(
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        edited_body="Edited hello",
+        approval_note="Soften tone",
+        approval_scope="similar",
+    )
+    with (
+        patch(
+            "app.api.web.drafts.draft_feedback_service.approve_draft",
+            AsyncMock(return_value=draft),
+        ) as approve_mock,
+        patch(
+            "app.api.web.drafts.draft_feedback_service.store_approved_reply_memory",
+            AsyncMock(),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/drafts/{draft.id}/approve",
+                json={
+                    "edited_body": "Edited hello",
+                    "approval_note": "Soften tone",
+                    "approval_scope": "similar",
+                },
+            )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["approval_note"] == "Soften tone"
+    assert body["approval_scope"] == "similar"
+    assert body["edited_body"] == "Edited hello"
+    approve_mock.assert_awaited_once()
+    assert approve_mock.await_args.kwargs["approval_note"] == "Soften tone"
+    assert approve_mock.await_args.kwargs["approval_scope"] == "similar"

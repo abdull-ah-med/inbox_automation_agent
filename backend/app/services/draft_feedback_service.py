@@ -48,6 +48,8 @@ async def approve_draft(
     draft_id: uuid.UUID,
     *,
     edited_body: str | None = None,
+    approval_note: str | None = None,
+    approval_scope: str | None = None,
     actor: str = "user",
     settings: Settings | None = None,
 ) -> DraftResponseSchema:
@@ -68,8 +70,13 @@ async def approve_draft(
     )
 
     already_approved = existing.approved_at is not None and existing.feedback_action == "approve"
-    if already_approved and (
-        edited_body is None or edited_body == (existing.edited_body or existing.reply_body)
+    learning_unchanged = (
+        approval_note == existing.approval_note and approval_scope == existing.approval_scope
+    )
+    if (
+        already_approved
+        and (edited_body is None or edited_body == (existing.edited_body or existing.reply_body))
+        and learning_unchanged
     ):
         return existing
 
@@ -77,6 +84,8 @@ async def approve_draft(
         session,
         draft_id,
         edited_body=edited_body,
+        approval_note=approval_note,
+        approval_scope=approval_scope,
     )
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -95,6 +104,19 @@ async def approve_draft(
             },
             actor=actor,
         )
+        if approval_note is not None or approval_scope is not None:
+            await audit_service.log_event(
+                session,
+                event_type="draft.approved.learning_context",
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+                payload={
+                    "draft_id": str(draft_id),
+                    "scope": approval_scope,
+                    "has_note": bool(approval_note),
+                },
+                actor=actor,
+            )
     except Exception:
         logger.warning(
             "draft_feedback_audit_failed",
@@ -106,6 +128,8 @@ async def approve_draft(
         "draft_approved",
         draft_id=str(draft_id),
         had_edit=edited_body is not None,
+        approval_scope=approval_scope,
+        has_approval_note=bool(approval_note),
         actor=actor,
         mailbox=mailbox,
     )
@@ -121,12 +145,41 @@ async def store_approved_reply_memory(
 ) -> None:
     """Best-effort reply memory after the approve txn has committed.
 
+    Only stores when ``approval_scope == "similar"`` (or when no learning
+    context was supplied and we keep the legacy always-store behavior for
+    plain approvals without a scope). Scope ``once`` skips embedding.
+
     Uses a **dedicated** DB session so embed/DB failures cannot leave the
-    request session in SQLAlchemy's inactive/pending-rollback state
-    (``PendingRollbackError`` — see
-    https://docs.sqlalchemy.org/en/20/errors.html#this-session-s-transaction-has-been-rolled-back-due-to-a-previous-exception-during-flush).
+    request session in SQLAlchemy's inactive/pending-rollback state.
     Never raises to the approve HTTP path.
     """
+    if draft.approval_scope == "once":
+        mailbox = "unknown"
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                thread = await thread_repo.get_by_id(session, draft.thread_id)
+                mailbox = thread.mailbox if thread is not None else "unknown"
+                if session.in_transaction():
+                    await session.commit()
+        except Exception:
+            logger.exception(
+                "reply_memory_scope_once_mailbox_lookup_failed",
+                draft_id=str(draft.id),
+            )
+        logger.info(
+            "reply_memory_skipped_scope_once",
+            draft_id=str(draft.id),
+            mailbox=mailbox,
+        )
+        await tone_profile_service.maybe_rebuild(
+            settings=settings,
+            anthropic_client=anthropic_client,
+            mailbox=mailbox,
+            routing_category=draft.routing_category,
+        )
+        return
+
     mailbox = "unknown"
     try:
         factory = get_session_factory()
@@ -137,6 +190,7 @@ async def store_approved_reply_memory(
             if session.in_transaction():
                 await session.commit()
             final_body = draft.edited_body or draft.reply_body
+            learning_note = draft.approval_note if draft.approval_scope == "similar" else None
             await reply_memory_service.store_approved_reply(
                 session,
                 openai_client=openai_client,
@@ -145,6 +199,7 @@ async def store_approved_reply_memory(
                 mailbox=mailbox,
                 final_body=final_body,
                 email_preview=email_preview,
+                learning_note=learning_note,
             )
             if session.in_transaction():
                 await session.commit()

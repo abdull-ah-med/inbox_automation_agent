@@ -1,0 +1,21 @@
+{
+  "id": "scheduling-decoy-no-samplelab",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B", "C"],
+  "subject": "Interview availability next week",
+  "body": "Can we schedule a 30-minute intro call with the new vendor contact sometime Tuesday or Wednesday afternoon?",
+  "mailbox": "elise@example.com",
+  "sender": "ops@partner.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "needs_context": false,
+    "routing_category": "scheduling",
+    "action_items_summary": "Schedule intro call"
+  },
+  "use_samplelab_skill": true,
+  "expect_skill_not_applied_to_facts": true,
+  "expected_tools": [],
+  "forbidden_facts": ["Harmeyer", "SampleLab invoice", "Invoicing_Detail", "Trolinder"],
+  "geval_criteria": "The draft should answer a scheduling request. It must not invent SampleLab rebilling steps, Harmeyer departments, or invoice detail-file instructions that are unrelated to this email."
+}

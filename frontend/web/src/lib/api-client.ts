@@ -121,6 +121,64 @@ function detailFromErrorBody(body: unknown): string | null {
   return null;
 }
 
+export type SkillDuplicateCandidate = {
+  id: string;
+  name: string;
+  similarity: number;
+};
+
+export class SkillDuplicateCandidatesError extends ApiError {
+  candidates: SkillDuplicateCandidate[];
+
+  constructor(
+    candidates: SkillDuplicateCandidate[],
+    status: number,
+    body?: unknown,
+  ) {
+    super("Similar skills already exist", status, body);
+    this.name = "SkillDuplicateCandidatesError";
+    this.candidates = candidates;
+  }
+}
+
+const parseDuplicateCandidates = (
+  body: unknown,
+): SkillDuplicateCandidate[] | null => {
+  if (body == null || typeof body !== "object") return null;
+  const detail = (body as { detail?: unknown }).detail;
+  if (detail == null || typeof detail !== "object") return null;
+  const coded = detail as {
+    code?: unknown;
+    candidates?: unknown;
+  };
+  if (coded.code !== "duplicate_candidates") return null;
+  if (!Array.isArray(coded.candidates)) return null;
+  const candidates: SkillDuplicateCandidate[] = [];
+  for (const row of coded.candidates) {
+    if (row == null || typeof row !== "object") continue;
+    const item = row as {
+      id?: unknown;
+      name?: unknown;
+      similarity?: unknown;
+    };
+    if (typeof item.id !== "string" || typeof item.name !== "string") continue;
+    if (typeof item.similarity !== "number") continue;
+    candidates.push({
+      id: item.id,
+      name: item.name,
+      similarity: item.similarity,
+    });
+  }
+  return candidates;
+};
+
+export type ImportSkillOptions = {
+  overwrite?: boolean;
+  overwriteSkillId?: string;
+  nameOverride?: string;
+  category?: string;
+};
+
 async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
@@ -207,6 +265,10 @@ async function apiFetchMultipart<T>(
       body = await resp.json();
     } catch {
       body = undefined;
+    }
+    const duplicates = parseDuplicateCandidates(body);
+    if (duplicates != null) {
+      throw new SkillDuplicateCandidatesError(duplicates, resp.status, body);
     }
     const verbatim = detailFromErrorBody(body);
     throw new ApiError(
@@ -331,7 +393,14 @@ export const api = {
   },
 
   drafts: {
-    approve(id: string, body?: { edited_body?: string }) {
+    approve(
+      id: string,
+      body?: {
+        edited_body?: string
+        approval_note?: string
+        approval_scope?: "once" | "similar"
+      },
+    ) {
       return apiFetch<DraftView>(`/api/drafts/${id}/approve`, {
         method: "POST",
         body: JSON.stringify(body ?? {}),
@@ -358,6 +427,24 @@ export const api = {
         },
       );
     },
+    editUrgency(
+      id: string,
+      body: {
+        new_urgency: "CRITICAL" | "HIGH" | "NORMAL" | "LOW"
+        reason: string
+      },
+    ) {
+      return apiFetch<{
+        urgency: string
+        urgency_reason: string
+        updated_at: string
+        draft_id: string
+        thread_id: string
+      }>(`/api/drafts/${id}/urgency`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    },
   },
 
   skills: {
@@ -381,11 +468,17 @@ export const api = {
         method: "DELETE",
       });
     },
-    import(file: File, options?: { overwrite?: boolean; category?: string }) {
+    import(file: File, options?: ImportSkillOptions) {
       const form = new FormData();
       form.append("file", file);
       if (options?.overwrite != null) {
         form.append("overwrite", String(options.overwrite));
+      }
+      if (options?.overwriteSkillId) {
+        form.append("overwrite_skill_id", options.overwriteSkillId);
+      }
+      if (options?.nameOverride) {
+        form.append("name_override", options.nameOverride);
       }
       if (options?.category) {
         form.append("category", options.category);

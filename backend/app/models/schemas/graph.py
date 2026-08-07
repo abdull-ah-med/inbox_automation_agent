@@ -150,7 +150,14 @@ class SimulateIngestRequestSchema(BaseModel):
 
 class IngestResultSchema(BaseModel):
     message_id: str
-    status: Literal["ingested", "duplicate", "skipped", "retry_triage", "in_flight"]
+    status: Literal[
+        "ingested",
+        "duplicate",
+        "skipped",
+        "retry_triage",
+        "in_flight",
+        "outbound",
+    ]
     thread_id: str | None = None
     conversation_id: str | None = None
     thread_context: ThreadContextSchema | None = None

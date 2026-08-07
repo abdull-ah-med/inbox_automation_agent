@@ -6,7 +6,7 @@ Read-only email triage for shared Outlook mailboxes. The system ingests mail thr
 
 ## What it does
 
-1. **Ingest** — Graph change notifications (with poll fallback) pull new messages into PostgreSQL.
+1. **Ingest** — The Graph interval poller pulls Inbox, Junk, and Sent Items into PostgreSQL (optional webhooks can supplement).
 2. **Triage** — Rules and LLM classification decide spam, reply-needed, or context lookup.
 3. **Draft** — Claude generates suggested replies where appropriate.
 4. **Review** — An invite-only web dashboard shows teaching notes, state, urgency, and drafts across four mailboxes.
@@ -204,9 +204,19 @@ Auth uses short-lived JWTs, HttpOnly refresh cookies, CSRF on cookie-mutating ro
 
 Admins can upload Claude Agent Skill archives (`.zip` / `.skill`) from **Settings**. The archive must follow Anthropic packaging (one root folder + `SKILL.md` frontmatter). `references/` and `assets/` are stored for progressive disclosure during draft generation via the `read_skill_reference` tool. `scripts/` is skipped — this app never executes imported code (Mail.Read / read-only constraint).
 
+On upload, the importer checks exact zip hash and skill name first. It also embeds the skill name + description and compares against existing skills; near-duplicates prompt **Overwrite** (target an existing skill) or **Create as new** (optional name override).
+
 ## Feedback loop (two-button)
 
 On a thread draft, reviewers use **Approve** (optional edit in the preview dialog) or **Reject** (reason + note). Choosing "Wrong action / no reply needed" routes to the mark-wrong path and does not write rejection memory; other reject reasons teach the system for future drafts. Email is never sent from the app.
+
+Approve also accepts an optional **learning context** (why a change was made) with scope **this thread only** (`once`) or **similar emails** (`similar`). Scope `similar` stores the approved body + note in reply memory for future drafts; `once` is audited only.
+
+Reviewers can edit **urgency** inline (pencil on the urgency badge) with a required short reason. Those corrections are embedded and retrieved as urgency hints at draft time.
+
+## Sent reply → resolved
+
+Each mailbox's interval poller also reads **Sent Items** (still Mail.Read / read-only). When a reply is sent from Outlook, the system links it to the thread, transitions state to `RESOLVED`, and the thread page shows proposed draft vs what was actually sent. Optional Graph webhooks can supplement polling when notification URLs are configured.
 
 ## Running tests
 

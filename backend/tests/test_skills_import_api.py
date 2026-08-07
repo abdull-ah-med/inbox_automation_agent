@@ -16,6 +16,7 @@ from app.core.dependencies import get_db
 from app.core.dependencies_auth import get_current_user
 from app.core.exceptions import (
     SkillAlreadyImportedError,
+    SkillDuplicateCandidatesError,
     SkillPackagingError,
     SkillPathTraversalError,
 )
@@ -178,7 +179,7 @@ async def test_import_duplicate_hash_409(app_factory) -> None:
             "app.api.web.skills.skill_archive_service.import_skill_archive",
             AsyncMock(
                 side_effect=SkillAlreadyImportedError(
-                    "already imported",
+                    "Skill archive already imported as 'demo-skill'",
                     skill_id=existing_id,
                 )
             ),
@@ -197,7 +198,112 @@ async def test_import_duplicate_hash_409(app_factory) -> None:
                 )
         assert resp.status_code == 409
         detail = resp.json()["detail"]
-        assert detail["skill_id"] == str(existing_id)
+        assert detail["code"] == "duplicate_candidates"
+        assert detail["candidates"] == [
+            {
+                "id": str(existing_id),
+                "name": "demo-skill",
+                "similarity": 1.0,
+            }
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_import_duplicate_candidates_409_body(app_factory) -> None:
+    app = app_factory(role="admin")
+    candidate_id = uuid.uuid4()
+    try:
+        with patch(
+            "app.api.web.skills.skill_archive_service.import_skill_archive",
+            AsyncMock(
+                side_effect=SkillDuplicateCandidatesError(
+                    candidates=[
+                        {
+                            "id": candidate_id,
+                            "name": "samplelab-rebilling",
+                            "similarity": 0.91,
+                        }
+                    ]
+                )
+            ),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/skills/import",
+                    files={
+                        "file": (
+                            "demo.zip",
+                            _zip_bytes(
+                                {
+                                    "demo-skill/SKILL.md": (
+                                        "---\nname: demo-skill\n"
+                                        "description: Rebill invoices\n---\nbody\n"
+                                    )
+                                }
+                            ),
+                            "application/zip",
+                        )
+                    },
+                )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "duplicate_candidates"
+        assert detail["candidates"] == [
+            {
+                "id": str(candidate_id),
+                "name": "samplelab-rebilling",
+                "similarity": 0.91,
+            }
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_import_passes_overwrite_skill_id_and_name_override(app_factory) -> None:
+    app = app_factory(role="admin")
+    skill_id = uuid.uuid4()
+    target_id = uuid.uuid4()
+    result = ImportSkillResultSchema(
+        skill_id=skill_id,
+        name="demo-skill-v2",
+        description="d",
+        reference_files=[],
+        asset_files=[],
+        warnings=[],
+        overwritten=False,
+    )
+    try:
+        with patch(
+            "app.api.web.skills.skill_archive_service.import_skill_archive",
+            AsyncMock(return_value=result),
+        ) as import_mock:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/skills/import",
+                    data={
+                        "overwrite": "true",
+                        "overwrite_skill_id": str(target_id),
+                        "name_override": "demo-skill-v2",
+                        "category": "billing",
+                    },
+                    files={
+                        "file": (
+                            "demo.zip",
+                            load_samplelab_rebilling_zip_bytes(),
+                            "application/zip",
+                        )
+                    },
+                )
+        assert resp.status_code == 201
+        kwargs = import_mock.await_args.kwargs
+        assert kwargs["overwrite"] is True
+        assert kwargs["overwrite_skill_id"] == target_id
+        assert kwargs["name_override"] == "demo-skill-v2"
     finally:
         app.dependency_overrides.clear()
 

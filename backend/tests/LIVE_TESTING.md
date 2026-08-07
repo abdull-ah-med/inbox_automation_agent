@@ -41,5 +41,19 @@ RUN_LIVE_EMBEDDING_E2E=1 .venv/bin/pytest tests/test_live_embedding_e2e.py -vv -
 | `test_live_e2e_pipeline.py` | `RUN_LIVE_E2E=1` | Graph → Redis → DB → triage → draft → Slack |
 | `test_live_embedding_e2e.py` | `RUN_LIVE_EMBEDDING_E2E=1` | Embeddings, similarity, tone memory, Flow B, approve |
 | `test_samplelab_skill_logical.py` | `RUN_LIVE_SKILL=1` | Elise samplelab-rebilling: Haiku selection + Sonnet `read_skill_reference` |
+| `tests/evals/` (DeepEval + RAGAS) | `RUN_LLM_EVAL=1` | LLM response quality scores — see [`evals/EVALS.md`](evals/EVALS.md) |
 
 Never commit artifact JSON — it may contain email content.
+
+## LLM response evals (DeepEval / RAGAS)
+
+Smoke/live suites above prove the pipeline runs. For **response quality** metrics
+(faithfulness, answer relevancy, retrieval context quality, tool correctness):
+
+```bash
+.venv/bin/pip install -e ".[eval]"
+RUN_LLM_EVAL=1 .venv/bin/pytest tests/evals -vv -s -m llm_eval
+```
+
+See [`evals/EVALS.md`](evals/EVALS.md) for suite A/B/C mapping, faithfulness semantics,
+DB export, and calibration notes. Not gated in default CI.

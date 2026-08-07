@@ -106,6 +106,17 @@ def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     assert "Thanks — sending the packet now." in content
 
 
+def test_build_user_content_includes_urgency_hints() -> None:
+    content = draft_llm._build_user_content(
+        _email(),
+        _context(_email()),
+        _triage(),
+        urgency_hints=["[HIGH] Client has an SLA deadline tomorrow"],
+    )
+    assert "Past urgency corrections" in content
+    assert "[HIGH] Client has an SLA deadline tomorrow" in content
+
+
 def test_build_user_content_uses_cleaned_body_not_quotes() -> None:
     email = EmailMessageSchema(
         message_id="m1",

@@ -17,6 +17,7 @@ def _embedding_row(**overrides: object) -> MagicMock:
     row.mailbox = overrides.get("mailbox", "elise@example.com")
     row.reply_text = overrides.get("reply_text", "Thanks — sending now.")
     row.original_email_preview = overrides.get("original_email_preview")
+    row.learning_note = overrides.get("learning_note")
     row.is_excluded = overrides.get("is_excluded", False)
     row.created_at = overrides.get("created_at")
     return row

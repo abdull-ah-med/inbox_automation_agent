@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.schemas.routing import RejectReasonCode
+
+ApprovalScope = Literal["once", "similar"]
 
 
 class DraftApproveSchema(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     edited_body: str | None = Field(default=None, max_length=50_000)
+    approval_note: str | None = Field(default=None, max_length=2_000)
+    approval_scope: ApprovalScope | None = None
+
+    @model_validator(mode="after")
+    def require_scope_when_note_present(self) -> Self:
+        note = (self.approval_note or "").strip()
+        if note and self.approval_scope is None:
+            raise ValueError("approval_scope is required when approval_note is provided")
+        if not note:
+            self.approval_note = None
+        return self
 
 
 class DraftRejectSchema(BaseModel):

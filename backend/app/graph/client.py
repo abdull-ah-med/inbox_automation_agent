@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -311,15 +311,18 @@ class GraphClient:
         client_state: str,
         *,
         lifecycle_notification_url: str,
+        folder: Literal["inbox", "sentitems"] = "inbox",
         expiration_minutes: int = MAX_SUBSCRIPTION_MINUTES,
     ) -> GraphSubscriptionSchema:
-        """Create a change notification subscription for a mailbox inbox.
+        """Create a change notification subscription for a mailbox folder.
 
         POST /subscriptions
-        Resource: users/{mailbox}/mailFolders('inbox')/messages
+        Resource: users/{mailbox}/mailFolders('{folder}')/messages
+        Well-known folder names: ``inbox``, ``sentitems`` (lowercase, no slash).
         Max lifetime for Outlook messages: 4,230 minutes.
 
         lifecycleNotificationUrl cannot be added later via PATCH — must be set at create.
+        https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
         """
         if expiration_minutes > MAX_SUBSCRIPTION_MINUTES:
             raise GraphClientError(
@@ -331,12 +334,13 @@ class GraphClient:
         if not lifecycle_notification_url.strip():
             raise GraphClientError("lifecycle_notification_url is required")
 
+        safe_folder = folder.replace("'", "''")
         expiration = datetime.now(UTC) + timedelta(minutes=expiration_minutes)
         body = {
             "changeType": "created",
             "notificationUrl": notification_url,
             "lifecycleNotificationUrl": lifecycle_notification_url,
-            "resource": f"users/{mailbox}/mailFolders('inbox')/messages",
+            "resource": f"users/{mailbox}/mailFolders('{safe_folder}')/messages",
             "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
             "clientState": client_state,
         }

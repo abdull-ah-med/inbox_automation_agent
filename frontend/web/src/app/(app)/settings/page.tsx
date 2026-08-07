@@ -22,7 +22,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuthState } from "@/features/auth/use-auth"
-import { api } from "@/lib/api-client"
+import { api, type ImportSkillOptions } from "@/lib/api-client"
 import { ROUTING_CATEGORIES, type RoutingCategory } from "@/lib/routing"
 import type {
   ReplyMemoryResponse,
@@ -152,14 +152,23 @@ export default function SettingsPage() {
   })
 
   const importMutation = useMutation({
-    mutationFn: (file: File) => api.skills.import(file),
+    mutationFn: ({
+      file,
+      options,
+    }: {
+      file: File
+      options?: ImportSkillOptions
+    }) => api.skills.import(file, options),
     onSuccess: async () => {
       await invalidate()
     },
   })
 
-  const handleImportSkill = async (file: File) => {
-    return importMutation.mutateAsync(file)
+  const handleImportSkill = async (
+    file: File,
+    options?: ImportSkillOptions,
+  ) => {
+    return importMutation.mutateAsync({ file, options })
   }
 
   const handleOpenViewer = (skill: SkillResponse) => {

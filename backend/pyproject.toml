@@ -51,6 +51,16 @@ dev = [
     "ruff>=0.15,<0.16",
     "mypy>=2.2,<3.0",
 ]
+# LLM response quality evals (DeepEval + RAGAS). Not installed by default CI.
+#   pip install -e ".[eval]"
+# Do not add deepeval[inspect] here — DeepEval docs say it bloats installs outside inspect tooling.
+eval = [
+    "deepeval>=3.0,<4.0",
+    "ragas>=0.2,<1.0",
+    # ragas 0.4.x still imports langchain_community.chat_models.vertexai at
+    # module load; that path was removed in langchain-community 0.4+.
+    "langchain-community>=0.3.0,<0.4",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -112,6 +122,7 @@ markers = [
     "live_claude: opt-in live Anthropic Haiku triage tests (set RUN_LIVE_CLAUDE=1)",
     "live_e2e: opt-in live Graph→Redis→DB→PII→Haiku pipeline (set RUN_LIVE_E2E=1)",
     "live_embedding: opt-in live OpenAI embedding + similarity + tone E2E (set RUN_LIVE_EMBEDDING_E2E=1)",
+    "llm_eval: opt-in DeepEval/RAGAS LLM response evals (set RUN_LLM_EVAL=1; needs pip install -e '.[eval]')",
 ]
 
 [tool.coverage.run]

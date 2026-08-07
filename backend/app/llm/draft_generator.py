@@ -85,6 +85,7 @@ def _build_user_content(
     tone_profile: str | None = None,
     skills: list[str] | None = None,
     negative_constraints: list[str] | None = None,
+    urgency_hints: list[str] | None = None,
     instruction: str | None = None,
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
@@ -129,6 +130,12 @@ def _build_user_content(
     else:
         constraints_block = "(none)"
 
+    if urgency_hints:
+        urgency_lines = [f"- {item.strip()}" for item in urgency_hints if item.strip()]
+        urgency_block = "\n".join(urgency_lines) if urgency_lines else "(none)"
+    else:
+        urgency_block = "(none)"
+
     instruction_block = ""
     if instruction and instruction.strip():
         instruction_block = (
@@ -160,7 +167,8 @@ def _build_user_content(
         f"Cross-thread context:\n{cross_block}\n\n"
         f"Tone profile:\n{profile_block}\n\n"
         f"Tone references (similar past replies):\n{tone_block}\n\n"
-        f"Previously flagged issues to avoid:\n{constraints_block}\n"
+        f"Previously flagged issues to avoid:\n{constraints_block}\n\n"
+        f"Past urgency corrections (prefer these signals when relevant):\n{urgency_block}\n"
         f"{instruction_block}"
     )
 
@@ -193,10 +201,7 @@ async def _parse_final(
         *messages,
         {
             "role": "user",
-            "content": (
-                "Return the final draft now as DraftSchema JSON only. "
-                "Do not call tools."
-            ),
+            "content": ("Return the final draft now as DraftSchema JSON only. Do not call tools."),
         },
     ]
     response = await client.messages.parse(
@@ -350,6 +355,7 @@ async def generate_draft(
     tone_profile: str | None = None,
     skills: list[str] | None = None,
     negative_constraints: list[str] | None = None,
+    urgency_hints: list[str] | None = None,
     instruction: str | None = None,
     reference_loader: SkillReferenceLoader | None = None,
 ) -> DraftCallResult:
@@ -369,6 +375,7 @@ async def generate_draft(
         tone_profile=tone_profile,
         skills=skills,
         negative_constraints=negative_constraints,
+        urgency_hints=urgency_hints,
         instruction=instruction,
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
