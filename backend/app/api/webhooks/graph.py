@@ -36,6 +36,7 @@ from app.core.dependencies import (
     get_graph_client,
     get_redis,
 )
+from app.core.rate_limit import resolve_client_ip
 from app.core.redis_keys import webhook_rate_limit_key
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
@@ -87,17 +88,17 @@ def _notification_ids(
     return mailbox, message_id
 
 
-def _client_ip(request: Request) -> str:
-    """Peer address only — do not trust client-supplied X-Forwarded-For.
+def _client_ip(request: Request, settings: Settings) -> str:
+    """Rate-limit identity: peer, or trusted X-Real-IP behind our reverse proxy.
 
-    Spoofable XFF lets attackers rotate rate-limit buckets. Terminate TLS at a
-    reverse proxy and key limits on the TCP peer (the proxy), or set a global
-    limit. See Redis security network guidance: untrusted clients must not
-    choose their own quota identity.
+    Matches SlowAPI ``resolve_client_ip`` so nginx ``X-Real-IP $remote_addr``
+    buckets by the real Graph edge / client, not a single Docker peer.
+    Do not trust spoofable leftmost X-Forwarded-For.
+    Refs:
+    - https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header
+    - https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks
     """
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    return resolve_client_ip(request, settings)
 
 
 _RATE_LIMIT_INCR_EXPIRE = """
@@ -120,7 +121,11 @@ async def _enforce_webhook_guards(
     operation). Rate-limit excess never returns 429: Microsoft Graph retries
     non-2xx for hours and may mark the endpoint unhealthy
     (https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks).
-    Over-limit requests ACK with 202 and set ``request.state.webhook_skip_processing``.
+
+    Over-limit sets ``request.state.webhook_over_rate_limit``. Handlers still
+    process payloads with a matching ``clientState`` so real Graph mail is not
+    silently dropped behind a shared proxy peer. Abuse (parse fail / bad
+    clientState) is ACK'd without enqueue whether or not over limit.
 
     Body size is enforced by reading at most ``webhook_max_body_bytes + 1`` bytes
     (Content-Length alone is insufficient for chunked / missing-length requests).
@@ -138,17 +143,17 @@ async def _enforce_webhook_guards(
             return Response(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
     request.state.webhook_body = bytes(body)
 
-    ip = _client_ip(request)
+    ip = _client_ip(request, settings)
     key = webhook_rate_limit_key(ip)
     count = int(await redis.eval(_RATE_LIMIT_INCR_EXPIRE, 1, key, "60"))
     if count > settings.webhook_rate_limit_per_minute:
         logger.warning(
-            "graph_webhook_rate_limited_ack",
+            "graph_webhook_rate_limited",
             client_ip=ip,
             count=count,
             limit=settings.webhook_rate_limit_per_minute,
         )
-        request.state.webhook_skip_processing = True
+        request.state.webhook_over_rate_limit = True
     return None
 
 
@@ -344,9 +349,6 @@ async def receive_graph_notifications(
     if guard is not None:
         return guard
 
-    if getattr(request.state, "webhook_skip_processing", False):
-        return Response(status_code=status.HTTP_202_ACCEPTED)
-
     expected = _configured_client_state(settings)
     if expected is None:
         # ACK with 202 so Graph does not retry for 4 hours on permanent misconfig.
@@ -369,8 +371,18 @@ async def receive_graph_notifications(
 
     # Cheap sync filter: skip enqueue when every item fails clientState.
     if not _any_client_state_match(payload, expected):
-        logger.warning("graph_notification_batch_all_client_state_mismatch")
+        logger.warning(
+            "graph_notification_batch_all_client_state_mismatch",
+            over_rate_limit=bool(
+                getattr(request.state, "webhook_over_rate_limit", False)
+            ),
+        )
         return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    # Matching clientState always enqueues, even when over the rate budget, so
+    # legitimate Graph traffic is not dropped behind a shared proxy peer.
+    if getattr(request.state, "webhook_over_rate_limit", False):
+        logger.warning("graph_webhook_over_limit_valid_client_state_enqueued")
 
     enqueue(
         background_tasks,
@@ -401,9 +413,6 @@ async def receive_graph_lifecycle(
     if guard is not None:
         return guard
 
-    if getattr(request.state, "webhook_skip_processing", False):
-        return Response(status_code=status.HTTP_202_ACCEPTED)
-
     expected = _configured_client_state(settings)
     if expected is None:
         logger.critical("graph_webhook_client_state_not_configured")
@@ -424,8 +433,16 @@ async def receive_graph_lifecycle(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     if not _any_client_state_match(payload, expected):
-        logger.warning("graph_lifecycle_batch_all_client_state_mismatch")
+        logger.warning(
+            "graph_lifecycle_batch_all_client_state_mismatch",
+            over_rate_limit=bool(
+                getattr(request.state, "webhook_over_rate_limit", False)
+            ),
+        )
         return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    if getattr(request.state, "webhook_over_rate_limit", False):
+        logger.warning("graph_lifecycle_over_limit_valid_client_state_enqueued")
 
     enqueue(
         background_tasks,

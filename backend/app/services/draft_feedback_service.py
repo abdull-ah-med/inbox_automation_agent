@@ -145,15 +145,15 @@ async def store_approved_reply_memory(
 ) -> None:
     """Best-effort reply memory after the approve txn has committed.
 
-    Only stores when ``approval_scope == "similar"`` (or when no learning
-    context was supplied and we keep the legacy always-store behavior for
-    plain approvals without a scope). Scope ``once`` skips embedding.
+    Stores ``reply_embeddings`` only when ``approval_scope == "similar"``.
+    Scope ``once`` or ``None`` (plain approve) skips embedding per the
+    five-feature plan.
 
     Uses a **dedicated** DB session so embed/DB failures cannot leave the
     request session in SQLAlchemy's inactive/pending-rollback state.
     Never raises to the approve HTTP path.
     """
-    if draft.approval_scope == "once":
+    if draft.approval_scope != "similar":
         mailbox = "unknown"
         try:
             factory = get_session_factory()
@@ -164,13 +164,15 @@ async def store_approved_reply_memory(
                     await session.commit()
         except Exception:
             logger.exception(
-                "reply_memory_scope_once_mailbox_lookup_failed",
+                "reply_memory_skip_mailbox_lookup_failed",
                 draft_id=str(draft.id),
+                approval_scope=draft.approval_scope,
             )
         logger.info(
-            "reply_memory_skipped_scope_once",
+            "reply_memory_skipped_scope",
             draft_id=str(draft.id),
             mailbox=mailbox,
+            approval_scope=draft.approval_scope,
         )
         await tone_profile_service.maybe_rebuild(
             settings=settings,
@@ -190,7 +192,7 @@ async def store_approved_reply_memory(
             if session.in_transaction():
                 await session.commit()
             final_body = draft.edited_body or draft.reply_body
-            learning_note = draft.approval_note if draft.approval_scope == "similar" else None
+            learning_note = draft.approval_note
             await reply_memory_service.store_approved_reply(
                 session,
                 openai_client=openai_client,

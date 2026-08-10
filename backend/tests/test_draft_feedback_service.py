@@ -450,6 +450,7 @@ async def test_approve_stores_reply_memory_helper() -> None:
         approved_at=datetime.now(UTC),
         feedback_action="approve",
         reply_body="Approved body",
+        approval_scope="similar",
     )
     session = AsyncMock()
     session.in_transaction = lambda: False
@@ -508,6 +509,7 @@ async def test_approve_reply_memory_failure_does_not_raise() -> None:
         approved_at=datetime.now(UTC),
         feedback_action="approve",
         reply_body="Approved body",
+        approval_scope="similar",
     )
     settings = Settings(
         target_mailboxes="elise@example.com",
@@ -526,6 +528,66 @@ async def test_approve_reply_memory_failure_does_not_raise() -> None:
             settings=settings,
             openai_client=AsyncMock(),
         )
+
+
+@pytest.mark.asyncio
+async def test_store_approved_reply_memory_skips_when_scope_none() -> None:
+    from app.core.config import Settings
+
+    draft = _draft(
+        approved_at=datetime.now(UTC),
+        feedback_action="approve",
+        reply_body="Approved body",
+        approval_scope=None,
+    )
+    session = AsyncMock()
+    session.in_transaction = lambda: False
+    settings = Settings(
+        target_mailboxes="elise@example.com",
+        openai_api_key="sk-test",
+        jwt_secret="c" * 64,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {"conversation_id": "c1", "mailbox": "elise@example.com", "subject": "Subj"},
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.reply_memory_service.store_approved_reply",
+            AsyncMock(),
+        ) as store_mock,
+        patch(
+            "app.services.draft_feedback_service.tone_profile_service.maybe_rebuild",
+            AsyncMock(),
+        ),
+    ):
+        await draft_feedback_service.store_approved_reply_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=AsyncMock(),
+        )
+
+    store_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio

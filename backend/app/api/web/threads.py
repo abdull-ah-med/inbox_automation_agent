@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -14,7 +14,6 @@ from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
 from app.models.schemas.feedback import RegenerateDraftSchema
-from app.repositories import audit_repo, thread_repo
 from app.services import draft_regeneration_service, thread_view_service
 
 router = APIRouter(prefix="/api/threads", tags=["threads"])
@@ -71,10 +70,7 @@ async def get_thread_audit(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> list[AuditEntry]:
-    thread = await thread_repo.get_by_id(session, thread_id)
-    if thread is None or not settings.mailbox_allowed(thread.mailbox):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return await audit_repo.list_by_thread_id(session, thread_id, thread.conversation_id)
+    return await thread_view_service.list_thread_audit(session, settings, thread_id)
 
 
 @router.post(

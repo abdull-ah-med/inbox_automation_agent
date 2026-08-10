@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
@@ -16,11 +17,22 @@ from app.llm.pii_redact import scrub_text
 from app.models.schemas.urgency_feedback import (
     UrgencyEditRequestSchema,
     UrgencyEditResponseSchema,
+    UrgencyLevel,
 )
 from app.repositories import draft_repo, thread_repo, urgency_feedback_repo
 from app.services import audit_service, embedding_service
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class UrgencyEditResult:
+    """HTTP response plus values needed for post-commit memory storage."""
+
+    response: UrgencyEditResponseSchema
+    previous_urgency: UrgencyLevel
+    mailbox: str
+    routing_category: str | None
 
 
 async def apply_manual_urgency_edit(
@@ -31,12 +43,13 @@ async def apply_manual_urgency_edit(
     actor: str,
     user_id: uuid.UUID | None = None,
     settings: Settings | None = None,
-) -> UrgencyEditResponseSchema:
+) -> UrgencyEditResult:
     """Update draft + thread urgency and return the new values.
 
     Embedding persistence is intentionally deferred to
     ``store_urgency_feedback_memory`` so the HTTP txn commits first.
     """
+    _ = user_id
     draft = await draft_repo.get_draft_by_id(session, draft_id)
     if draft is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -49,12 +62,17 @@ async def apply_manual_urgency_edit(
 
     previous = draft.urgency
     if previous == request.new_urgency and (draft.urgency_reason or "") == request.reason:
-        return UrgencyEditResponseSchema(
-            urgency=request.new_urgency,
-            urgency_reason=request.reason,
-            updated_at=datetime.now(UTC),
-            draft_id=draft.id,
-            thread_id=draft.thread_id,
+        return UrgencyEditResult(
+            response=UrgencyEditResponseSchema(
+                urgency=request.new_urgency,
+                urgency_reason=request.reason,
+                updated_at=datetime.now(UTC),
+                draft_id=draft.id,
+                thread_id=draft.thread_id,
+            ),
+            previous_urgency=previous,
+            mailbox=thread.mailbox,
+            routing_category=draft.routing_category,
         )
 
     updated_draft = await draft_repo.set_urgency(
@@ -106,12 +124,17 @@ async def apply_manual_urgency_edit(
         actor=actor,
         mailbox=thread.mailbox,
     )
-    return UrgencyEditResponseSchema(
-        urgency=request.new_urgency,
-        urgency_reason=request.reason,
-        updated_at=datetime.now(UTC),
-        draft_id=draft.id,
-        thread_id=draft.thread_id,
+    return UrgencyEditResult(
+        response=UrgencyEditResponseSchema(
+            urgency=request.new_urgency,
+            urgency_reason=request.reason,
+            updated_at=datetime.now(UTC),
+            draft_id=draft.id,
+            thread_id=draft.thread_id,
+        ),
+        previous_urgency=previous,
+        mailbox=thread.mailbox,
+        routing_category=draft.routing_category,
     )
 
 

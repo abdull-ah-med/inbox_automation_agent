@@ -16,8 +16,8 @@ from slowapi.util import get_remote_address
 from app.core.config import Settings, get_settings
 
 
-def client_ip_key(request: Request) -> str:
-    """Rate-limit key: peer IP, or proxy-supplied client IP when trusted.
+def resolve_client_ip(request: Request, settings: Settings) -> str:
+    """Rate-limit key IP from peer or trusted proxy headers.
 
     Enable ``TRUST_X_FORWARDED_FOR`` only behind a reverse proxy you control.
 
@@ -34,7 +34,6 @@ def client_ip_key(request: Request) -> str:
     - https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header
     - https://www.rfc-editor.org/rfc/rfc7239 (Forwarded / XFF semantics)
     """
-    settings = get_settings()
     if settings.trust_x_forwarded_for:
         real_ip = (request.headers.get("x-real-ip") or "").strip()
         if real_ip:
@@ -46,6 +45,11 @@ def client_ip_key(request: Request) -> str:
             if client:
                 return client
     return get_remote_address(request)
+
+
+def client_ip_key(request: Request) -> str:
+    """SlowAPI key func: resolve IP using process settings."""
+    return resolve_client_ip(request, get_settings())
 
 
 def limiter_storage_uri(settings: Settings) -> str:

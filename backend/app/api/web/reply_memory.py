@@ -16,7 +16,7 @@ from app.models.schemas.reply_memory import (
     ReplyMemoryResponseSchema,
     ReplyMemoryUpdateSchema,
 )
-from app.repositories import reply_embedding_repo
+from app.services import reply_memory_service
 
 router = APIRouter(prefix="/api/reply-memory", tags=["reply-memory"])
 
@@ -37,7 +37,7 @@ async def list_reply_memory(
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[ReplyMemoryResponseSchema]:
     _ = request, response
-    rows = await reply_embedding_repo.list_reply_embeddings(
+    rows = await reply_memory_service.list_memories(
         session,
         mailbox=mailbox,
         limit=100,
@@ -60,7 +60,7 @@ async def update_reply_memory(
     _admin: CurrentAdmin,
 ) -> ReplyMemoryResponseSchema:
     _ = request, response
-    updated = await reply_embedding_repo.set_excluded(
+    updated = await reply_memory_service.set_excluded(
         session,
         reply_id,
         is_excluded=body.is_excluded,

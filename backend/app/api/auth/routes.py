@@ -165,6 +165,14 @@ async def refresh(
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
         )
+    # Commit succeeded — only then write Redis grace (avoids phantom tokens).
+    if result.rotated_from_hash is not None:
+        await auth_service.store_refresh_grace(
+            redis,
+            settings,
+            result.rotated_from_hash,
+            result,
+        )
     _set_refresh_cookie(response, settings, result.refresh_plaintext)
     _set_csrf_cookie(response, settings)
     return result.response

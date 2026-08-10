@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     target_mailboxes: str = ""
     # When false, Slack Bolt is not constructed and review cards are skipped
     # (pipeline still completes; slack_delivery=skipped_unconfigured).
-    slack_enabled: bool = True
+    slack_enabled: bool = False
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
     slack_review_channel_id: str = ""
@@ -113,6 +113,7 @@ class Settings(BaseSettings):
         "enable_dev_routes",
         "cookie_secure",
         "trust_x_forwarded_for",
+        "slack_enabled",
         mode="before",
     )
     @classmethod

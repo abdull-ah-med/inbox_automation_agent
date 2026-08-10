@@ -70,6 +70,7 @@ async def update_password(
     user_id: uuid.UUID,
     password_hash: str,
 ) -> None:
+    """Intentional password change: bump token_version and password_updated_at."""
     now = datetime.now(UTC)
     stmt = (
         update(User)
@@ -79,6 +80,29 @@ async def update_password(
             password_updated_at=now,
             updated_at=now,
             token_version=User.token_version + 1,
+        )
+    )
+    await session.execute(stmt)
+
+
+async def update_password_hash_only(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    password_hash: str,
+) -> None:
+    """Upgrade Argon2 params on login without invalidating sessions.
+
+    Does not touch password_updated_at or token_version. argon2-cffi
+    check_needs_rehash:
+    https://argon2-cffi.readthedocs.io/en/stable/api.html
+    """
+    now = datetime.now(UTC)
+    stmt = (
+        update(User)
+        .where(User.id == user_id)
+        .values(
+            password_hash=password_hash,
+            updated_at=now,
         )
     )
     await session.execute(stmt)
