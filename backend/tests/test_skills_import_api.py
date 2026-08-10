@@ -25,7 +25,6 @@ from app.models.schemas.auth import UserMe
 from app.models.schemas.skill import (
     ImportSkillResultSchema,
     SkillFileMetaSchema,
-    SkillResponseSchema,
 )
 from app.repositories.skill_files_repo import SkillFileRow
 from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
@@ -353,19 +352,6 @@ async def test_import_packaging_error_422(app_factory) -> None:
 async def test_list_and_stream_skill_files(app_factory) -> None:
     app = app_factory(role="admin")
     skill_id = uuid.uuid4()
-    skill = SkillResponseSchema.model_validate(
-        {
-            "id": skill_id,
-            "name": "demo-skill",
-            "description": "d",
-            "content": "body",
-            "category": "billing",
-            "is_active": True,
-            "source_kind": "imported",
-            "created_at": datetime.now(UTC),
-            "updated_at": datetime.now(UTC),
-        }
-    )
     meta = SkillFileMetaSchema.model_validate(
         {
             "id": uuid.uuid4(),
