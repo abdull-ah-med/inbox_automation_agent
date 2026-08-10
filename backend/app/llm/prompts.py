@@ -14,7 +14,7 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-08-05.1"
+PROMPT_VERSION = "2026-08-10.1"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 

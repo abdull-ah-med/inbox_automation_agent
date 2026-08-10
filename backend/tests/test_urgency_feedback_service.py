@@ -90,8 +90,10 @@ async def test_apply_manual_urgency_edit_updates_draft_and_thread() -> None:
             settings=_settings(),
         )
 
-    assert result.urgency == "HIGH"
-    assert result.urgency_reason == "SLA deadline tomorrow"
+    assert result.response.urgency == "HIGH"
+    assert result.response.urgency_reason == "SLA deadline tomorrow"
+    assert result.previous_urgency == "LOW"
+    assert result.mailbox == "elise@example.com"
     draft_set.assert_awaited_once()
     thread_set.assert_awaited_once()
     audit_mock.assert_awaited_once()

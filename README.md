@@ -54,11 +54,11 @@ Stop any host Postgres/Redis already bound to those ports first.
 docker compose exec backend python -m scripts.seed_user --email you@example.com --password 'YourSecurePass1!'
 ```
 
-Optional host frontend: `cd frontend/web && npm run dev` (`NEXT_PUBLIC_API_BASE_URL=http://localhost:8000`).
+Optional host frontend: `cd frontend/web && npm run dev`. Leave `NEXT_PUBLIC_API_BASE_URL` empty so the Next.js rewrite proxies `/auth` and `/api` to FastAPI (`BACKEND_PROXY_URL`, default `http://localhost:8000`) and CSRF cookies stay same-origin.
 
 ### Production (EC2)
 
-Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay, which also builds and runs the Next.js frontend. Both backend and frontend bind to `127.0.0.1` only — a host nginx (with a real TLS cert) is the sole public entry point and reverse-proxies to both. Outside `ENVIRONMENT=local`, `Settings.validate_production_security()` refuses to start the app unless TLS Redis (`rediss://` + password), a non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, a `JWT_SECRET` (≥64 chars), and the Anthropic/Graph/Slack/MSAL credentials are all set — see `backend/.env.example` for the full list.
+Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overlay, which also builds and runs the Next.js frontend. Both backend and frontend bind to `127.0.0.1` only — a host nginx (with a real TLS cert) is the sole public entry point and reverse-proxies to both. Outside `ENVIRONMENT=local`, `Settings.validate_production_security()` refuses to start the app unless TLS Redis (`rediss://` + password), a non-localhost `DATABASE_URL`, HTTPS `FRONTEND_ORIGIN`, a `JWT_SECRET` (≥64 chars), and the Anthropic/Graph/MSAL credentials are all set. Slack bot token / signing secret / channel are required **only when** `SLACK_ENABLED=true` — see `backend/.env.example` for the full list. CI deploy pins the EC2 checkout to the verified `GITHUB_SHA` (not branch tip).
 
 0. **Provision the EC2 instance** (one-time):
 
@@ -176,13 +176,15 @@ Settings load from `backend/.env`. Key variables:
 | `ANTHROPIC_API_KEY` | Claude API access |
 | `JWT_SECRET` | Signing key for web access tokens (≥64 chars outside local) |
 | `FRONTEND_ORIGIN` | Allowed web origin (e.g. `http://localhost:3000`) |
-| `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` / `SLACK_REVIEW_CHANNEL_ID` | Optional Slack review path |
+| `SLACK_ENABLED` | Opt-in Slack review cards (default `false`) |
+| `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` / `SLACK_REVIEW_CHANNEL_ID` | Required only when `SLACK_ENABLED=true` |
 
 Frontend (`frontend/web/.env.local`):
 
 | Variable | Purpose |
 |----------|---------|
-| `NEXT_PUBLIC_API_BASE_URL` | Backend base URL (default `http://localhost:8000`) |
+| `NEXT_PUBLIC_API_BASE_URL` | Backend base URL; leave empty for same-origin (local rewrites / nginx) |
+| `BACKEND_PROXY_URL` | Dev-only FastAPI origin for Next rewrites (default `http://localhost:8000`) |
 
 ## Graph integration
 

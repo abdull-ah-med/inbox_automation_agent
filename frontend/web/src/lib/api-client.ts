@@ -27,9 +27,9 @@ import type {
   UserMe,
 } from "@/lib/types";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
-  "http://localhost:8000";
+// Empty = same-origin (local Next rewrites / production nginx). Cross-origin
+// only when NEXT_PUBLIC_API_BASE_URL is set explicitly.
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 const CSRF_COOKIE = "itr_csrf";
 const CSRF_HEADER = "X-CSRF-Token";

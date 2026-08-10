@@ -143,6 +143,11 @@ def _build_user_content(
         )
 
     return (
+        f"Standing instructions (skills):\n{skills_block}\n\n"
+        f"Previously flagged issues to avoid:\n{constraints_block}\n\n"
+        f"Tone profile:\n{profile_block}\n\n"
+        f"Tone references (similar past replies):\n{tone_block}\n\n"
+        f"Past urgency corrections (prefer these signals when relevant):\n{urgency_block}\n\n"
         f"Mailbox: {email.mailbox}\n"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
@@ -152,7 +157,6 @@ def _build_user_content(
         f"CC: {cc_list}\n"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
-        f"Standing instructions (skills):\n{skills_block}\n\n"
         f"Body:\n{body}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n\n"
@@ -164,11 +168,7 @@ def _build_user_content(
         f"- needs_context: {triage.needs_context}\n"
         f"- context_reason: {context_reason}\n"
         f"- routing_category: {triage.routing_category}\n\n"
-        f"Cross-thread context:\n{cross_block}\n\n"
-        f"Tone profile:\n{profile_block}\n\n"
-        f"Tone references (similar past replies):\n{tone_block}\n\n"
-        f"Previously flagged issues to avoid:\n{constraints_block}\n\n"
-        f"Past urgency corrections (prefer these signals when relevant):\n{urgency_block}\n"
+        f"Cross-thread context:\n{cross_block}\n"
         f"{instruction_block}"
     )
 

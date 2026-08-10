@@ -1159,8 +1159,8 @@ async def test_webhook_rejects_oversized_body_without_content_length() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_rate_limit_acks_without_enqueue() -> None:
-    """Over-limit Graph traffic must still ACK 202 (never 429)."""
+async def test_webhook_rate_limit_still_enqueues_valid_client_state() -> None:
+    """Over-limit with matching clientState must still ACK 202 and enqueue."""
     from app.core.dependencies import get_redis, get_settings
 
     app = FastAPI()
@@ -1169,9 +1169,9 @@ async def test_webhook_rate_limit_acks_without_enqueue() -> None:
         environment="local",
         graph_webhook_client_state="secret",
         webhook_rate_limit_per_minute=10,
+        trust_x_forwarded_for=False,
     )
     redis = _webhook_redis()
-    # Simulate shared peer key already over limit.
     redis.eval = AsyncMock(return_value=11)
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_redis] = lambda: redis
@@ -1198,9 +1198,97 @@ async def test_webhook_rate_limit_acks_without_enqueue() -> None:
             )
 
     assert response.status_code == 202
-    enqueue_mock.assert_not_called()
-    # Rate key must be derived from peer (testclient), not spoofed XFF.
+    enqueue_mock.assert_called_once()
+    # Untrusted: rate key from peer, not spoofed XFF.
     call_args = redis.eval.await_args
     assert call_args is not None
     rate_key = call_args.args[2]
+    assert "203.0.113.99" not in rate_key
+
+
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_skips_bad_client_state() -> None:
+    """Over-limit + wrong clientState ACKs 202 without enqueue (abuse path)."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        webhook_rate_limit_per_minute=10,
+    )
+    redis = _webhook_redis()
+    redis.eval = AsyncMock(return_value=11)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+
+    with patch(
+        "app.api.webhooks.graph.enqueue",
+    ) as enqueue_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "wrong",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+            )
+
+    assert response.status_code == 202
+    enqueue_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_uses_x_real_ip_when_trusted() -> None:
+    """When TRUST_X_FORWARDED_FOR, bucket on nginx X-Real-IP."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhook_client_state="secret",
+        webhook_rate_limit_per_minute=10,
+        trust_x_forwarded_for=True,
+    )
+    redis = _webhook_redis()
+    redis.eval = AsyncMock(return_value=1)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+
+    with patch("app.api.webhooks.graph.enqueue"):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "secret",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+                headers={
+                    "X-Real-IP": "198.51.100.10",
+                    "X-Forwarded-For": "203.0.113.99, 198.51.100.10",
+                },
+            )
+
+    call_args = redis.eval.await_args
+    assert call_args is not None
+    rate_key = call_args.args[2]
+    assert "198.51.100.10" in rate_key
     assert "203.0.113.99" not in rate_key

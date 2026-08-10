@@ -42,8 +42,7 @@ from app.models.schemas.skill import (
     SkillResponseSchema,
     SkillUpdateSchema,
 )
-from app.repositories import skill_files_repo, skill_repo
-from app.services import skill_archive_service, skill_embedding_service
+from app.services import skill_archive_service, skill_service
 
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
@@ -74,7 +73,7 @@ async def list_skills(
     _user: CurrentUser,
 ) -> list[SkillResponseSchema]:
     _ = request, response
-    return await skill_repo.list_all(session)
+    return await skill_service.list_skills(session)
 
 
 @router.post(
@@ -199,10 +198,7 @@ async def list_skill_files(
     _user: CurrentUser,
 ) -> list[SkillFileMetaSchema]:
     _ = request, response
-    skill = await skill_repo.get_by_id(session, skill_id)
-    if skill is None:
-        raise SkillNotFoundError(f"Skill not found: {skill_id}")
-    return await skill_files_repo.list_by_skill(session, skill_id)
+    return await skill_service.list_skill_files(session, skill_id)
 
 
 @router.get(
@@ -219,20 +215,17 @@ async def get_skill_file(
     _admin: CurrentAdmin,
 ) -> RawResponse:
     _ = request, response
-    skill = await skill_repo.get_by_id(session, skill_id)
-    if skill is None:
-        raise SkillNotFoundError(f"Skill not found: {skill_id}")
     path = unquote(relative_path)
-    row = await skill_files_repo.get_by_path(
-        session,
-        skill_id=skill_id,
-        relative_path=path,
-    )
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File not found: {path}",
-        )
+    try:
+        row = await skill_service.get_skill_file(session, skill_id, path)
+    except SkillNotFoundError as exc:
+        detail = str(exc)
+        if detail.startswith("File not found:"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=detail,
+            ) from exc
+        raise
     return RawResponse(
         content=row.content,
         media_type=row.mime_type,
@@ -258,9 +251,13 @@ async def create_skill(
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
-    # CurrentAdmin/CurrentUser already autobegins this session — do not begin again.
     try:
-        created = await skill_repo.create(session, body)
+        created = await skill_service.create_skill(
+            session,
+            body,
+            settings=settings,
+            openai_client=openai_client,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -269,15 +266,6 @@ async def create_skill(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SkillNameConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    await skill_embedding_service.maybe_embed_skill(
-        session,
-        skill_id=created.id,
-        name=created.name,
-        description=created.description,
-        body=created.content,
-        settings=settings,
-        openai_client=openai_client,
-    )
     await session.commit()
     return created
 
@@ -300,7 +288,13 @@ async def update_skill(
 ) -> SkillResponseSchema:
     _ = request, response
     try:
-        updated = await skill_repo.update_skill(session, skill_id, body)
+        updated = await skill_service.update_skill(
+            session,
+            skill_id,
+            body,
+            settings=settings,
+            openai_client=openai_client,
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -309,17 +303,6 @@ async def update_skill(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SkillNameConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    if updated is None:
-        raise SkillNotFoundError(f"Skill not found: {skill_id}")
-    await skill_embedding_service.maybe_embed_skill(
-        session,
-        skill_id=updated.id,
-        name=updated.name,
-        description=updated.description,
-        body=updated.content,
-        settings=settings,
-        openai_client=openai_client,
-    )
     await session.commit()
     return updated
 
@@ -337,7 +320,5 @@ async def delete_skill(
     _admin: CurrentAdmin,
 ) -> None:
     _ = request, response
-    deleted = await skill_repo.delete_skill(session, skill_id)
-    if not deleted:
-        raise SkillNotFoundError(f"Skill not found: {skill_id}")
+    await skill_service.delete_skill(session, skill_id)
     await session.commit()

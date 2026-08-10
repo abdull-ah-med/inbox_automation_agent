@@ -10,11 +10,10 @@ import type { NextConfig } from "next";
  * Refs:
  * - https://nextjs.org/docs/app/api-reference/config/next-config-js/headers
  * - https://nextjs.org/docs/app/guides/content-security-policy
+ * - https://nextjs.org/docs/app/api-reference/config/next-config-js/rewrites
  */
 
-const apiBase =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
-  "http://localhost:8000";
+const rawApiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 if (
   process.env.NODE_ENV === "production" &&
@@ -31,9 +30,15 @@ const scriptSrc = isProd
   ? "script-src 'self' 'unsafe-inline'"
   : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
 
+// Same-origin (empty API base) uses connect-src 'self' only — matches local
+// Next rewrites and production nginx. Cross-origin API base is listed explicitly.
+const connectSrc = rawApiBase
+  ? `connect-src 'self' ${rawApiBase}`
+  : "connect-src 'self'";
+
 const contentSecurityPolicy = [
   "default-src 'self'",
-  `connect-src 'self' ${apiBase}`,
+  connectSrc,
   "img-src 'self' data:",
   "style-src 'self' 'unsafe-inline'",
   scriptSrc,
@@ -75,6 +80,24 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: securityHeaders,
       },
+    ];
+  },
+  /**
+   * Local: proxy /auth and /api to FastAPI so cookies (including CSRF) are
+   * same-origin with the SPA — same pattern as production nginx.
+   * Production builds skip rewrites (nginx terminates TLS and proxies).
+   *
+   * https://nextjs.org/docs/app/api-reference/config/next-config-js/rewrites
+   */
+  async rewrites() {
+    if (isProd) {
+      return [];
+    }
+    const backend =
+      process.env.BACKEND_PROXY_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+    return [
+      { source: "/auth/:path*", destination: `${backend}/auth/:path*` },
+      { source: "/api/:path*", destination: `${backend}/api/:path*` },
     ];
   },
 };

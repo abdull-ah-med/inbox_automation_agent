@@ -109,7 +109,15 @@ jobs:
         run: |
           set -euo pipefail
 
-          COMMANDS_JSON=$(jq -Rs 'split("\n")' deploy/ssm-deploy.sh)
+          # Pin EC2 checkout to the commit this workflow already verified.
+          # https://docs.github.com/en/actions/learn-github-actions/variables
+          {
+            echo "export DEPLOY_SHA='${GITHUB_SHA}'"
+            echo "export BRANCH='dev'"
+            cat deploy/ssm-deploy.sh
+          } > /tmp/ssm-deploy-pinned.sh
+
+          COMMANDS_JSON=$(jq -Rs 'split("\n")' /tmp/ssm-deploy-pinned.sh)
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \

@@ -136,3 +136,31 @@ async def find_similar_replies(
             mailbox=mailbox,
         )
         return []
+
+
+async def list_memories(
+    session: AsyncSession,
+    *,
+    mailbox: str | None = None,
+    limit: int = 100,
+) -> list:
+    """List stored reply memories for the settings UI."""
+    return await reply_embedding_repo.list_reply_embeddings(
+        session,
+        mailbox=mailbox,
+        limit=limit,
+    )
+
+
+async def set_excluded(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+    *,
+    is_excluded: bool,
+):
+    """Toggle exclusion for a reply memory row."""
+    return await reply_embedding_repo.set_excluded(
+        session,
+        reply_id,
+        is_excluded=is_excluded,
+    )

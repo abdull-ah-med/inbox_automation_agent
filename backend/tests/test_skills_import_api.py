@@ -388,15 +388,11 @@ async def test_list_and_stream_skill_files(app_factory) -> None:
     try:
         with (
             patch(
-                "app.api.web.skills.skill_repo.get_by_id",
-                AsyncMock(return_value=skill),
-            ),
-            patch(
-                "app.api.web.skills.skill_files_repo.list_by_skill",
+                "app.api.web.skills.skill_service.list_skill_files",
                 AsyncMock(return_value=[meta]),
             ),
             patch(
-                "app.api.web.skills.skill_files_repo.get_by_path",
+                "app.api.web.skills.skill_service.get_skill_file",
                 AsyncMock(return_value=file_row),
             ),
         ):

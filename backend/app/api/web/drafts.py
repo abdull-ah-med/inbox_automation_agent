@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
-from app.core.exceptions import DraftNotFoundError
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import DraftView
 from app.models.schemas.feedback import DraftApproveSchema, DraftRejectSchema, DraftWrongSchema
@@ -19,7 +18,6 @@ from app.models.schemas.urgency_feedback import (
     UrgencyEditRequestSchema,
     UrgencyEditResponseSchema,
 )
-from app.repositories import draft_repo, thread_repo
 from app.services import draft_feedback_service, thread_view_service, urgency_feedback_service
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
@@ -126,13 +124,6 @@ async def edit_draft_urgency(
 ) -> UrgencyEditResponseSchema:
     """Manually edit draft urgency with a required reason. Does not send email."""
     _ = request, response
-    existing = await draft_repo.get_draft_by_id(session, draft_id)
-    if existing is None:
-        raise DraftNotFoundError(f"Draft not found: {draft_id}")
-    previous = existing.urgency
-    thread = await thread_repo.get_by_id(session, existing.thread_id)
-    mailbox = thread.mailbox if thread is not None else "unknown"
-
     result = await urgency_feedback_service.apply_manual_urgency_edit(
         session,
         draft_id,
@@ -145,17 +136,17 @@ async def edit_draft_urgency(
 
     await urgency_feedback_service.store_urgency_feedback_memory(
         draft_id=draft_id,
-        thread_id=result.thread_id,
-        mailbox=mailbox,
-        routing_category=existing.routing_category,
-        previous_urgency=previous,
+        thread_id=result.response.thread_id,
+        mailbox=result.mailbox,
+        routing_category=result.routing_category,
+        previous_urgency=result.previous_urgency,
         new_urgency=body.new_urgency,
         reason=body.reason,
         edited_by_user_id=user.id,
         settings=settings,
         openai_client=openai_client,
     )
-    return result
+    return result.response
 
 
 @router.post(

@@ -13,6 +13,7 @@ from app.core.config import Settings
 from app.core.outlook_links import outlook_web_link
 from app.models.schemas.dashboard import (
     AppliedSkillView,
+    AuditEntry,
     DraftToolCallView,
     DraftView,
     DraftVsSentDiff,
@@ -219,3 +220,14 @@ async def list_thread_messages(
         )
         for m in messages
     ]
+
+
+async def list_thread_audit(
+    session: AsyncSession,
+    settings: Settings,
+    thread_id: uuid.UUID,
+) -> list[AuditEntry]:
+    thread = await thread_repo.get_by_id(session, thread_id)
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return await audit_repo.list_by_thread_id(session, thread_id, thread.conversation_id)
