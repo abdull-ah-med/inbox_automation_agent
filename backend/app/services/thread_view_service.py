@@ -230,4 +230,9 @@ async def list_thread_audit(
     thread = await thread_repo.get_by_id(session, thread_id)
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
-    return await audit_repo.list_by_thread_id(session, thread_id, thread.conversation_id)
+    return await audit_repo.list_by_thread_id(
+        session,
+        thread_id,
+        thread.conversation_id,
+        mailbox=thread.mailbox,
+    )

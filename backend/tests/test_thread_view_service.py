@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -316,3 +317,41 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
     assert detail.draft_vs_sent_diff is not None
     assert "Line C" in detail.draft_vs_sent_diff.added
     assert "Line B" in detail.draft_vs_sent_diff.removed
+
+
+@pytest.mark.asyncio
+async def test_list_thread_audit_requires_mailbox_scope() -> None:
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    thread_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = SimpleNamespace(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-audit-1",
+        subject="Hello",
+        state="AWAITING_ACTION",
+        urgency="NORMAL",
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    audit_mock = AsyncMock(return_value=[])
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            audit_mock,
+        ),
+    ):
+        await thread_view_service.list_thread_audit(session, settings, thread_id)
+
+    audit_mock.assert_awaited_once_with(
+        session,
+        thread_id,
+        "conv-audit-1",
+        mailbox="sales@example.com",
+    )

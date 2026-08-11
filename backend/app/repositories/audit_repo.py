@@ -162,13 +162,19 @@ async def list_by_conversation(
     session: AsyncSession,
     conversation_id: str,
     *,
-    mailbox: str | None = None,
+    mailbox: str,
     limit: int = 100,
 ) -> list[AuditEntry]:
-    conditions = [AuditEvent.conversation_id == conversation_id]
-    if mailbox is not None:
-        conditions.append(AuditEvent.mailbox == mailbox)
-    stmt = select(AuditEvent).where(*conditions).order_by(AuditEvent.created_at.asc()).limit(limit)
+    """List audit events for one conversation, always scoped to a mailbox."""
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.conversation_id == conversation_id,
+            AuditEvent.mailbox == mailbox,
+        )
+        .order_by(AuditEvent.created_at.asc())
+        .limit(limit)
+    )
     result = await session.execute(stmt)
     return [_to_entry(row) for row in result.scalars().all()]
 
@@ -178,10 +184,10 @@ async def list_by_thread_id(
     thread_id: uuid.UUID,
     conversation_id: str,
     *,
-    mailbox: str | None = None,
+    mailbox: str,
     limit: int = 100,
 ) -> list[AuditEntry]:
-    """Audit events are keyed by conversation_id (+ mailbox when provided)."""
+    """Audit events are keyed by conversation_id + mailbox."""
     _ = thread_id
     return await list_by_conversation(
         session,

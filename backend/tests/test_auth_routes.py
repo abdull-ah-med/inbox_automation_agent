@@ -218,3 +218,98 @@ async def test_cors_preflight_allows_reply_memory_patch(
         assert resp.status_code in {200, 204}
         allow = resp.headers.get("access-control-allow-methods", "")
         assert "PATCH" in allow.upper(), f"PATCH missing from {allow!r}"
+
+
+@pytest.mark.asyncio
+async def test_change_password_requires_csrf(app, local_settings: Settings) -> None:
+    """Change-password without CSRF is forbidden even with a Bearer token."""
+    from app.core.dependencies_auth import get_current_user
+
+    user = UserMe(
+        id=uuid.uuid4(),
+        email="elise@example.com",
+        role="user",
+        created_at=datetime.now(UTC),
+    )
+
+    async def fake_user() -> UserMe:
+        return user
+
+    app.dependency_overrides[get_current_user] = fake_user
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/auth/change-password",
+            json={
+                "current_password": "CorrectHorseBattery1!",
+                "new_password": "CorrectHorseBattery2!",
+            },
+            headers={
+                **_origin_headers(local_settings),
+                "Authorization": "Bearer access.jwt.token",
+            },
+        )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_change_password_with_csrf(app, local_settings: Settings) -> None:
+    """Change-password with matching CSRF clears cookies after success."""
+    from app.core.dependencies_auth import get_current_user
+
+    user = UserMe(
+        id=uuid.uuid4(),
+        email="elise@example.com",
+        role="user",
+        created_at=datetime.now(UTC),
+    )
+    csrf = mint_csrf(local_settings.jwt_secret)
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    async def fake_user() -> UserMe:
+        return user
+
+    app.dependency_overrides[get_db] = fake_db
+    app.dependency_overrides[get_current_user] = fake_user
+    with patch(
+        "app.api.auth.routes.auth_service.change_password",
+        AsyncMock(return_value=None),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(local_settings.csrf_cookie_name, csrf, path="/")
+            client.cookies.set(
+                local_settings.refresh_cookie_name, "opaque", path="/auth"
+            )
+            resp = await client.post(
+                "/auth/change-password",
+                json={
+                    "current_password": "CorrectHorseBattery1!",
+                    "new_password": "CorrectHorseBattery2!",
+                },
+                headers={
+                    **_origin_headers(local_settings),
+                    "Authorization": "Bearer access.jwt.token",
+                    local_settings.csrf_header_name: csrf,
+                },
+            )
+    assert resp.status_code == 204
+    # Cookie-clearing Set-Cookie headers should mention both auth cookies.
+    set_cookie = resp.headers.get("set-cookie", "")
+    if not set_cookie:
+        # httpx may expose multi-value headers via raw list
+        set_cookie = " ".join(
+            v.decode() if isinstance(v, bytes) else str(v)
+            for k, v in resp.headers.multi_items()
+            if k.lower() == "set-cookie"
+        )
+    joined = set_cookie.lower()
+    assert local_settings.refresh_cookie_name in joined
+    assert local_settings.csrf_cookie_name in joined

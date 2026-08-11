@@ -270,10 +270,15 @@ def test_skills_injected_into_user_content() -> None:
     assert "Standing instructions (skills):" in content
     assert "Always CC Jordan on drug-screen emails" in content
     assert "Acknowledge within 24h" in content
+    assert "<untrusted_skills>" in content
+    assert "<untrusted_email>" in content
     # Locked learning-loop order: skills before email body.
     assert content.index("Standing instructions (skills):") < content.index("Body:")
     assert content.index("Previously flagged issues to avoid:") < content.index("Tone profile:")
     assert content.index("Tone profile:") < content.index("Mailbox:")
+    assert content.index("<untrusted_skills>") < content.index("<untrusted_email>")
+    # Triage is system-derived and stays outside the untrusted email wrapper.
+    assert content.index("</untrusted_email>") < content.index("Triage result:")
 
 
 def test_skill_not_found_exception_exists() -> None:
