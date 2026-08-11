@@ -34,6 +34,9 @@ import type {
   TriageFlags,
 } from "@/lib/types"
 
+const REVIEW_TAB_TRIGGER_CLASS =
+  "h-full cursor-pointer rounded-md border-0 px-2 py-1.5 text-xs shadow-none data-active:bg-white data-active:shadow-sm sm:text-sm dark:data-active:border-transparent dark:data-active:bg-gray-950 dark:data-active:text-gray-100"
+
 const Panel = ({
   title,
   children,
@@ -287,25 +290,16 @@ export const ThreadTriageSidebar = ({
 
       <Tabs defaultValue="classification" className="w-full gap-3">
         <TabsList
-          className="grid h-auto w-full grid-cols-3 bg-gray-100 p-1 dark:bg-gray-800"
+          className="grid h-9 w-full grid-cols-3 rounded-lg border border-gray-200 bg-gray-100 p-1 dark:border-gray-700 dark:bg-gray-800"
           aria-label="Thread review sections"
         >
-          <TabsTrigger
-            value="classification"
-            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
-          >
+          <TabsTrigger value="classification" className={REVIEW_TAB_TRIGGER_CLASS}>
             Classification
           </TabsTrigger>
-          <TabsTrigger
-            value="draft"
-            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
-          >
+          <TabsTrigger value="draft" className={REVIEW_TAB_TRIGGER_CLASS}>
             Draft
           </TabsTrigger>
-          <TabsTrigger
-            value="audit"
-            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
-          >
+          <TabsTrigger value="audit" className={REVIEW_TAB_TRIGGER_CLASS}>
             Audit ({auditLog.length})
           </TabsTrigger>
         </TabsList>

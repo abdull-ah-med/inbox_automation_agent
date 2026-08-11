@@ -319,6 +319,35 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
     assert "Line B" in detail.draft_vs_sent_diff.removed
 
 
+def test_compute_draft_vs_sent_diff_ignores_quoted_history() -> None:
+    proposed = "Thanks for reaching out.\nWe can help."
+    sent = (
+        "Thanks for reaching out.\nWe can help.\n"
+        "\nFrom: Client <client@example.com>\n"
+        "Sent: Monday, August 11, 2026 9:00 AM\n"
+        "To: info@example.com\n"
+        "Subject: Help\n"
+        "\nOriginal question with https://orders.example.com/very/long/path"
+    )
+    diff = thread_view_service.compute_draft_vs_sent_diff(proposed, sent)
+    assert diff is not None
+    assert diff.added == []
+    assert diff.removed == []
+
+
+def test_compute_draft_vs_sent_diff_still_flags_reply_edits() -> None:
+    proposed = "Please call us.\nThanks"
+    sent = (
+        "Please email us.\nThanks\n"
+        "\n-----Original Message-----\n"
+        "From: Client\n"
+    )
+    diff = thread_view_service.compute_draft_vs_sent_diff(proposed, sent)
+    assert diff is not None
+    assert "Please email us." in diff.added
+    assert "Please call us." in diff.removed
+
+
 @pytest.mark.asyncio
 async def test_list_thread_audit_requires_mailbox_scope() -> None:
     settings = Settings(environment="local", target_mailboxes="sales@example.com")
