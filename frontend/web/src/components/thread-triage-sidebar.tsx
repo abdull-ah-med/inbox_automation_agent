@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Select } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api-client"
 import { formatEventName, formatRelativeTime } from "@/lib/design-tokens"
@@ -99,7 +100,6 @@ export const ThreadTriageSidebar = ({
   auditLog: AuditEntry[]
 }) => {
   const queryClient = useQueryClient()
-  const [showAudit, setShowAudit] = useState(false)
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [approveBody, setApproveBody] = useState("")
@@ -165,17 +165,6 @@ export const ThreadTriageSidebar = ({
       setActionError(error.message)
     },
   })
-
-  const handleToggleAudit = () => {
-    setShowAudit((value) => !value)
-  }
-
-  const handleAuditKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      handleToggleAudit()
-    }
-  }
 
   const handleOpenApprove = () => {
     setApproveBody(draft?.body ?? "")
@@ -255,7 +244,7 @@ export const ThreadTriageSidebar = ({
               />
             ) : (
               <p className="mt-1 text-sm text-gray-400 italic">
-                No teaching note yet — this thread hasn&apos;t produced a draft.
+                No teaching note yet. This thread hasn&apos;t produced a draft.
               </p>
             )}
           </div>
@@ -296,255 +285,274 @@ export const ThreadTriageSidebar = ({
         </div>
       </Panel>
 
-      <Panel title="Suggested Process">
-        {suggestedActions.length > 0 ? (
-          <ol className="space-y-3">
-            {suggestedActions
-              .slice()
-              .sort((a, b) => a.step - b.step)
-              .map((item) => (
-                <li key={`${item.step}-${item.action}`} className="flex gap-3">
-                  <span
-                    className="flex size-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                    aria-hidden="true"
-                  >
-                    {item.step}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      {item.action}
-                    </p>
-                    {item.stakeholder ? (
-                      <span className="mt-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                        {item.stakeholder}
+      <Tabs defaultValue="classification" className="w-full gap-3">
+        <TabsList
+          className="grid h-auto w-full grid-cols-3 bg-gray-100 p-1 dark:bg-gray-800"
+          aria-label="Thread review sections"
+        >
+          <TabsTrigger
+            value="classification"
+            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
+          >
+            Classification
+          </TabsTrigger>
+          <TabsTrigger
+            value="draft"
+            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
+          >
+            Draft
+          </TabsTrigger>
+          <TabsTrigger
+            value="audit"
+            className="cursor-pointer px-2 py-1.5 text-xs sm:text-sm"
+          >
+            Audit ({auditLog.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="classification" className="space-y-4 outline-none">
+          <Panel title="Suggested Process">
+            {suggestedActions.length > 0 ? (
+              <ol className="space-y-3">
+                {suggestedActions
+                  .slice()
+                  .sort((a, b) => a.step - b.step)
+                  .map((item) => (
+                    <li key={`${item.step}-${item.action}`} className="flex gap-3">
+                      <span
+                        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                        aria-hidden="true"
+                      >
+                        {item.step}
                       </span>
-                    ) : null}
-                    <p className="mt-1 text-xs text-gray-500">{item.rationale}</p>
-                  </div>
-                </li>
-              ))}
-          </ol>
-        ) : (
-          <p className="text-sm text-gray-500">
-            No suggested process — this thread hasn&apos;t produced a draft.
-          </p>
-        )}
-      </Panel>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                          {item.action}
+                        </p>
+                        {item.stakeholder ? (
+                          <span className="mt-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                            {item.stakeholder}
+                          </span>
+                        ) : null}
+                        <p className="mt-1 text-xs text-gray-500">{item.rationale}</p>
+                      </div>
+                    </li>
+                  ))}
+              </ol>
+            ) : (
+              <p className="text-sm text-gray-500">
+                No suggested process. This thread hasn&apos;t produced a draft.
+              </p>
+            )}
+          </Panel>
 
-      <Panel title="Triage">
-        {triage ? (
-          <div className="space-y-3">
-            <div className="flex flex-wrap gap-1.5">
-              {triage.is_spam != null ? (
-                <StatusBadge
-                  label={triage.is_spam ? "Spam" : "Not spam"}
-                  tone={triage.is_spam ? "red" : "green"}
-                />
-              ) : null}
-              {triage.has_action_items != null ? (
-                <StatusBadge
-                  label={triage.has_action_items ? "Action needed" : "No action"}
-                  tone={triage.has_action_items ? "amber" : "neutral"}
-                />
-              ) : null}
-              {triage.needs_context != null ? (
-                <StatusBadge
-                  label={triage.needs_context ? "Needs context" : "Context OK"}
-                  tone={triage.needs_context ? "amber" : "green"}
-                />
-              ) : null}
-            </div>
-            {triage.action_items_summary ? (
-              <Field label="Action items" value={triage.action_items_summary} />
-            ) : null}
-            {triage.spam_reason ? (
-              <Field label="Spam reason" value={triage.spam_reason} />
-            ) : null}
-            {triage.context_reason ? (
-              <Field label="Context reason" value={triage.context_reason} />
-            ) : null}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            No triage result yet. Classification may still be pending.
-          </p>
-        )}
-      </Panel>
-
-      <Panel title="Thread details">
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Category" value={thread.category ?? "—"} />
-            <Field label="Messages" value={thread.message_count} />
-            <Field label="Staleness" value={`${thread.staleness_hours.toFixed(1)}h`} />
-            <Field label="Draft" value={thread.has_draft ? "Available" : "None"} />
-          </div>
-          {thread.outlook_url ? (
-            <a
-              href={thread.outlook_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              tabIndex={0}
-              aria-label="Open thread in Outlook"
-              className="inline-block cursor-pointer text-sm text-blue-600 hover:underline dark:text-blue-400"
-            >
-              Open in Outlook
-            </a>
-          ) : null}
-        </div>
-      </Panel>
-
-      <Panel title="Draft reply">
-        {draft ? (
-          <div className="space-y-3">
-            {badge ? (
-              <StatusBadge label={badge.label} tone={badge.tone} />
-            ) : null}
-            <Field label="Subject" value={draft.subject} />
-            <div>
-              <p className="text-xs text-gray-400">Body</p>
-              <div className="mt-1 overflow-auto">
-                <EmailBody text={draft.body} />
-              </div>
-            </div>
-            {draft.forward_to ? (
-              <Field label="Forward to" value={draft.forward_to} />
-            ) : null}
-            {draft.feedback_note ? (
-              <Field label="Feedback note" value={draft.feedback_note} />
-            ) : null}
-            {draft.approval_note ? (
-              <div className="space-y-1">
-                <Field label="Learning context" value={draft.approval_note} />
-                {draft.approval_scope ? (
-                  <StatusBadge
-                    label={
-                      draft.approval_scope === "similar"
-                        ? "Applies to similar emails"
-                        : "This thread only"
-                    }
-                    tone="blue"
-                  />
+          <Panel title="Triage">
+            {triage ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-1.5">
+                  {triage.is_spam != null ? (
+                    <StatusBadge
+                      label={triage.is_spam ? "Spam" : "Not spam"}
+                      tone={triage.is_spam ? "red" : "green"}
+                    />
+                  ) : null}
+                  {triage.has_action_items != null ? (
+                    <StatusBadge
+                      label={triage.has_action_items ? "Action needed" : "No action"}
+                      tone={triage.has_action_items ? "amber" : "neutral"}
+                    />
+                  ) : null}
+                  {triage.needs_context != null ? (
+                    <StatusBadge
+                      label={triage.needs_context ? "Needs context" : "Context OK"}
+                      tone={triage.needs_context ? "amber" : "green"}
+                    />
+                  ) : null}
+                </div>
+                {triage.action_items_summary ? (
+                  <Field label="Action items" value={triage.action_items_summary} />
+                ) : null}
+                {triage.spam_reason ? (
+                  <Field label="Spam reason" value={triage.spam_reason} />
+                ) : null}
+                {triage.context_reason ? (
+                  <Field label="Context reason" value={triage.context_reason} />
                 ) : null}
               </div>
-            ) : null}
-
-            <div>
-              <p className="text-xs text-gray-400">Skills used</p>
-              {(draft.applied_skills?.length ?? 0) === 0 ? (
-                <p className="mt-1 text-sm text-gray-500">
-                  No skills applied for this draft
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-2">
-                  {draft.applied_skills.map((skill) => {
-                    const refs = (draft.tool_calls ?? [])
-                      .filter(
-                        (call) =>
-                          call.skill_id === skill.id &&
-                          !call.is_error &&
-                          Boolean(call.path),
-                      )
-                      .map((call) => call.path)
-                    const uniqueRefs = [...new Set(refs)]
-                    return (
-                      <li key={skill.id} className="space-y-1">
-                        <StatusBadge label={skill.name} tone="blue" />
-                        {uniqueRefs.length > 0 ? (
-                          <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600 dark:text-gray-400">
-                            {uniqueRefs.map((path) => (
-                              <li key={path}>{path}</li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-
-            {actionError ? (
-              <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-                {actionError}
-              </p>
-            ) : null}
-
-            <div className="flex flex-wrap gap-2 pt-1">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                tabIndex={0}
-                aria-label="Approve draft"
-                disabled={feedbackDone || busy}
-                onClick={handleOpenApprove}
-                onKeyDown={handleApproveKeyDown}
-              >
-                <Check aria-hidden="true" />
-                Approve
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                tabIndex={0}
-                aria-label="Reject draft"
-                disabled={feedbackDone || busy}
-                onClick={() => setRejectOpen(true)}
-                onKeyDown={handleRejectKeyDown}
-              >
-                <X aria-hidden="true" />
-                Reject
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">No draft generated for this thread.</p>
-        )}
-      </Panel>
-
-      <Panel title="Audit">
-        <button
-          type="button"
-          tabIndex={0}
-          aria-expanded={showAudit}
-          aria-label="Toggle audit log"
-          onClick={handleToggleAudit}
-          onKeyDown={handleAuditKeyDown}
-          className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
-        >
-          {showAudit ? "Hide audit log" : `Show audit log (${auditLog.length})`}
-        </button>
-        {showAudit ? (
-          <ul className="mt-3 space-y-2">
-            {auditLog.length === 0 ? (
-              <li className="text-sm text-gray-500">No audit events.</li>
             ) : (
-              auditLog.map((entry, index) => (
-                <li
-                  key={`${entry.timestamp}-${index}`}
-                  className="rounded border border-gray-100 p-2 dark:border-gray-800"
-                >
-                  <div className="flex justify-between gap-2">
-                    <span className="text-xs font-medium">
-                      {formatEventName(entry.event)}
-                    </span>
-                    <span className="text-xs text-gray-400">
-                      {formatRelativeTime(entry.timestamp)}
-                    </span>
-                  </div>
-                  {entry.detail ? (
-                    <p className="mt-1 line-clamp-3 text-xs text-gray-500">
-                      {entry.detail}
-                    </p>
-                  ) : null}
-                </li>
-              ))
+              <p className="text-sm text-gray-500">
+                No triage result yet. Classification may still be pending.
+              </p>
             )}
-          </ul>
-        ) : null}
-      </Panel>
+          </Panel>
+
+          <Panel title="Thread details">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Category" value={thread.category ?? "—"} />
+                <Field label="Messages" value={thread.message_count} />
+                <Field label="Staleness" value={`${thread.staleness_hours.toFixed(1)}h`} />
+                <Field label="Draft" value={thread.has_draft ? "Available" : "None"} />
+              </div>
+              {thread.outlook_url ? (
+                <a
+                  href={thread.outlook_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  tabIndex={0}
+                  aria-label="Open thread in Outlook"
+                  className="inline-block cursor-pointer text-sm text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Open in Outlook
+                </a>
+              ) : null}
+            </div>
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="draft" className="outline-none">
+          <Panel title="Draft reply">
+            {draft ? (
+              <div className="space-y-3">
+                {badge ? (
+                  <StatusBadge label={badge.label} tone={badge.tone} />
+                ) : null}
+                <Field label="Subject" value={draft.subject} />
+                <div>
+                  <p className="text-xs text-gray-400">Body</p>
+                  <div className="mt-1 overflow-auto">
+                    <EmailBody text={draft.body} />
+                  </div>
+                </div>
+                {draft.forward_to ? (
+                  <Field label="Forward to" value={draft.forward_to} />
+                ) : null}
+                {draft.feedback_note ? (
+                  <Field label="Feedback note" value={draft.feedback_note} />
+                ) : null}
+                {draft.approval_note ? (
+                  <div className="space-y-1">
+                    <Field label="Learning context" value={draft.approval_note} />
+                    {draft.approval_scope ? (
+                      <StatusBadge
+                        label={
+                          draft.approval_scope === "similar"
+                            ? "Applies to similar emails"
+                            : "This thread only"
+                        }
+                        tone="blue"
+                      />
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <div>
+                  <p className="text-xs text-gray-400">Skills used</p>
+                  {(draft.applied_skills?.length ?? 0) === 0 ? (
+                    <p className="mt-1 text-sm text-gray-500">
+                      No skills applied for this draft
+                    </p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {draft.applied_skills.map((skill) => {
+                        const refs = (draft.tool_calls ?? [])
+                          .filter(
+                            (call) =>
+                              call.skill_id === skill.id &&
+                              !call.is_error &&
+                              Boolean(call.path),
+                          )
+                          .map((call) => call.path)
+                        const uniqueRefs = [...new Set(refs)]
+                        return (
+                          <li key={skill.id} className="space-y-1">
+                            <StatusBadge label={skill.name} tone="blue" />
+                            {uniqueRefs.length > 0 ? (
+                              <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600 dark:text-gray-400">
+                                {uniqueRefs.map((path) => (
+                                  <li key={path}>{path}</li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                {actionError ? (
+                  <p className="text-sm text-red-600 dark:text-red-400" role="alert">
+                    {actionError}
+                  </p>
+                ) : null}
+
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    tabIndex={0}
+                    aria-label="Approve draft"
+                    disabled={feedbackDone || busy}
+                    onClick={handleOpenApprove}
+                    onKeyDown={handleApproveKeyDown}
+                  >
+                    <Check aria-hidden="true" />
+                    Approve
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    tabIndex={0}
+                    aria-label="Reject draft"
+                    disabled={feedbackDone || busy}
+                    onClick={() => setRejectOpen(true)}
+                    onKeyDown={handleRejectKeyDown}
+                  >
+                    <X aria-hidden="true" />
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No draft generated for this thread.</p>
+            )}
+          </Panel>
+        </TabsContent>
+
+        <TabsContent value="audit" className="outline-none">
+          <Panel title="Audit log">
+            <ul className="space-y-2">
+              {auditLog.length === 0 ? (
+                <li className="text-sm text-gray-500">No audit events.</li>
+              ) : (
+                auditLog.map((entry, index) => (
+                  <li
+                    key={`${entry.timestamp}-${index}`}
+                    className="rounded border border-gray-100 p-2 dark:border-gray-800"
+                  >
+                    <div className="flex justify-between gap-2">
+                      <span className="text-xs font-medium">
+                        {formatEventName(entry.event)}
+                      </span>
+                      <span className="text-xs text-gray-400">
+                        {formatRelativeTime(entry.timestamp)}
+                      </span>
+                    </div>
+                    {entry.detail ? (
+                      <p className="mt-1 line-clamp-3 text-xs text-gray-500">
+                        {entry.detail}
+                      </p>
+                    ) : null}
+                  </li>
+                ))
+              )}
+            </ul>
+          </Panel>
+        </TabsContent>
+      </Tabs>
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent size="lg">
@@ -574,7 +582,7 @@ export const ThreadTriageSidebar = ({
                   Learning note
                 </p>
                 <p className="mt-0.5 text-xs text-gray-500">
-                  Optional. Add guidance only if you want to teach the system —
+                  Optional. Add guidance only if you want to teach the system,
                   for example after an edit, or a rule that should apply to
                   similar emails later.
                 </p>

@@ -81,6 +81,10 @@ const renderSidebar = (draft: DraftView | null = baseDraft()) => {
   )
 }
 
+const openDraftTab = async (user: ReturnType<typeof userEvent.setup>) => {
+  await user.click(screen.getByRole("tab", { name: "Draft" }))
+}
+
 describe("ThreadTriageSidebar feedback buttons", () => {
   beforeEach(() => {
     approveMock.mockReset()
@@ -91,8 +95,10 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     markWrongMock.mockResolvedValue(baseDraft())
   })
 
-  it("renders exactly two action buttons when a draft is present", () => {
+  it("renders exactly two action buttons when a draft is present", async () => {
+    const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     expect(screen.getByRole("button", { name: "Approve draft" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reject draft" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Edit & Approve/i })).toBeNull()
@@ -102,6 +108,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("opens approve dialog with draft body prefilled", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     expect(dialog).toHaveAttribute("data-size", "lg")
@@ -113,6 +120,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("opens reject dialog at lg size", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
     expect(dialog).toHaveAttribute("data-size", "lg")
@@ -122,6 +130,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("approving without edits calls approve with no body", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: "Confirm approve draft" }))
@@ -133,6 +142,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("approving after editing sends edited_body", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     const textarea = within(dialog).getByLabelText("Draft body to approve")
@@ -149,6 +159,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("disables approve when learning note lacks scope", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     await user.type(
@@ -165,6 +176,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("approving with learning note and similar scope sends both fields", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     const textarea = within(dialog).getByLabelText("Draft body to approve")
@@ -190,6 +202,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("approving with once scope sends once without requiring body edit", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
     await user.type(
@@ -213,6 +226,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("reject dialog requires reason and note", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
     const confirm = within(dialog).getByRole("button", { name: "Confirm reject draft" })
@@ -229,6 +243,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("reject with wrong_action calls markWrong not reject", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
     await user.selectOptions(
@@ -252,6 +267,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   it("reject with other reason calls reject", async () => {
     const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
     await user.selectOptions(
@@ -269,35 +285,42 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(markWrongMock).not.toHaveBeenCalled()
   })
 
-  it("disables buttons and shows badge after feedback", () => {
+  it("disables buttons and shows badge after feedback", async () => {
+    const user = userEvent.setup()
     renderSidebar({
       ...baseDraft(),
       approved_at: new Date().toISOString(),
       feedback_action: "approve",
     })
+    await openDraftTab(user)
     expect(screen.getByText("Approved")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Approve draft" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "Reject draft" })).toBeDisabled()
   })
 
-  it("shows Marked as no reply needed badge for wrong feedback", () => {
+  it("shows Marked as no reply needed badge for wrong feedback", async () => {
+    const user = userEvent.setup()
     renderSidebar({
       ...baseDraft(),
       feedback_action: "wrong",
       feedback_note: "No reply",
     })
+    await openDraftTab(user)
     expect(screen.getByText("Marked as no reply needed")).toBeInTheDocument()
   })
 
-  it("shows empty skills message when no skills were applied", () => {
+  it("shows empty skills message when no skills were applied", async () => {
+    const user = userEvent.setup()
     renderSidebar()
+    await openDraftTab(user)
     expect(screen.getByText("Skills used")).toBeInTheDocument()
     expect(
       screen.getByText("No skills applied for this draft"),
     ).toBeInTheDocument()
   })
 
-  it("lists applied skills and successful reference reads", () => {
+  it("lists applied skills and successful reference reads", async () => {
+    const user = userEvent.setup()
     const skillId = "skill-samplelab-1"
     renderSidebar({
       ...baseDraft(),
@@ -315,8 +338,16 @@ describe("ThreadTriageSidebar feedback buttons", () => {
         },
       ],
     })
+    await openDraftTab(user)
     expect(screen.getByText("samplelab-rebilling")).toBeInTheDocument()
     expect(screen.getByText("references/client_rules.md")).toBeInTheDocument()
     expect(screen.queryByText("references/missing.md")).toBeNull()
+  })
+
+  it("exposes classification, draft, and audit tabs", () => {
+    renderSidebar()
+    expect(screen.getByRole("tab", { name: "Classification" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Audit (0)" })).toBeInTheDocument()
   })
 })

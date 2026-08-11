@@ -17,7 +17,12 @@ from app.core.exceptions import TriageError
 from app.llm.context_pack import pack_same_thread
 from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
-from app.llm.prompts import PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT
+from app.llm.prompts import (
+    PROMPT_VERSION,
+    TRIAGE_SYSTEM_PROMPT,
+    UNTRUSTED_EMAIL_TAG,
+    wrap_untrusted,
+)
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 
@@ -55,7 +60,7 @@ def _build_user_content(
         body_content_type=email.body_content_type,
     )
 
-    return (
+    email_block = (
         f"Mailbox: {email.mailbox}\n"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
@@ -69,6 +74,7 @@ def _build_user_content(
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n"
     )
+    return wrap_untrusted(UNTRUSTED_EMAIL_TAG, email_block)
 
 
 async def _parse_once(

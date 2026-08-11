@@ -206,7 +206,8 @@ async function apiFetch<T>(
     !retried &&
     !path.startsWith("/auth/login") &&
     !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout")
+    !path.startsWith("/auth/logout") &&
+    !path.startsWith("/auth/change-password")
   ) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetch<T>(path, init, true);
@@ -253,7 +254,8 @@ async function apiFetchMultipart<T>(
     !retried &&
     !path.startsWith("/auth/login") &&
     !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout")
+    !path.startsWith("/auth/logout") &&
+    !path.startsWith("/auth/change-password")
   ) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetchMultipart<T>(path, form, true);
@@ -305,7 +307,8 @@ async function apiFetchBytes(
     !retried &&
     !path.startsWith("/auth/login") &&
     !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout")
+    !path.startsWith("/auth/logout") &&
+    !path.startsWith("/auth/change-password")
   ) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetchBytes(path, true);
@@ -349,6 +352,22 @@ export const api = {
 
   me() {
     return apiFetch<UserMe>("/auth/me");
+  },
+
+  async changePassword(currentPassword: string, newPassword: string) {
+    const csrf = readCookie(CSRF_COOKIE);
+    if (!csrf) {
+      throw new ApiError("Missing CSRF token", 403);
+    }
+    await apiFetch<void>("/auth/change-password", {
+      method: "POST",
+      headers: { [CSRF_HEADER]: csrf },
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    });
+    clearAuthSession();
   },
 
   dashboard: {

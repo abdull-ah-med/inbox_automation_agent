@@ -21,7 +21,18 @@ from app.core.exceptions import DraftGenerationError
 from app.llm.context_pack import pack_cross_thread, pack_same_thread
 from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
-from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
+from app.llm.prompts import (
+    DRAFT_SYSTEM_PROMPT,
+    PROMPT_VERSION,
+    UNTRUSTED_CONSTRAINTS_TAG,
+    UNTRUSTED_EMAIL_TAG,
+    UNTRUSTED_INSTRUCTION_TAG,
+    UNTRUSTED_SKILLS_TAG,
+    UNTRUSTED_TONE_PROFILE_TAG,
+    UNTRUSTED_TONE_REFS_TAG,
+    UNTRUSTED_URGENCY_HINTS_TAG,
+    wrap_untrusted,
+)
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
@@ -139,15 +150,11 @@ def _build_user_content(
     instruction_block = ""
     if instruction and instruction.strip():
         instruction_block = (
-            f"\nReviewer instruction (override the default approach):\n{instruction.strip()}\n"
+            "\nReviewer instruction (override the default approach):\n"
+            f"{wrap_untrusted(UNTRUSTED_INSTRUCTION_TAG, instruction.strip())}\n"
         )
 
-    return (
-        f"Standing instructions (skills):\n{skills_block}\n\n"
-        f"Previously flagged issues to avoid:\n{constraints_block}\n\n"
-        f"Tone profile:\n{profile_block}\n\n"
-        f"Tone references (similar past replies):\n{tone_block}\n\n"
-        f"Past urgency corrections (prefer these signals when relevant):\n{urgency_block}\n\n"
+    email_block = (
         f"Mailbox: {email.mailbox}\n"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
@@ -160,6 +167,21 @@ def _build_user_content(
         f"Body:\n{body}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n\n"
+        f"Cross-thread context:\n{cross_block}\n"
+    )
+
+    return (
+        f"Standing instructions (skills):\n"
+        f"{wrap_untrusted(UNTRUSTED_SKILLS_TAG, skills_block)}\n\n"
+        f"Previously flagged issues to avoid:\n"
+        f"{wrap_untrusted(UNTRUSTED_CONSTRAINTS_TAG, constraints_block)}\n\n"
+        f"Tone profile:\n"
+        f"{wrap_untrusted(UNTRUSTED_TONE_PROFILE_TAG, profile_block)}\n\n"
+        f"Tone references (similar past replies):\n"
+        f"{wrap_untrusted(UNTRUSTED_TONE_REFS_TAG, tone_block)}\n\n"
+        f"Past urgency corrections (prefer these signals when relevant):\n"
+        f"{wrap_untrusted(UNTRUSTED_URGENCY_HINTS_TAG, urgency_block)}\n\n"
+        f"{wrap_untrusted(UNTRUSTED_EMAIL_TAG, email_block)}\n"
         f"Triage result:\n"
         f"- is_spam: {triage.is_spam}\n"
         f"- spam_reason: {spam_reason}\n"
@@ -167,8 +189,7 @@ def _build_user_content(
         f"- action_items_summary: {action_summary}\n"
         f"- needs_context: {triage.needs_context}\n"
         f"- context_reason: {context_reason}\n"
-        f"- routing_category: {triage.routing_category}\n\n"
-        f"Cross-thread context:\n{cross_block}\n"
+        f"- routing_category: {triage.routing_category}\n"
         f"{instruction_block}"
     )
 

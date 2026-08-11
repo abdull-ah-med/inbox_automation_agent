@@ -217,7 +217,7 @@ async def me(request: Request, response: Response, user: CurrentUser) -> UserMe:
     "/change-password",
     status_code=status.HTTP_204_NO_CONTENT,
     response_model=None,
-    dependencies=[Depends(require_frontend_origin)],
+    dependencies=[Depends(require_frontend_origin), Depends(require_csrf)],
 )
 @limiter.limit(get_settings().auth_login_rate_limit)
 async def change_password(
@@ -228,6 +228,7 @@ async def change_password(
     settings: AppSettings,
     user: CurrentUser,
 ) -> None:
+    _ = request
     async with session.begin():
         await auth_service.change_password(
             session,
