@@ -86,7 +86,7 @@ def app(local_settings: Settings):
 async def test_list_reply_memory(app) -> None:
     rows = [_reply(), _reply(is_excluded=True, reply_text="Old style")]
     with patch(
-        "app.api.web.reply_memory.reply_embedding_repo.list_reply_embeddings",
+        "app.api.web.reply_memory.reply_memory_service.list_memories",
         AsyncMock(return_value=rows),
     ):
         transport = ASGITransport(app=app)
@@ -112,7 +112,7 @@ async def test_exclude_reply_memory(app) -> None:
     app.dependency_overrides[get_db] = override_db
 
     with patch(
-        "app.api.web.reply_memory.reply_embedding_repo.set_excluded",
+        "app.api.web.reply_memory.reply_memory_service.set_excluded",
         AsyncMock(return_value=updated),
     ) as set_mock:
         transport = ASGITransport(app=app)
@@ -137,7 +137,7 @@ async def test_exclude_reply_memory_not_found(app) -> None:
     app.dependency_overrides[get_db] = override_db
 
     with patch(
-        "app.api.web.reply_memory.reply_embedding_repo.set_excluded",
+        "app.api.web.reply_memory.reply_memory_service.set_excluded",
         AsyncMock(return_value=None),
     ):
         transport = ASGITransport(app=app)
