@@ -61,4 +61,48 @@ describe("SentReplyPanel", () => {
     await user.click(screen.getByRole("button", { name: "Collapse sent reply panel" }))
     expect(screen.queryByText("Proposed draft")).not.toBeInTheDocument()
   })
+
+  it("skips full-body strike-through on substantial rewrites", () => {
+    const proposed =
+      "Line one of the draft\nLine two of the draft\nLine three of the draft\nLine four of the draft"
+    const sent =
+      "Completely different reply one\nCompletely different reply two\nCompletely different reply three\nCompletely different reply four"
+    render(
+      <SentReplyPanel
+        sentReply={{ ...sentReply, sent_body_snapshot: sent }}
+        draft={{ ...draft, body: proposed }}
+        diff={{
+          added: sent.split("\n"),
+          removed: proposed.split("\n"),
+        }}
+      />,
+    )
+    expect(
+      screen.getByText(/substantially edited from the proposed draft/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/Line one of the draft/)).toBeInTheDocument()
+    const struck = document.querySelector(".line-through")
+    expect(struck).toBeNull()
+  })
+
+  it("wraps long unbroken tokens in the sent reply column", () => {
+    const longToken =
+      "info@sample-services.example.com<mailto:info@sample-services.example.com>"
+    render(
+      <SentReplyPanel
+        sentReply={{
+          ...sentReply,
+          sent_body_snapshot: `Thanks\n${longToken}\nhttps://orders.sample-services.example.com/MyAppLogin.cfm`,
+        }}
+        draft={draft}
+        diff={null}
+      />,
+    )
+    const token = screen.getByText((_, element) => {
+      return element?.textContent?.includes(longToken) === true
+        && element.classList.contains("break-words")
+    })
+    expect(token).toBeTruthy()
+    expect(token.closest(".overflow-hidden")).not.toBeNull()
+  })
 })

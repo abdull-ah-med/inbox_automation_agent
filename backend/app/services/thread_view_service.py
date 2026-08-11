@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import re
 import uuid
 from typing import Literal
 
@@ -88,15 +89,50 @@ def _proposed_body(draft: DraftView | None) -> str | None:
     return draft.body
 
 
+def _reply_only(text: str) -> str:
+    """Strip Outlook/Gmail quoted history so draft vs sent compares the reply itself.
+
+    Mirrors the frontend ``splitQuotedHistory`` markers closely enough for diffing:
+    Original Message separators, underscore rules, From/Sent header blocks, and
+    ``On … wrote:`` markers.
+    """
+    patterns = (
+        re.compile(r"(^|\n)[-\s]*Original Message[-\s]*\s*\n", re.IGNORECASE),
+        re.compile(r"(^|\n)_{10,}\s*\n"),
+        re.compile(
+            r"(^|\n)From:\s.+\nSent:\s.+(?:\n(?:To|Cc|Bcc|Subject):.*)*\n",
+            re.IGNORECASE,
+        ),
+        re.compile(r"(^|\n)On .+ wrote:\s*\n", re.IGNORECASE),
+    )
+    candidates: list[int] = []
+    for pattern in patterns:
+        match = pattern.search(text)
+        if match is None:
+            continue
+        at = match.start() + (len(match.group(1)) if match.group(1) else 0)
+        if at > 0:
+            candidates.append(at)
+    if not candidates:
+        return text
+    quote_start = min(candidates)
+    main = text[:quote_start].rstrip()
+    return main if main else text
+
+
 def compute_draft_vs_sent_diff(
     proposed: str | None,
     sent: str | None,
 ) -> DraftVsSentDiff | None:
-    """Line-level added/removed sets between proposed draft and sent body."""
+    """Line-level added/removed sets between proposed draft and sent body.
+
+    Quoted history is stripped from both sides first so signatures/thread quotes
+    do not paint the entire proposed draft as removed.
+    """
     if proposed is None or sent is None:
         return None
-    proposed_lines = proposed.splitlines()
-    sent_lines = sent.splitlines()
+    proposed_lines = _reply_only(proposed).splitlines()
+    sent_lines = _reply_only(sent).splitlines()
     added: list[str] = []
     removed: list[str] = []
     for line in difflib.unified_diff(
