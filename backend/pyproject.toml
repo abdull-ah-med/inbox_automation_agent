@@ -41,6 +41,8 @@ dependencies = [
     "cssselect>=1.2,<2.0",
     # OpenAI embedding token budgeting (cl100k_base).
     "tiktoken>=0.13,<0.14",
+    # Weekly ops report PDF (pure Python; no Cairo/Pango).
+    "reportlab>=4.2,<5.0",
 ]
 
 [project.optional-dependencies]
@@ -102,6 +104,7 @@ module = [
     "slack_sdk.*",
     "pgvector.*",
     "apscheduler.*",
+    "reportlab.*",
     "app.llm._vendor.talon.*",
 ]
 ignore_missing_imports = true

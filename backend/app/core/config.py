@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     auth_login_rate_limit: str = "5/minute"
     auth_refresh_rate_limit: str = "30/minute"
     api_default_rate_limit: str = "120/minute"
+    # Weekly ops report (PDF on disk + optional SMTP; never Graph send).
+    ops_report_dir: str = ""
+    ops_report_timezone: str = "America/New_York"
+    ops_report_cron_day_of_week: str = "mon"
+    ops_report_cron_hour: int = Field(default=8, ge=0, le=23)
+    ops_report_cron_minute: int = Field(default=0, ge=0, le=59)
+    ops_report_email_enabled: bool = False
+    ops_report_smtp_host: str = ""
+    ops_report_smtp_port: int = Field(default=587, ge=1, le=65535)
+    ops_report_smtp_user: str = ""
+    ops_report_smtp_password: str = ""
+    ops_report_smtp_from: str = ""
+    ops_report_smtp_to: str = ""
     # Enable only behind a reverse proxy that overwrites X-Real-IP (see rate_limit.py).
     trust_x_forwarded_for: bool = False
     # Concurrent refresh grace window (Auth0-style) to avoid false reuse detection.
@@ -114,6 +127,7 @@ class Settings(BaseSettings):
         "cookie_secure",
         "trust_x_forwarded_for",
         "slack_enabled",
+        "ops_report_email_enabled",
         mode="before",
     )
     @classmethod

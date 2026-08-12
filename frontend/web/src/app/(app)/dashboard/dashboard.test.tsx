@@ -10,6 +10,9 @@ vi.mock("next/navigation", () => ({
 
 vi.mock("@/lib/api-client", () => ({
   api: {
+    reports: {
+      downloadWeekly: vi.fn(),
+    },
     dashboard: {
       overview: vi.fn().mockResolvedValue({
         mailboxes: [
@@ -122,5 +125,8 @@ describe("dashboard page", () => {
     expect(screen.getByText("Needs attention")).toBeInTheDocument()
     expect(screen.getAllByText("Quote request").length).toBeGreaterThan(0)
     expect(screen.getByText("Needs context")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Download reports" }),
+    ).toBeInTheDocument()
   })
 })

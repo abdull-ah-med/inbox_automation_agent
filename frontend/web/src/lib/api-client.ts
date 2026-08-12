@@ -286,10 +286,27 @@ async function apiFetchMultipart<T>(
   return (await resp.json()) as T;
 }
 
+function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim());
+    } catch {
+      return star[1].trim();
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted?.[1]) return quoted[1];
+  const plain = /filename=([^;]+)/i.exec(header);
+  if (plain?.[1]) return plain[1].trim().replaceAll('"', "");
+  return null;
+}
+
 async function apiFetchBytes(
   path: string,
   retried = false,
-): Promise<{ blob: Blob; contentType: string }> {
+): Promise<{ blob: Blob; contentType: string; filename: string | null }> {
   const headers = new Headers();
   const token = getAccessToken();
   if (token) {
@@ -326,7 +343,8 @@ async function apiFetchBytes(
 
   const contentType = resp.headers.get("Content-Type") ?? "application/octet-stream";
   const blob = await resp.blob();
-  return { blob, contentType };
+  const filename = filenameFromDisposition(resp.headers.get("Content-Disposition"));
+  return { blob, contentType, filename };
 }
 
 export const api = {
@@ -373,6 +391,17 @@ export const api = {
   dashboard: {
     overview() {
       return apiFetch<DashboardOverview>("/api/dashboard/overview");
+    },
+  },
+
+  reports: {
+    downloadWeekly(params: { from?: string; to?: string; mailbox?: string } = {}) {
+      const qs = new URLSearchParams();
+      if (params.from) qs.set("from", params.from);
+      if (params.to) qs.set("to", params.to);
+      if (params.mailbox) qs.set("mailbox", params.mailbox);
+      const query = qs.toString();
+      return apiFetchBytes(`/api/reports/ops-weekly${query ? `?${query}` : ""}`);
     },
   },
 
