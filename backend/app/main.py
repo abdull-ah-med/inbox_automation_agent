@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +21,7 @@ from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
 from app.api.web.reply_memory import router as reply_memory_router
+from app.api.web.reports import router as reports_router
 from app.api.web.skill_candidates import router as skill_candidates_router
 from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
@@ -44,6 +46,7 @@ from app.core.exceptions import (
     InboxTriageError,
     InvalidCredentialsError,
     InvalidCursorError,
+    InvalidDateRangeError,
     InvalidTokenError,
     ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
@@ -54,6 +57,7 @@ from app.core.exceptions import (
     ThreadNotFoundError,
     ThreadStateError,
     TriageError,
+    UnknownMailboxError,
 )
 from app.core.logging import configure_logging
 from app.core.middleware.security_headers import SecurityHeadersMiddleware
@@ -63,6 +67,7 @@ from app.workers.graph_subscription_worker import (
     run_subscription_reconcile,
     run_subscription_renewal,
 )
+from app.workers.ops_report_worker import run_weekly_ops_report
 from app.workers.poll_fallback_worker import run_poll_all_mailboxes
 
 logger = structlog.get_logger(__name__)
@@ -86,6 +91,8 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     ReusedRefreshTokenError: status.HTTP_401_UNAUTHORIZED,
     AuthError: status.HTTP_401_UNAUTHORIZED,
     InvalidCursorError: status.HTTP_400_BAD_REQUEST,
+    InvalidDateRangeError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    UnknownMailboxError: status.HTTP_404_NOT_FOUND,
 }
 
 _scheduler: AsyncIOScheduler | None = None
@@ -148,11 +155,27 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         id="graph_poll_fallback",
         replace_existing=True,
     )
+    _scheduler.add_job(
+        run_weekly_ops_report,
+        trigger=CronTrigger(
+            day_of_week=settings.ops_report_cron_day_of_week,
+            hour=settings.ops_report_cron_hour,
+            minute=settings.ops_report_cron_minute,
+            timezone=settings.ops_report_timezone,
+        ),
+        id="generate_weekly_ops_report",
+        replace_existing=True,
+    )
     _scheduler.start()
     logger.info(
         "scheduler_started",
         renew_hours=settings.subscription_renew_interval_hours,
         poll_seconds=settings.poll_interval_seconds,
+        ops_report_cron=(
+            f"{settings.ops_report_cron_day_of_week} "
+            f"{settings.ops_report_cron_hour:02d}:{settings.ops_report_cron_minute:02d} "
+            f"{settings.ops_report_timezone}"
+        ),
     )
 
     yield
@@ -208,7 +231,7 @@ def create_app() -> FastAPI:
         # PATCH is used by reply-memory exclude. https://fastapi.tiangolo.com/tutorial/cors/
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-CSRF-Token"],
-        expose_headers=[],
+        expose_headers=["Content-Disposition"],
     )
 
     @app.get("/health", status_code=status.HTTP_200_OK, response_model=None)
@@ -246,6 +269,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(dashboard_router)
+    app.include_router(reports_router)
     app.include_router(mailboxes_router)
     app.include_router(threads_router)
     app.include_router(drafts_router)

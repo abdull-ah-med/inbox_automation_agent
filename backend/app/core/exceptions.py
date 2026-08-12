@@ -114,3 +114,11 @@ class SkillDuplicateCandidatesError(SkillArchiveError):
 
 class ThreadNotFoundError(InboxTriageError):
     """Raised when a thread id does not exist for regeneration or lookup."""
+
+
+class InvalidDateRangeError(InboxTriageError):
+    """Raised when an ops-metrics date window is inverted or too wide."""
+
+
+class UnknownMailboxError(InboxTriageError):
+    """Raised when a mailbox filter is not in the configured allowlist."""

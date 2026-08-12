@@ -21,6 +21,15 @@ def test_embedding_settings_defaults() -> None:
     assert settings.rrf_k == 60
 
 
+def test_ops_report_settings_defaults() -> None:
+    settings = Settings(environment="local")
+    assert settings.ops_report_email_enabled is False
+    assert settings.ops_report_dir == ""
+    assert settings.ops_report_timezone == "America/New_York"
+    assert settings.ops_report_cron_day_of_week == "mon"
+    assert settings.ops_report_cron_hour == 8
+
+
 def test_create_app_production_omits_local_routers_and_docs() -> None:
     """Fail-closed: production must not mount simulate/debug or expose OpenAPI."""
     settings = Settings(environment="production")
@@ -33,6 +42,8 @@ def test_create_app_production_omits_local_routers_and_docs() -> None:
     paths = set(app.openapi()["paths"])
     assert "/simulate/ingest" not in paths
     assert "/debug/graph-check" not in paths
+    assert "/api/reports/ops-metrics" in paths
+    assert "/api/reports/ops-weekly" in paths
     assert app.docs_url is None
     assert app.redoc_url is None
     assert app.openapi_url is None
