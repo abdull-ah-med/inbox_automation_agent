@@ -51,17 +51,22 @@ _GRID = (0.91, 0.91, 0.91)
 _AXIS = (0.72, 0.72, 0.72)
 _PAPER = (1.0, 1.0, 1.0)
 
-_SERIES_INBOUND = (0.12, 0.12, 0.12)
-_SERIES_AWAITING = (0.46, 0.46, 0.46)
-_SERIES_STALE = (0.78, 0.78, 0.78)
+# Print-safe chart fills only. Matches dashboard urgency/state tones, muted.
+_CHART_SLATE = (0.22, 0.28, 0.36)
+_CHART_BLUE = (0.36, 0.51, 0.70)
+_CHART_AMBER = (0.80, 0.58, 0.22)
+_CHART_RED = (0.72, 0.30, 0.28)
+_CHART_GREEN = (0.38, 0.58, 0.46)
+
+_SERIES_INBOUND = _CHART_SLATE
+_SERIES_AWAITING = _CHART_BLUE
+_SERIES_STALE = _CHART_AMBER
 
 _SLICES = (
-    (0.12, 0.12, 0.12),
-    (0.34, 0.34, 0.34),
-    (0.52, 0.52, 0.52),
-    (0.68, 0.68, 0.68),
-    (0.82, 0.82, 0.82),
-    (0.91, 0.91, 0.91),
+    _CHART_RED,
+    _CHART_AMBER,
+    _CHART_BLUE,
+    _CHART_GREEN,
 )
 
 MISSING = "-"
@@ -237,16 +242,9 @@ class _GroupedBarChart(Flowable):
                 if h <= 0:
                     continue
                 self.canv.setFillColorRGB(*color)
-                if si == n_series - 1:
-                    self.canv.setStrokeColorRGB(*_AXIS)
-                    self.canv.setLineWidth(0.4)
-                    self.canv.rect(
-                        x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=1
-                    )
-                else:
-                    self.canv.rect(
-                        x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=0
-                    )
+                self.canv.rect(
+                    x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=0
+                )
             self.canv.setFillColorRGB(*_INK)
             self.canv.setFont(FONT_REGULAR, 7)
             self.canv.drawCentredString(
@@ -347,11 +345,13 @@ class _HBarAxisChart(Flowable):
         width: float,
         *,
         show_share: bool = True,
+        fill: Rgb = _CHART_SLATE,
     ) -> None:
         super().__init__()
         self.rows = rows
         self.width = width
         self.show_share = show_share
+        self.fill = fill
         self.height = max(len(rows), 1) * self._ROW + 18
 
     def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
@@ -387,7 +387,7 @@ class _HBarAxisChart(Flowable):
             self.canv.drawString(0, y + 2, label)
             fill_w = 0.0 if ymax == 0 else bar_w * (value / ymax)
             if fill_w > 0:
-                self.canv.setFillColorRGB(*_INK)
+                self.canv.setFillColorRGB(*self.fill)
                 self.canv.rect(bar_left, y, max(fill_w, 1.5), 9, fill=1, stroke=0)
             pct = MISSING if total <= 0 else f"{100 * value / total:.0f}%"
             self.canv.setFillColorRGB(*_INK)
@@ -835,7 +835,9 @@ def render_pdf(
                     "How this period's mail moved through triage.",
                     styles["caption"],
                 ),
-                _HBarAxisChart(_pipeline_rows(metrics), col, show_share=False),
+                _HBarAxisChart(
+                    _pipeline_rows(metrics), col, show_share=False, fill=_CHART_SLATE
+                ),
             ],
             [
                 _SectionHead("Open queue mix"),
@@ -869,7 +871,7 @@ def render_pdf(
                             "Share of rejected drafts this period, by reviewer reason.",
                             styles["caption"],
                         ),
-                        _HBarAxisChart(theme_rows, usable),
+                        _HBarAxisChart(theme_rows, usable, fill=_CHART_RED),
                     ]
                 ),
             ]
