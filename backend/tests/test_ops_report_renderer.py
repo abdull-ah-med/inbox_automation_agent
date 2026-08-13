@@ -20,10 +20,18 @@ from app.models.schemas.ops_report import (
 from app.services.ops_report_renderer import (
     COMPANY_NAME,
     FOOTER_LINE,
+    _CHART_AMBER,
+    _CHART_BLUE,
+    _CHART_GREEN,
+    _CHART_RED,
+    _SERIES_AWAITING,
+    _SERIES_INBOUND,
+    _SERIES_STALE,
     briefing_text,
     render_pdf,
     report_filename,
     store_pdf,
+    _urgency_slices,
 )
 
 
@@ -167,6 +175,24 @@ def test_render_pdf_empty_themes_note() -> None:
     assert "REJECT THEMES" not in text
     assert "n/a" not in text.lower()
     assert "-" in text
+
+
+def _is_gray(color: tuple[float, float, float]) -> bool:
+    return len({round(channel, 3) for channel in color}) == 1
+
+
+def test_chart_fills_use_muted_product_color() -> None:
+    assert not _is_gray(_SERIES_AWAITING)
+    assert not _is_gray(_SERIES_STALE)
+    assert _SERIES_INBOUND != _SERIES_AWAITING
+    assert _SERIES_AWAITING != _SERIES_STALE
+    slices = _urgency_slices(_metrics())
+    assert [row[2] for row in slices] == [
+        _CHART_RED,
+        _CHART_AMBER,
+        _CHART_BLUE,
+        _CHART_GREEN,
+    ]
 
 
 def test_report_filename_uses_ny_calendar_dates() -> None:
