@@ -59,8 +59,8 @@ const LoginForm = () => {
       <div className="mx-auto grid min-h-screen max-w-5xl lg:grid-cols-2">
         <aside className="flex flex-col justify-between border-b border-gray-200 bg-white px-8 py-10 lg:border-r lg:border-b-0 dark:border-gray-800 dark:bg-gray-900">
           <div>
-            <p className="text-xs font-semibold tracking-wide text-blue-600 uppercase">
-              Internal tool
+            <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
+              SampleSite Support
             </p>
             <h1 className="mt-3 text-2xl font-semibold text-gray-900 dark:text-gray-100">
               Inbox Triage Automation
@@ -107,12 +107,16 @@ const LoginForm = () => {
                 id="email"
                 type="email"
                 autoComplete="username"
+                autoFocus
                 spellCheck={false}
                 aria-invalid={Boolean(form.formState.errors.email)}
+                aria-describedby={
+                  form.formState.errors.email ? "email-error" : undefined
+                }
                 {...form.register("email")}
               />
               {form.formState.errors.email ? (
-                <p className="text-xs text-red-600" role="alert">
+                <p id="email-error" className="text-xs text-red-600" role="alert">
                   {form.formState.errors.email.message}
                 </p>
               ) : null}
@@ -125,10 +129,17 @@ const LoginForm = () => {
                 type="password"
                 autoComplete="current-password"
                 aria-invalid={Boolean(form.formState.errors.password)}
+                aria-describedby={
+                  form.formState.errors.password ? "password-error" : undefined
+                }
                 {...form.register("password")}
               />
               {form.formState.errors.password ? (
-                <p className="text-xs text-red-600" role="alert">
+                <p
+                  id="password-error"
+                  className="text-xs text-red-600"
+                  role="alert"
+                >
                   {form.formState.errors.password.message}
                 </p>
               ) : null}
@@ -136,7 +147,7 @@ const LoginForm = () => {
 
             <Button
               type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700"
+              className="min-h-10 w-full bg-blue-600 hover:bg-blue-700"
               disabled={login.isPending}
             >
               {login.isPending ? "Signing in…" : "Sign in"}

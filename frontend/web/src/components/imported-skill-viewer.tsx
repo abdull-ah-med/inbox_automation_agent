@@ -75,7 +75,7 @@ const SkillFileRow = ({
   }
 
   return (
-    <li className="rounded border border-gray-100 dark:border-gray-800">
+    <li className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
       <button
         type="button"
         tabIndex={0}
@@ -163,7 +163,7 @@ export const ImportedSkillViewer = ({
             <p className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">
               SKILL.md
             </p>
-            <div className="max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-950">
+            <div className="max-h-72 overflow-auto rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10">
               <EmailBody text={skill.content} />
             </div>
           </div>

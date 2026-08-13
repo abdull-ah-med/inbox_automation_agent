@@ -22,6 +22,7 @@
   --inbox-sales: #16a34a;
   --inbox-vendor: #d97706;
   --inbox-intermediary: #7c3aed;
+  --app-max-width: 90rem;
 }
 
 .dark {
@@ -54,6 +55,11 @@
   --radius-lg: var(--radius);
 }
 
+.app-shell {
+  width: 100%;
+  max-width: var(--app-max-width);
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
@@ -64,4 +70,15 @@ body {
     "SF Pro Text",
     "Segoe UI",
     sans-serif;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -217,7 +217,7 @@ export const ImportSkillDropzone = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={[
-          "rounded-lg border border-dashed p-6 transition-colors",
+          "rounded-xl border border-dashed p-6 transition-colors",
           dragging
             ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30"
             : "border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-950/40",
@@ -275,7 +275,7 @@ export const ImportSkillDropzone = ({
       ) : null}
 
       {result ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
           <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
             Imported {result.name}
             {result.overwritten ? " (overwritten)" : ""}

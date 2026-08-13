@@ -36,8 +36,8 @@ export const ErrorPage = ({
   const mapped: FriendlyError = error
     ? friendlyErrorFromUnknown(error)
     : {
-        title: title ?? "Something went wrong",
-        description: description ?? "Please try again.",
+        title: title ?? "We couldn't load this",
+        description: description ?? "Try again, or go back to overview.",
       }
 
   const heading = title ?? mapped.title
@@ -83,13 +83,13 @@ export const ErrorPage = ({
       className={cn(
         fullPage
           ? "flex min-h-screen items-center justify-center bg-gray-50 px-6 py-12 dark:bg-gray-950"
-          : "rounded-lg border border-gray-200 bg-white px-6 py-10 dark:border-gray-700 dark:bg-gray-900",
+          : "rounded-xl bg-card px-6 py-10 ring-1 ring-foreground/10",
         className,
       )}
     >
       <div className="mx-auto w-full max-w-md text-center">
-        <p className="text-xs font-semibold tracking-wide text-blue-600 uppercase">
-          Inbox Triage
+        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
+          SampleSite Support
         </p>
         <h1 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
           {heading}
@@ -106,7 +106,7 @@ export const ErrorPage = ({
               type="button"
               tabIndex={0}
               aria-label="Try again"
-              className="cursor-pointer bg-blue-600 text-white hover:bg-blue-700"
+              className="min-h-10 cursor-pointer bg-blue-600 text-white hover:bg-blue-700"
               onClick={handleRetry}
               onKeyDown={handleRetryKeyDown}
             >
@@ -120,8 +120,8 @@ export const ErrorPage = ({
             variant={onRetry ? "outline" : "default"}
             className={
               onRetry
-                ? "cursor-pointer"
-                : "cursor-pointer bg-blue-600 text-white hover:bg-blue-700"
+                ? "min-h-10 cursor-pointer"
+                : "min-h-10 cursor-pointer bg-blue-600 text-white hover:bg-blue-700"
             }
             onClick={handleGoOverview}
             onKeyDown={handleGoOverviewKeyDown}

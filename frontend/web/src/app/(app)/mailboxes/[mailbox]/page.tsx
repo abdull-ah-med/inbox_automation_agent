@@ -7,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef } from "react"
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorPage } from "@/components/error-page"
-import { PageTransition } from "@/components/motion"
 import { ThreadCard } from "@/components/thread-card"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -143,7 +142,7 @@ export default function MailboxPage() {
   }
 
   return (
-    <PageTransition>
+    <>
       <Breadcrumbs
         items={[
           { label: "Overview", href: "/dashboard" },
@@ -165,7 +164,7 @@ export default function MailboxPage() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <select
           aria-label="Filter by state"
-          className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          className="min-h-10 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10"
           value={state}
           onChange={(e) => updateFilters({ state: e.target.value })}
         >
@@ -177,7 +176,7 @@ export default function MailboxPage() {
         </select>
         <select
           aria-label="Filter by urgency"
-          className="rounded-md border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+          className="min-h-10 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10"
           value={urgency}
           onChange={(e) => updateFilters({ urgency: e.target.value })}
         >
@@ -191,6 +190,7 @@ export default function MailboxPage() {
           type="button"
           variant={staleOnly ? "default" : "outline"}
           size="sm"
+          className="min-h-10"
           aria-pressed={staleOnly}
           onClick={handleToggleStale}
         >
@@ -200,6 +200,7 @@ export default function MailboxPage() {
           type="button"
           variant={showFiltered ? "default" : "outline"}
           size="sm"
+          className="min-h-10"
           aria-pressed={showFiltered}
           onClick={handleToggleFiltered}
         >
@@ -209,6 +210,7 @@ export default function MailboxPage() {
           type="button"
           variant="ghost"
           size="sm"
+          className="min-h-10"
           onClick={handleResetFilters}
         >
           Reset
@@ -216,7 +218,7 @@ export default function MailboxPage() {
       </div>
 
       {isLoading ? (
-        <div className="space-y-2">
+        <div className="space-y-2" aria-busy="true" aria-live="polite">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-24 w-full rounded-lg" />
           ))}
@@ -233,8 +235,22 @@ export default function MailboxPage() {
           title={filtersActive ? "No matching threads" : "No mail in this inbox"}
           description={
             filtersActive
-              ? "Try clearing filters to see all threads for this mailbox."
+              ? "No results for the current filters in this mailbox."
               : `${label} has no ingested threads yet. New mail will appear here after the poller runs.`
+          }
+          action={
+            filtersActive ? (
+              <Button
+                type="button"
+                variant="outline"
+                tabIndex={0}
+                aria-label="Clear filters"
+                className="min-h-10"
+                onClick={handleResetFilters}
+              >
+                Clear filters
+              </Button>
+            ) : undefined
           }
         />
       ) : (
@@ -248,6 +264,6 @@ export default function MailboxPage() {
           ) : null}
         </div>
       )}
-    </PageTransition>
+    </>
   )
 }

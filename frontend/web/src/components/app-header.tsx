@@ -28,20 +28,23 @@ export function AppHeader() {
   }
 
   return (
-    <header className="border-b border-gray-200 bg-white px-6 py-4 dark:border-gray-800 dark:bg-gray-900">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+    <header className="sticky top-0 z-40 border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
+      <div className="app-shell mx-auto flex items-center justify-between gap-4">
         <div className="min-w-0">
+          <p className="text-[11px] font-medium tracking-wide text-gray-500 uppercase dark:text-gray-400">
+            SampleSite Support
+          </p>
           <Link
             href="/dashboard"
-            className="text-lg font-semibold text-gray-900 dark:text-gray-100"
+            className="text-lg font-semibold text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-100"
           >
             Inbox Triage Automation
           </Link>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
+          <p className="hidden text-sm text-gray-500 sm:block dark:text-gray-400">
             Read-only assistant for inbox classification, drafting, and review
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2">
           <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
             Read-Only
           </span>
@@ -52,14 +55,15 @@ export function AppHeader() {
             href="/settings"
             tabIndex={0}
             aria-label="Open settings"
-            className="inline-flex size-7 items-center justify-center rounded-lg border border-border text-gray-700 hover:bg-muted dark:text-gray-200"
+            className="inline-flex size-10 items-center justify-center rounded-lg border border-border text-gray-700 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-200"
           >
             <Settings className="size-4" aria-hidden="true" />
           </Link>
           <Button
             variant="outline"
-            size="icon-sm"
+            size="icon"
             type="button"
+            className="size-10"
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             onClick={handleToggleTheme}
           >
@@ -73,6 +77,7 @@ export function AppHeader() {
             variant="outline"
             size="sm"
             type="button"
+            className="min-h-10 px-3"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}
           >

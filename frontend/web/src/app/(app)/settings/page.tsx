@@ -8,9 +8,15 @@ import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
 import { ImportSkillDropzone } from "@/components/import-skill-dropzone"
 import { ImportedSkillViewer } from "@/components/imported-skill-viewer"
-import { PageTransition } from "@/components/motion"
 import { StatusBadge } from "@/components/status-badge"
 import { Button } from "@/components/ui/button"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -359,7 +365,7 @@ export default function SettingsPage() {
   const candidates = skillCandidates ?? []
 
   return (
-    <PageTransition>
+    <>
       <Breadcrumbs
         items={[
           { label: "Overview", href: "/dashboard" },
@@ -367,16 +373,18 @@ export default function SettingsPage() {
         ]}
       />
 
-      <section className="mb-8 rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Account
-        </h2>
-        <p className="mt-1 text-sm text-gray-500">
-          Change your password. You will be signed out afterward and must log in again.
-        </p>
-        <p className="mt-1 text-sm text-gray-500">
-          Signed in as {auth.user?.email ?? "unknown"}
-        </p>
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="text-lg">Account</CardTitle>
+          <CardDescription>
+            Change your password. You will be signed out afterward and must log in
+            again.
+          </CardDescription>
+          <p className="text-sm text-muted-foreground">
+            Signed in as {auth.user?.email ?? "unknown"}
+          </p>
+        </CardHeader>
+        <CardContent>
         <form
           className="mt-4 grid max-w-md gap-3"
           onSubmit={(event) => {
@@ -444,7 +452,8 @@ export default function SettingsPage() {
             </Button>
           </div>
         </form>
-      </section>
+        </CardContent>
+      </Card>
 
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
@@ -483,7 +492,7 @@ export default function SettingsPage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
         {skills.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">
             No skills yet. Add one to shape how drafts are written.
@@ -612,7 +621,7 @@ export default function SettingsPage() {
             review. Accept creates an active skill; dismiss archives the proposal.
           </p>
         </div>
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
           {candidates.length === 0 ? (
             <p className="p-6 text-sm text-gray-500">
               No pending proposals. Reject drafts with the same reason a few times
@@ -689,7 +698,7 @@ export default function SettingsPage() {
             Read-only.
           </p>
         </div>
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
           {profiles.length === 0 ? (
             <p className="p-6 text-sm text-gray-500">
               No tone profiles yet. Approve at least 10 drafts to distill a profile.
@@ -753,7 +762,7 @@ export default function SettingsPage() {
           ) : null}
         </div>
 
-        <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
           {replyMemoryLoading ? (
             <div className="space-y-3 p-4">
               <Skeleton className="h-16 w-full" />
@@ -1006,6 +1015,6 @@ export default function SettingsPage() {
           if (!open) setViewerSkill(null)
         }}
       />
-    </PageTransition>
+    </>
   )
 }

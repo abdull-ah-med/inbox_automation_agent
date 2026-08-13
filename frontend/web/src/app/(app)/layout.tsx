@@ -54,7 +54,11 @@ export default function AppShellLayout({
   if (!bootstrapped) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <div className="mx-auto max-w-8xl space-y-4 p-15">
+        <div
+          className="app-shell mx-auto space-y-4 px-6 py-6"
+          aria-busy="true"
+          aria-live="polite"
+        >
           <Skeleton className="h-16 w-full rounded-lg" />
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>
@@ -75,7 +79,7 @@ export default function AppShellLayout({
         Skip to main content
       </a>
       <AppHeader />
-      <main id="main-content" className="mx-auto max-w-8xl p-15">
+      <main id="main-content" className="app-shell mx-auto px-6 py-6">
         {children}
       </main>
     </div>

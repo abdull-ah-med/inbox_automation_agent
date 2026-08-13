@@ -4,6 +4,7 @@ import { useState } from "react"
 
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge } from "@/components/status-badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { MessageDetail } from "@/lib/types"
 
 const MessageBlock = ({
@@ -27,7 +28,7 @@ const MessageBlock = ({
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700">
+    <Card size="sm" className="gap-0 py-0">
       <div className="flex items-start gap-2 px-4 py-3">
         <button
           type="button"
@@ -82,7 +83,7 @@ const MessageBlock = ({
         </div>
       </div>
       {open ? (
-        <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-800">
+        <div className="border-t border-border px-4 py-3">
           <EmailBody
             text={message.body_text}
             emptyLabel="(no message body)"
@@ -90,7 +91,7 @@ const MessageBlock = ({
           />
         </div>
       ) : null}
-    </div>
+    </Card>
   )
 }
 
@@ -119,20 +120,18 @@ export const ThreadEmailPanel = ({
   }
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <Card>
+      <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+          <CardTitle className="text-base font-semibold">
             {subject || "(no subject)"}
-          </h2>
-          <p className="mt-1 text-xs text-gray-400">
+          </CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
             {messages.length} message{messages.length === 1 ? "" : "s"} in thread
           </p>
         </div>
-    
-      </div>
-
-      <div className="mt-4 space-y-2">
+      </CardHeader>
+      <CardContent className="space-y-2">
         {earlier.length > 0 ? (
           <button
             type="button"
@@ -157,9 +156,9 @@ export const ThreadEmailPanel = ({
         ))}
         {latest ? <MessageBlock message={latest} defaultOpen /> : null}
         {!latest ? (
-          <p className="text-sm text-gray-500">No messages in this thread.</p>
+          <p className="text-sm text-muted-foreground">No messages in this thread.</p>
         ) : null}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }
