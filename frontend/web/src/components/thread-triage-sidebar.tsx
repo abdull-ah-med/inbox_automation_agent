@@ -19,6 +19,7 @@ import {
 import { Select } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { api } from "@/lib/api-client"
 import { formatEventName, formatRelativeTime } from "@/lib/design-tokens"
 import {
@@ -45,12 +46,14 @@ const Panel = ({
   children: React.ReactNode
 }) => {
   return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-      <h3 className="mb-3 text-xs font-semibold tracking-wide text-gray-500 uppercase">
-        {title}
-      </h3>
-      {children}
-    </section>
+    <Card>
+      <CardHeader className="pb-0">
+        <CardTitle className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
   )
 }
 
@@ -290,7 +293,7 @@ export const ThreadTriageSidebar = ({
 
       <Tabs defaultValue="classification" className="w-full gap-3">
         <TabsList
-          className="grid h-9 w-full grid-cols-3 rounded-lg border border-gray-200 bg-gray-100 p-1 dark:border-gray-700 dark:bg-gray-800"
+          className="grid h-9 w-full grid-cols-3 rounded-xl bg-muted p-1 ring-1 ring-foreground/10"
           aria-label="Thread review sections"
         >
           <TabsTrigger value="classification" className={REVIEW_TAB_TRIGGER_CLASS}>
@@ -525,7 +528,7 @@ export const ThreadTriageSidebar = ({
                 auditLog.map((entry, index) => (
                   <li
                     key={`${entry.timestamp}-${index}`}
-                    className="rounded border border-gray-100 p-2 dark:border-gray-800"
+                    className="rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
                   >
                     <div className="flex justify-between gap-2">
                       <span className="text-xs font-medium">

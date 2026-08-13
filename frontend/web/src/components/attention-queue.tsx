@@ -11,9 +11,9 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
   if (threads.length === 0) {
     return (
       <EmptyState
-        title="Nothing needs attention"
-        description="Threads awaiting action will appear here with urgency, spam, and context flags."
-        className="border-0 bg-transparent px-0 py-6"
+        title="Inbox clear"
+        description="Nothing is awaiting action. New threads will show up here with urgency and context flags."
+        className="border-0 bg-transparent px-0 py-6 ring-0"
       />
     )
   }

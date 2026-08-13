@@ -4,6 +4,8 @@ import { useState, type KeyboardEvent, type ReactNode } from "react"
 
 import { EmailBody, splitQuotedHistory } from "@/components/email-body"
 import { StatusBadge } from "@/components/status-badge"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 import type { DraftVsSentDiff, DraftView, SentReplyView } from "@/lib/types"
 
 const MATCHED_BY_LABEL: Record<SentReplyView["matched_by"], string> = {
@@ -71,9 +73,9 @@ const highlightLines = (
 }
 
 const BodyBox = ({ children }: { children: ReactNode }) => (
-  <div className="min-w-0 overflow-hidden rounded border border-gray-100 bg-gray-50 p-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-    {children}
-  </div>
+  <Card size="sm" className="min-w-0 bg-muted/50 py-3 ring-foreground/5">
+    <CardContent className="text-sm">{children}</CardContent>
+  </Card>
 )
 
 export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) => {
@@ -99,17 +101,12 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
   }
 
   return (
-    <section
-      className="mb-5 min-w-0 rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
-      aria-label="Sent reply comparison"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-800">
+    <Card className="mb-5 min-w-0 gap-0 py-0" aria-label="Sent reply comparison">
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 px-5 py-3">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            Sent reply
-          </h2>
+          <CardTitle className="text-sm font-semibold">Sent reply</CardTitle>
           <StatusBadge label="Resolved" tone="green" />
-          <span className="text-xs text-gray-500">
+          <span className="text-xs text-muted-foreground">
             Matched by: {MATCHED_BY_LABEL[sentReply.matched_by]}
           </span>
         </div>
@@ -120,22 +117,23 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
           aria-expanded={open}
           onClick={handleToggle}
           onKeyDown={handleKeyDown}
-          className="cursor-pointer text-xs font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+          className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground"
         >
           {open ? "Hide" : "Show"}
         </button>
-      </div>
+      </CardHeader>
+      {open ? <Separator /> : null}
 
       {open ? (
-        <div className="grid min-w-0 grid-cols-1 gap-4 p-4 lg:grid-cols-2">
+        <CardContent className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
           {substantial ? (
-            <p className="text-xs text-gray-500 lg:col-span-2">
+            <p className="text-xs text-muted-foreground lg:col-span-2">
               The sent reply was substantially edited from the proposed draft.
               Showing both without line-by-line strike-through.
             </p>
           ) : null}
           <div className="min-w-0">
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+            <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Proposed draft
             </h3>
             {proposed ? (
@@ -149,11 +147,11 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
                 )}
               </BodyBox>
             ) : (
-              <p className="text-sm text-gray-500">No proposed draft available.</p>
+              <p className="text-sm text-muted-foreground">No proposed draft available.</p>
             )}
           </div>
           <div className="min-w-0">
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+            <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Sent reply
             </h3>
             <BodyBox>
@@ -166,8 +164,8 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
               )}
             </BodyBox>
           </div>
-        </div>
+        </CardContent>
       ) : null}
-    </section>
+    </Card>
   )
 }
