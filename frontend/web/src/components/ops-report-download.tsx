@@ -28,6 +28,7 @@ import { getErrorMessage } from "@/lib/error-messages"
 const REPORT_TIMEZONE = "America/New_York"
 const MAX_WINDOW_DAYS = 93
 const DEFAULT_ROLLING_DAYS = 7
+const PRESET_DAYS = [7, 14, 30, 60] as const
 
 const formatYmdInTimezone = (date: Date, timeZone: string): string => {
   return new Intl.DateTimeFormat("en-CA", {
@@ -68,9 +69,13 @@ const inclusiveDayCount = (fromYmd: string, toYmd: string): number => {
   return Math.floor((toMs - fromMs) / 86_400_000) + 1
 }
 
-const defaultRange = (): { from: string; to: string } => {
+const rollingRange = (days: number): { from: string; to: string } => {
   const to = formatYmdInTimezone(new Date(), REPORT_TIMEZONE)
-  return { from: addCalendarDays(to, -(DEFAULT_ROLLING_DAYS - 1)), to }
+  return { from: addCalendarDays(to, -(days - 1)), to }
+}
+
+const defaultRange = (): { from: string; to: string } => {
+  return rollingRange(DEFAULT_ROLLING_DAYS)
 }
 
 type ReportDatePickerProps = {
@@ -187,6 +192,14 @@ export const OpsReportDownload = () => {
     setOpen(false)
   }
 
+  const handlePresetClick = (days: number) => {
+    const range = rollingRange(days)
+    setFromDate(range.from)
+    setToDate(range.to)
+    setStartOpen(false)
+    setEndOpen(false)
+  }
+
   const handleStartSelect = (date: Date | undefined) => {
     setFromDate(date ? formatYmdLocal(date) : "")
   }
@@ -235,6 +248,10 @@ export const OpsReportDownload = () => {
     }
   }
 
+  const selectedPreset = PRESET_DAYS.find((days) => {
+    const range = rollingRange(days)
+    return range.from === fromDate && range.to === toDate
+  })
   const inverted = Boolean(fromDate && toDate && fromDate > toDate)
   const startDisabled: Matcher[] = [
     { after: todayDate },
@@ -284,6 +301,34 @@ export const OpsReportDownload = () => {
               Time. The PDF includes the live queue even if the period is quiet.
             </DialogDescription>
           </DialogHeader>
+          <div className="grid gap-1.5">
+            <Label id="ops-report-presets-label">Last</Label>
+            <div
+              role="group"
+              aria-labelledby="ops-report-presets-label"
+              className="flex flex-wrap gap-2"
+            >
+              {PRESET_DAYS.map((days) => {
+                const selected = selectedPreset === days
+                return (
+                  <Button
+                    key={days}
+                    type="button"
+                    size="sm"
+                    variant={selected ? "default" : "outline"}
+                    tabIndex={0}
+                    aria-pressed={selected}
+                    aria-label={`Last ${days} days`}
+                    disabled={downloading}
+                    className="min-h-8"
+                    onClick={() => handlePresetClick(days)}
+                  >
+                    {days} days
+                  </Button>
+                )
+              })}
+            </div>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <ReportDatePicker
               id="ops-report-start"

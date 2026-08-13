@@ -70,6 +70,7 @@ describe("OpsReportDownload", () => {
   beforeEach(() => {
     downloadWeekly.mockReset()
     toastError.mockReset()
+    vi.restoreAllMocks()
     vi.stubGlobal(
       "URL",
       {
@@ -89,6 +90,38 @@ describe("OpsReportDownload", () => {
     expect(
       within(dialog).getByRole("button", { name: "Report end date" }),
     ).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole("button", { name: "Last 7 days" }),
+    ).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it("applies a 30-day preset before download", async () => {
+    downloadWeekly.mockResolvedValue({
+      blob: new Blob(["%PDF"], { type: "application/pdf" }),
+      contentType: "application/pdf",
+      filename: "ops-weekly.pdf",
+    })
+    const click = vi.fn()
+    const originalCreate = document.createElement.bind(document)
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = originalCreate(tag)
+      if (tag === "a") {
+        el.click = click
+      }
+      return el
+    })
+
+    const { user, dialog } = await openDialog()
+    await user.click(within(dialog).getByRole("button", { name: "Last 30 days" }))
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirm download reports" }),
+    )
+
+    const to = formatYmdInTimezone(new Date(), "America/New_York")
+    expect(downloadWeekly).toHaveBeenCalledWith({
+      from: addCalendarDays(to, -29),
+      to,
+    })
   })
 
   it("opens the start and end date calendars separately", async () => {
