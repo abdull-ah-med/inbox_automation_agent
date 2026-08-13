@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { format } from "date-fns"
 import { CalendarIcon, FileDown } from "lucide-react"
+import type { Matcher } from "react-day-picker"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -78,7 +79,7 @@ type ReportDatePickerProps = {
   ariaLabel: string
   value: string
   invalid?: boolean
-  disabled: Array<{ before?: Date; after?: Date }>
+  disabled: Matcher[]
   todayDate: Date
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -235,7 +236,7 @@ export const OpsReportDownload = () => {
   }
 
   const inverted = Boolean(fromDate && toDate && fromDate > toDate)
-  const startDisabled = [
+  const startDisabled: Matcher[] = [
     { after: todayDate },
     ...(toDate
       ? [
@@ -249,7 +250,7 @@ export const OpsReportDownload = () => {
         ]
       : []),
   ]
-  const endDisabled = [
+  const endDisabled: Matcher[] = [
     { after: todayDate },
     ...(fromDate
       ? [
