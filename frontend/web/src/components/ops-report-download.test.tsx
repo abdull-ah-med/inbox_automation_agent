@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -19,7 +19,30 @@ vi.mock("sonner", () => ({
   },
 }))
 
-import { OpsReportDownload } from "@/components/ops-report-download"
+import {
+  OpsReportDownload,
+  validateReportRange,
+} from "@/components/ops-report-download"
+
+const formatYmdInTimezone = (date: Date, timeZone: string): string => {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date)
+}
+
+const addCalendarDays = (ymd: string, days: number): string => {
+  const [year, month, day] = ymd.split("-").map(Number)
+  const utc = new Date(Date.UTC(year, month - 1, day + days))
+  return utc.toISOString().slice(0, 10)
+}
+
+const expectedDefaultRange = () => {
+  const to = formatYmdInTimezone(new Date(), "America/New_York")
+  return { from: addCalendarDays(to, -6), to }
+}
 
 const openDialog = async () => {
   const user = userEvent.setup()
@@ -28,6 +51,20 @@ const openDialog = async () => {
   const dialog = await screen.findByRole("dialog")
   return { user, dialog }
 }
+
+describe("validateReportRange", () => {
+  it("rejects an inverted date range", () => {
+    expect(validateReportRange("2026-08-12", "2026-08-01")).toMatch(/on or before/)
+  })
+
+  it("rejects a range longer than 93 days", () => {
+    expect(validateReportRange("2026-01-01", "2026-04-05")).toMatch(/93 days/)
+  })
+
+  it("accepts a week-long range", () => {
+    expect(validateReportRange("2026-08-03", "2026-08-09")).toBeNull()
+  })
+})
 
 describe("OpsReportDownload", () => {
   beforeEach(() => {
@@ -46,8 +83,24 @@ describe("OpsReportDownload", () => {
     const { dialog } = await openDialog()
     expect(dialog).toHaveAttribute("data-size", "md")
     expect(within(dialog).getByText("Download reports")).toBeInTheDocument()
-    expect(within(dialog).getByLabelText("Report from date")).toBeInTheDocument()
-    expect(within(dialog).getByLabelText("Report to date")).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole("button", { name: "Report start date" }),
+    ).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole("button", { name: "Report end date" }),
+    ).toBeInTheDocument()
+  })
+
+  it("opens the start and end date calendars separately", async () => {
+    const { user, dialog } = await openDialog()
+    await user.click(
+      within(dialog).getByRole("button", { name: "Report start date" }),
+    )
+    expect(screen.getByRole("grid")).toBeInTheDocument()
+    await user.click(
+      within(dialog).getByRole("button", { name: "Report end date" }),
+    )
+    expect(screen.getAllByRole("grid")).toHaveLength(1)
   })
 
   it("downloads the report for the selected date range", async () => {
@@ -67,20 +120,11 @@ describe("OpsReportDownload", () => {
     })
 
     const { user, dialog } = await openDialog()
-    fireEvent.change(within(dialog).getByLabelText("Report from date"), {
-      target: { value: "2026-08-03" },
-    })
-    fireEvent.change(within(dialog).getByLabelText("Report to date"), {
-      target: { value: "2026-08-09" },
-    })
     await user.click(
       within(dialog).getByRole("button", { name: "Confirm download reports" }),
     )
 
-    expect(downloadWeekly).toHaveBeenCalledWith({
-      from: "2026-08-03",
-      to: "2026-08-09",
-    })
+    expect(downloadWeekly).toHaveBeenCalledWith(expectedDefaultRange())
     expect(click).toHaveBeenCalled()
   })
 
@@ -90,36 +134,6 @@ describe("OpsReportDownload", () => {
     await user.click(
       within(dialog).getByRole("button", { name: "Confirm download reports" }),
     )
-    expect(toastError).toHaveBeenCalled()
-  })
-
-  it("rejects an inverted date range without calling the API", async () => {
-    const { user, dialog } = await openDialog()
-    fireEvent.change(within(dialog).getByLabelText("Report from date"), {
-      target: { value: "2026-08-12" },
-    })
-    fireEvent.change(within(dialog).getByLabelText("Report to date"), {
-      target: { value: "2026-08-01" },
-    })
-    await user.click(
-      within(dialog).getByRole("button", { name: "Confirm download reports" }),
-    )
-    expect(downloadWeekly).not.toHaveBeenCalled()
-    expect(toastError).toHaveBeenCalled()
-  })
-
-  it("rejects a range longer than 93 days without calling the API", async () => {
-    const { user, dialog } = await openDialog()
-    fireEvent.change(within(dialog).getByLabelText("Report from date"), {
-      target: { value: "2026-01-01" },
-    })
-    fireEvent.change(within(dialog).getByLabelText("Report to date"), {
-      target: { value: "2026-04-05" },
-    })
-    await user.click(
-      within(dialog).getByRole("button", { name: "Confirm download reports" }),
-    )
-    expect(downloadWeekly).not.toHaveBeenCalled()
     expect(toastError).toHaveBeenCalled()
   })
 })

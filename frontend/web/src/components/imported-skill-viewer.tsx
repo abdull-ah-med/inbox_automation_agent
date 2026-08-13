@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api-client"
 import type { SkillFileMeta, SkillResponse } from "@/lib/types"
+import { cn, textLinkClass } from "@/lib/utils"
 
 const isInlineText = (file: SkillFileMeta): boolean => {
   const path = file.relative_path.toLowerCase()
@@ -117,7 +118,7 @@ const SkillFileRow = ({
               download={file.relative_path.split("/").pop()}
               tabIndex={0}
               aria-label={`Download ${file.relative_path}`}
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline dark:text-blue-400"
+              className={cn(textLinkClass, "gap-1.5 text-sm")}
             >
               <Download className="size-4" aria-hidden="true" />
               Download file

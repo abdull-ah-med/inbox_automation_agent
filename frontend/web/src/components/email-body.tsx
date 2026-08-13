@@ -2,6 +2,8 @@
 
 import { Fragment, useState } from "react"
 
+import { cn, textLinkClass } from "@/lib/utils"
+
 // Matches http(s) URLs; stops before common trailing punctuation/brackets so
 // "See https://x.com/a)." doesn't swallow the closing paren or period.
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
@@ -70,7 +72,7 @@ const linkify = (text: string, keyPrefix: string): React.ReactNode[] => {
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="break-words text-blue-600 underline decoration-blue-600/30 underline-offset-2 hover:decoration-blue-600 dark:text-blue-400 dark:decoration-blue-400/30 dark:hover:decoration-blue-400"
+        className="break-words text-blue-600 underline decoration-blue-600/40 decoration-1 underline-offset-2 hover:decoration-blue-600 dark:text-blue-400 dark:decoration-blue-400/40 dark:hover:decoration-blue-400"
       >
         {url}
       </a>,
@@ -158,24 +160,29 @@ export const EmailBody = ({
 
   return (
     <div
-      className={`min-w-0 overflow-hidden whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300 ${className}`}
+      className={cn(
+        "min-w-0 overflow-hidden text-sm leading-relaxed text-gray-700 dark:text-gray-300",
+        className,
+      )}
     >
-      <BodyText text={main} />
+      <div className="whitespace-pre-wrap break-words">
+        <BodyText text={main} />
+      </div>
       {quoted ? (
-        <div className="mt-3 whitespace-normal">
+        <div className="mt-3">
           <button
             type="button"
             tabIndex={0}
             aria-expanded={showQuoted}
             aria-label={showQuoted ? "Hide quoted earlier messages" : "Show quoted earlier messages"}
-            className="cursor-pointer text-sm text-blue-600 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:ring-offset-2 dark:text-blue-400"
+            className={cn(textLinkClass, "text-sm")}
             onClick={handleToggleQuoted}
             onKeyDown={handleQuotedKeyDown}
           >
             {showQuoted ? "Hide earlier" : "Show earlier"}
           </button>
           {showQuoted ? (
-            <div className="mt-3 whitespace-pre-wrap break-words border-t border-gray-100 pt-3 text-gray-500 dark:border-gray-800 dark:text-gray-400">
+            <div className="mt-3 whitespace-pre-wrap break-words border-t border-border pt-3 text-gray-500 dark:text-gray-400">
               <BodyText text={quoted} />
             </div>
           ) : null}

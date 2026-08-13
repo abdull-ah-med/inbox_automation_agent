@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
+
+from pypdf import PdfReader
 
 from app.core.config import Settings
 from app.models.schemas.ops_report import (
@@ -107,33 +110,46 @@ def test_briefing_empty_period_still_reports_queue() -> None:
     assert "Open queue now: 5 awaiting action, 1 stale." in text
 
 
+def _pdf_text(pdf: bytes) -> str:
+    reader = PdfReader(BytesIO(pdf))
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
 def test_render_pdf_contains_company_and_numbers() -> None:
     pdf = render_pdf(_metrics())
     assert pdf.startswith(b"%PDF")
-    text = pdf.decode("latin-1", errors="ignore")
+    assert b"Inter" in pdf
+    text = _pdf_text(pdf)
     assert COMPANY_NAME.upper() in text
     assert "Weekly Operations Report" in text
-    assert "THIS PERIOD" in text
-    assert "OPEN QUEUE" in text
+    assert "SNAPSHOT" in text
     assert "VOLUME BY MAILBOX" in text
-    assert "INBOUND BY CATEGORY" in text
-    assert "TOP REJECT THEMES" in text
+    assert "PERIOD PIPELINE" in text
+    assert "OPEN QUEUE MIX" in text
+    assert "REJECT THEMES" in text
+    assert "MAILBOX DETAIL" in text
     assert "sales@example.com" in text
     assert "Spam / no-action" in text
     assert "Drafts generated" in text
     assert "Approval rate" in text
-    assert "Awaiting action" in text
+    assert "awaiting action" in text.lower()
     assert FOOTER_LINE in text
     assert "84.2%" in text
     assert "6.4 hours" in text
     assert "Tone" in text
-    assert "Billing" in text
     assert "Critical" in text
+    assert "Inbound" in text
+    assert "Filtered" in text
+    assert "Reviewed" in text
+    assert "Resolved" in text
+    assert "Awaiting" in text
+    assert "Stale" in text
     assert "3 August 2026" in text
     assert "9 August 2026" in text
     assert "America/New_York" not in text
     assert "11:04" in text
     assert "UTC" not in text
+    assert "n/a" not in text.lower()
 
 
 def test_render_pdf_empty_themes_note() -> None:
@@ -146,9 +162,11 @@ def test_render_pdf_empty_themes_note() -> None:
     metrics.rejects = 0
     metrics.approval_rate = 0.0
     pdf = render_pdf(metrics)
-    text = pdf.decode("latin-1", errors="ignore")
-    assert "No rejects in this period." in text
+    text = _pdf_text(pdf)
     assert "No sent replies" in text
+    assert "REJECT THEMES" not in text
+    assert "n/a" not in text.lower()
+    assert "-" in text
 
 
 def test_report_filename_uses_ny_calendar_dates() -> None:

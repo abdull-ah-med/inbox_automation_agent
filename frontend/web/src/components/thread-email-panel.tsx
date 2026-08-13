@@ -6,6 +6,7 @@ import { EmailBody } from "@/components/email-body"
 import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { MessageDetail } from "@/lib/types"
+import { cn, textActionClass, textLinkClass } from "@/lib/utils"
 
 const MessageBlock = ({
   message,
@@ -64,7 +65,7 @@ const MessageBlock = ({
               rel="noopener noreferrer"
               tabIndex={0}
               aria-label={`Open email from ${message.sender} in Outlook`}
-              className="cursor-pointer text-xs text-blue-600 hover:underline dark:text-blue-400"
+              className={cn(textLinkClass, "text-xs")}
             >
               Outlook
             </a>
@@ -74,7 +75,10 @@ const MessageBlock = ({
             tabIndex={0}
             aria-expanded={open}
             aria-label={`${open ? "Hide" : "Show"} message from ${message.sender}`}
-            className="cursor-pointer text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            className={cn(
+              textActionClass,
+              "cursor-pointer text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300",
+            )}
             onClick={handleToggle}
             onKeyDown={handleKeyDown}
           >
@@ -142,7 +146,7 @@ export const ThreadEmailPanel = ({
                 ? `Hide ${earlier.length} earlier messages`
                 : `Show ${earlier.length} earlier messages`
             }
-            className="cursor-pointer text-sm text-blue-600 hover:underline dark:text-blue-400"
+            className={cn(textLinkClass, "text-sm")}
             onClick={handleToggleEarlier}
             onKeyDown={handleEarlierKeyDown}
           >

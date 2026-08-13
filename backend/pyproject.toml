@@ -52,6 +52,7 @@ dev = [
     "pytest-cov>=7.1,<8.0",
     "ruff>=0.15,<0.16",
     "mypy>=2.2,<3.0",
+    "pypdf>=5.0,<7.0",
 ]
 # LLM response quality evals (DeepEval + RAGAS). Not installed by default CI.
 #   pip install -e ".[eval]"
@@ -67,6 +68,9 @@ eval = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+app = ["assets/fonts/*"]
 
 [tool.ruff]
 target-version = "py311"

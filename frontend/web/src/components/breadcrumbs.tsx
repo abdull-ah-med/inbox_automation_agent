@@ -3,6 +3,8 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 
+import { cn, textLinkClass } from "@/lib/utils"
+
 export type BreadcrumbItem = {
   label: string
   href?: string
@@ -40,7 +42,7 @@ export const Breadcrumbs = ({ items }: { items: BreadcrumbItem[] }) => {
           type="button"
           tabIndex={0}
           aria-label={parent ? `Back to ${parent.label}` : "Go back"}
-          className="cursor-pointer text-sm text-blue-600 hover:underline dark:text-blue-400"
+          className={cn(textLinkClass, "text-sm")}
           onClick={handleBack}
           onKeyDown={handleBackKeyDown}
         >
@@ -65,7 +67,7 @@ export const Breadcrumbs = ({ items }: { items: BreadcrumbItem[] }) => {
                     href={item.href}
                     tabIndex={0}
                     aria-label={item.label}
-                    className="cursor-pointer truncate text-blue-600 hover:underline dark:text-blue-400"
+                    className={cn(textLinkClass, "truncate")}
                   >
                     {item.label}
                   </Link>

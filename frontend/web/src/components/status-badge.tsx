@@ -25,7 +25,7 @@ export const StatusBadge = ({
     <Badge
       variant="secondary"
       className={cn(
-        "h-auto rounded-md border-0",
+        "rounded-md border-0 leading-none",
         TONE_CLASS[tone],
         className,
       )}

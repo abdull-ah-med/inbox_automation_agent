@@ -10,7 +10,7 @@ import {
   inboxColor,
   inboxLabel,
 } from "@/lib/design-tokens"
-import { cn } from "@/lib/utils"
+import { cn, textLinkClass } from "@/lib/utils"
 import type { ThreadSummary } from "@/lib/types"
 
 export const ThreadCard = ({
@@ -78,7 +78,7 @@ export const ThreadCard = ({
               rel="noopener noreferrer"
               tabIndex={0}
               aria-label={`Open thread in Outlook: ${thread.subject || "untitled"}`}
-              className="cursor-pointer text-blue-600 hover:underline dark:text-blue-400"
+              className={cn(textLinkClass, "text-xs")}
             >
               Outlook
             </a>
