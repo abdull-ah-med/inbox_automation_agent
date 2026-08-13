@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { cn, textLinkClass } from "@/lib/utils"
 
 export default function ThreadDetailPage() {
   const params = useParams<{ thread_id: string }>()
@@ -122,7 +123,7 @@ export default function ThreadDetailPage() {
                 rel="noopener noreferrer"
                 tabIndex={0}
                 aria-label="Open thread in Outlook"
-                className="cursor-pointer text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+                className={cn(textLinkClass, "text-sm font-medium")}
               >
                 Open in Outlook
               </a>

@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import type { DraftVsSentDiff, DraftView, SentReplyView } from "@/lib/types"
+import { cn, textActionClass } from "@/lib/utils"
 
 const MATCHED_BY_LABEL: Record<SentReplyView["matched_by"], string> = {
   approved_draft: "Approved draft",
@@ -73,7 +74,7 @@ const highlightLines = (
 }
 
 const BodyBox = ({ children }: { children: ReactNode }) => (
-  <Card size="sm" className="min-w-0 bg-muted/50 py-3 ring-foreground/5">
+  <Card size="sm" className="min-w-0 gap-0 bg-muted/50 py-3.5 ring-foreground/5">
     <CardContent className="text-sm">{children}</CardContent>
   </Card>
 )
@@ -102,11 +103,13 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
 
   return (
     <Card className="mb-5 min-w-0 gap-0 py-0" aria-label="Sent reply comparison">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 px-5 py-3">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <CardTitle className="text-sm font-semibold">Sent reply</CardTitle>
+      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+          <CardTitle className="text-sm leading-none font-semibold">
+            Sent reply
+          </CardTitle>
           <StatusBadge label="Resolved" tone="green" />
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs leading-none text-muted-foreground">
             Matched by: {MATCHED_BY_LABEL[sentReply.matched_by]}
           </span>
         </div>
@@ -117,7 +120,10 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
           aria-expanded={open}
           onClick={handleToggle}
           onKeyDown={handleKeyDown}
-          className="cursor-pointer text-xs font-medium text-muted-foreground hover:text-foreground"
+          className={cn(
+            textActionClass,
+            "cursor-pointer text-xs leading-none font-medium text-muted-foreground hover:text-foreground",
+          )}
         >
           {open ? "Hide" : "Show"}
         </button>
@@ -125,7 +131,7 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
       {open ? <Separator /> : null}
 
       {open ? (
-        <CardContent className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+        <CardContent className="grid min-w-0 grid-cols-1 gap-5 px-5 pt-4 pb-5 lg:grid-cols-2">
           {substantial ? (
             <p className="text-xs text-muted-foreground lg:col-span-2">
               The sent reply was substantially edited from the proposed draft.
@@ -133,7 +139,7 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
             </p>
           ) : null}
           <div className="min-w-0">
-            <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <h3 className="mb-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
               Proposed draft
             </h3>
             {proposed ? (
@@ -147,11 +153,15 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
                 )}
               </BodyBox>
             ) : (
-              <p className="text-sm text-muted-foreground">No proposed draft available.</p>
+              <BodyBox>
+                <p className="text-sm text-muted-foreground">
+                  No proposed draft available.
+                </p>
+              </BodyBox>
             )}
           </div>
           <div className="min-w-0">
-            <h3 className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <h3 className="mb-2.5 text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
               Sent reply
             </h3>
             <BodyBox>

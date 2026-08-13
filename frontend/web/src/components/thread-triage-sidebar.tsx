@@ -34,6 +34,7 @@ import type {
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
+import { cn, textLinkClass } from "@/lib/utils"
 
 const REVIEW_TAB_TRIGGER_CLASS =
   "h-full cursor-pointer rounded-md border-0 px-2 py-1.5 text-xs shadow-none data-active:bg-white data-active:shadow-sm sm:text-sm dark:data-active:border-transparent dark:data-active:bg-gray-950 dark:data-active:text-gray-100"
@@ -398,7 +399,7 @@ export const ThreadTriageSidebar = ({
                   rel="noopener noreferrer"
                   tabIndex={0}
                   aria-label="Open thread in Outlook"
-                  className="inline-block cursor-pointer text-sm text-blue-600 hover:underline dark:text-blue-400"
+                  className={cn(textLinkClass, "text-sm")}
                 >
                   Open in Outlook
                 </a>

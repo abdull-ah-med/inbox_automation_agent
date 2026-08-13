@@ -7,6 +7,13 @@ import "./globals.css";
 
 const inter = Inter({
   subsets: ["latin"],
+  fallback: [
+    "-apple-system",
+    "BlinkMacSystemFont",
+    "SF Pro Text",
+    "Segoe UI",
+    "sans-serif",
+  ],
 });
 
 export const metadata: Metadata = {

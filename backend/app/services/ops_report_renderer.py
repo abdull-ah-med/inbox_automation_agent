@@ -27,9 +27,12 @@ from reportlab.lib.enums import TA_LEFT, TA_RIGHT
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import (
     Flowable,
+    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -42,8 +45,29 @@ from app.models.schemas.ops_report import OpsMetricsResponse
 from app.models.schemas.routing import REJECT_REASON_CODES
 
 _INK = (0.12, 0.12, 0.12)
-_MUTED = (0.34, 0.34, 0.34)
-_RULE = (0.28, 0.28, 0.28)
+_MUTED = (0.42, 0.42, 0.42)
+_RULE = (0.22, 0.22, 0.22)
+_GRID = (0.91, 0.91, 0.91)
+_AXIS = (0.72, 0.72, 0.72)
+_PAPER = (1.0, 1.0, 1.0)
+
+_SERIES_INBOUND = (0.12, 0.12, 0.12)
+_SERIES_AWAITING = (0.46, 0.46, 0.46)
+_SERIES_STALE = (0.78, 0.78, 0.78)
+
+_SLICES = (
+    (0.12, 0.12, 0.12),
+    (0.34, 0.34, 0.34),
+    (0.52, 0.52, 0.52),
+    (0.68, 0.68, 0.68),
+    (0.82, 0.82, 0.82),
+    (0.91, 0.91, 0.91),
+)
+
+MISSING = "-"
+
+_FONT_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_FONTS_REGISTERED = False
 
 _REASON_LABELS: dict[str, str] = {
     "tone": "Tone",
@@ -59,36 +83,319 @@ CONTENT_TYPE = "application/pdf"
 COMPANY_NAME = "SampleSite Support"
 FOOTER_LINE = "SampleSite Support - read-only triage. Humans send in Outlook."
 
+FONT_REGULAR = "Inter"
+FONT_BOLD = "Inter-Bold"
+FONT_ITALIC = "Inter-Italic"
 
-class _Hairline(Flowable):
-    def __init__(self, width: float, stroke: float = 0.4) -> None:
-        super().__init__()
-        self.width = width
-        self.stroke = stroke
-        self.height = 4
+Rgb = tuple[float, float, float]
+SliceRow = tuple[str, int, Rgb]
 
-    def draw(self) -> None:
-        self.canv.setStrokeColorRGB(*_RULE)
-        self.canv.setLineWidth(self.stroke)
-        self.canv.line(0, 2, self.width, 2)
+
+def _ensure_fonts() -> None:
+    global _FONTS_REGISTERED
+    if _FONTS_REGISTERED:
+        return
+    pdfmetrics.registerFont(TTFont(FONT_REGULAR, str(_FONT_DIR / "Inter-Regular.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, str(_FONT_DIR / "Inter-Bold.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_ITALIC, str(_FONT_DIR / "Inter-Italic.ttf")))
+    pdfmetrics.registerFont(
+        TTFont("Inter-BoldItalic", str(_FONT_DIR / "Inter-BoldItalic.ttf"))
+    )
+    pdfmetrics.registerFontFamily(
+        "Inter",
+        normal=FONT_REGULAR,
+        bold=FONT_BOLD,
+        italic=FONT_ITALIC,
+        boldItalic="Inter-BoldItalic",
+    )
+    _FONTS_REGISTERED = True
+
+
+def _nice_ceiling(value: int) -> int:
+    """Axis max that sits above ``value`` on a 4-tick scale."""
+    if value <= 0:
+        return 4
+    for step in (1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000):
+        top = step * 4
+        if top >= value:
+            return top
+    return value
 
 
 class _SectionHead(Flowable):
-    """Small uppercase label with a hairline — quieter than a bold heading."""
+    """Small uppercase label — type only, no rule."""
 
-    def __init__(self, text: str, width: float) -> None:
+    def __init__(self, text: str) -> None:
         super().__init__()
         self.text = text.upper()
-        self.width = width
-        self.height = 16
+        self.height = 14
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        self.width = availWidth
+        return availWidth, self.height
 
     def draw(self) -> None:
         self.canv.setFillColorRGB(*_INK)
-        self.canv.setFont("Times-Bold", 8)
-        self.canv.drawString(0, 7, self.text)
-        self.canv.setStrokeColorRGB(*_RULE)
-        self.canv.setLineWidth(0.4)
-        self.canv.line(0, 3, self.width, 3)
+        self.canv.setFont(FONT_BOLD, 8)
+        self.canv.drawString(0, 3, self.text)
+
+
+class _KpiCell(Flowable):
+    """Glanceable number + uppercase label for the snapshot strip."""
+
+    def __init__(self, value: str, label: str, width: float) -> None:
+        super().__init__()
+        self.value = value
+        self.label = label.upper()
+        self.width = width
+        self.height = 36
+
+    def draw(self) -> None:
+        self.canv.setFillColorRGB(*_INK)
+        self.canv.setFont(FONT_BOLD, 16)
+        self.canv.drawString(0, 16, self.value)
+        self.canv.setFillColorRGB(*_MUTED)
+        self.canv.setFont(FONT_REGULAR, 7)
+        self.canv.drawString(0, 4, self.label)
+
+
+class _ChartLegend(Flowable):
+    def __init__(self, items: list[tuple[str, Rgb]], width: float) -> None:
+        super().__init__()
+        self.items = items
+        self.width = width
+        self.height = 12
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        return self.width, self.height
+
+    def draw(self) -> None:
+        x = 0.0
+        for label, color in self.items:
+            self.canv.setFillColorRGB(*color)
+            self.canv.rect(x, 2, 7, 7, fill=1, stroke=0)
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_REGULAR, 7)
+            self.canv.drawString(x + 10, 3, label)
+            x += 10 + self.canv.stringWidth(label, FONT_REGULAR, 7) + 14
+
+
+class _GroupedBarChart(Flowable):
+    """Vertical clustered bars with a y-axis, ticks, and grid."""
+
+    def __init__(
+        self,
+        groups: list[tuple[str, list[int]]],
+        series: list[tuple[str, Rgb]],
+        width: float,
+        height: float = 2.35 * inch,
+    ) -> None:
+        super().__init__()
+        self.groups = groups
+        self.series = series
+        self.width = width
+        self.height = height
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        return self.width, self.height
+
+    def draw(self) -> None:
+        left, bottom, top, right = 28.0, 22.0, 6.0, 4.0
+        plot_w = self.width - left - right
+        plot_h = self.height - bottom - top
+        peaks = [max(values) if values else 0 for _, values in self.groups]
+        ymax = _nice_ceiling(max(peaks, default=0))
+
+        for tick in range(5):
+            y = bottom + plot_h * (tick / 4)
+            self.canv.setStrokeColorRGB(*(_AXIS if tick == 0 else _GRID))
+            self.canv.setLineWidth(0.5 if tick == 0 else 0.35)
+            self.canv.line(left, y, left + plot_w, y)
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_REGULAR, 7)
+            self.canv.drawRightString(left - 5, y - 2, f"{int(ymax * tick / 4):,}")
+
+        if not self.groups:
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_REGULAR, 11)
+            self.canv.drawCentredString(left + plot_w / 2, bottom + plot_h / 2, MISSING)
+            return
+
+        n_groups = len(self.groups)
+        n_series = max(len(self.series), 1)
+        group_w = plot_w / n_groups
+        cluster_w = group_w * 0.72
+        bar_w = cluster_w / n_series
+        gap = 1.4
+
+        for gi, (label, values) in enumerate(self.groups):
+            cluster_left = left + gi * group_w + (group_w - cluster_w) / 2
+            for si, raw in enumerate(values):
+                color = self.series[si][1] if si < len(self.series) else _INK
+                h = 0.0 if ymax == 0 else plot_h * (raw / ymax)
+                x = cluster_left + si * bar_w
+                if h <= 0:
+                    continue
+                self.canv.setFillColorRGB(*color)
+                if si == n_series - 1:
+                    self.canv.setStrokeColorRGB(*_AXIS)
+                    self.canv.setLineWidth(0.4)
+                    self.canv.rect(
+                        x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=1
+                    )
+                else:
+                    self.canv.rect(
+                        x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=0
+                    )
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_REGULAR, 7)
+            self.canv.drawCentredString(
+                left + gi * group_w + group_w / 2,
+                6,
+                label,
+            )
+
+
+class _DonutChart(Flowable):
+    """Composition chart: slice mix plus count / percent legend."""
+
+    def __init__(
+        self,
+        slices: list[SliceRow],
+        width: float,
+        height: float = 2.15 * inch,
+        center_label: str = "Total",
+    ) -> None:
+        super().__init__()
+        self.slices = slices
+        self.width = width
+        self.height = height
+        self.center_label = center_label.upper()
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        return self.width, self.height
+
+    def draw(self) -> None:
+        total = sum(value for _, value, _ in self.slices)
+        radius = min(self.height * 0.38, self.width * 0.22)
+        cx = radius + 10
+        cy = self.height / 2
+
+        if total <= 0:
+            self.canv.setStrokeColorRGB(*_GRID)
+            self.canv.setLineWidth(10)
+            self.canv.circle(cx, cy, radius * 0.72, fill=0, stroke=1)
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_BOLD, 12)
+            self.canv.drawCentredString(cx, cy - 4, MISSING)
+        else:
+            start = 90.0
+            for _label, value, color in self.slices:
+                if value <= 0:
+                    continue
+                self.canv.setFillColorRGB(*color)
+                if value == total:
+                    self.canv.circle(cx, cy, radius, fill=1, stroke=0)
+                    break
+                extent = 360.0 * value / total
+                self.canv.wedge(
+                    cx - radius,
+                    cy - radius,
+                    cx + radius,
+                    cy + radius,
+                    start,
+                    extent,
+                    fill=1,
+                    stroke=0,
+                )
+                start += extent
+            self.canv.setFillColorRGB(*_PAPER)
+            self.canv.circle(cx, cy, radius * 0.58, fill=1, stroke=0)
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_BOLD, 11)
+            self.canv.drawCentredString(cx, cy + 2, _fmt_int(total))
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_REGULAR, 6)
+            self.canv.drawCentredString(cx, cy - 9, self.center_label)
+
+        legend_x = cx + radius + 14
+        row_h = 15
+        legend_h = max(len(self.slices), 1) * row_h
+        y = cy + legend_h / 2 - 10
+        for label, value, color in self.slices:
+            self.canv.setFillColorRGB(*color)
+            self.canv.rect(legend_x, y, 7, 7, fill=1, stroke=0)
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_REGULAR, 8)
+            self.canv.drawString(legend_x + 11, y, label)
+            pct = MISSING if total <= 0 else f"{100 * value / total:.0f}%"
+            self.canv.setFont(FONT_BOLD, 8)
+            self.canv.drawRightString(self.width - 2, y, f"{_fmt_int(value)}  {pct}")
+            y -= row_h
+
+
+class _HBarAxisChart(Flowable):
+    """Horizontal bars against a shared x-axis, with count and share of total."""
+
+    _ROW = 22
+    _LABEL_W = 1.05 * inch
+    _VALUE_W = 0.7 * inch
+
+    def __init__(
+        self,
+        rows: list[tuple[str, int]],
+        width: float,
+        *,
+        show_share: bool = True,
+    ) -> None:
+        super().__init__()
+        self.rows = rows
+        self.width = width
+        self.show_share = show_share
+        self.height = max(len(rows), 1) * self._ROW + 18
+
+    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+        return self.width, self.height
+
+    def draw(self) -> None:
+        if not self.rows:
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_REGULAR, 11)
+            self.canv.drawCentredString(self.width / 2, self.height / 2, MISSING)
+            return
+
+        total = sum(value for _, value in self.rows)
+        ymax = _nice_ceiling(max(value for _, value in self.rows))
+        bar_left = self._LABEL_W
+        bar_w = max(self.width - bar_left - self._VALUE_W, 0.7 * inch)
+        axis_y = 12
+
+        self.canv.setStrokeColorRGB(*_AXIS)
+        self.canv.setLineWidth(0.5)
+        self.canv.line(bar_left, axis_y, bar_left + bar_w, axis_y)
+        for tick in range(5):
+            x = bar_left + bar_w * (tick / 4)
+            self.canv.line(x, axis_y, x, axis_y + 3)
+            self.canv.setFillColorRGB(*_MUTED)
+            self.canv.setFont(FONT_REGULAR, 6)
+            self.canv.drawCentredString(x, 2, f"{int(ymax * tick / 4):,}")
+
+        for index, (label, value) in enumerate(self.rows):
+            y = self.height - (index + 1) * self._ROW + 4
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_REGULAR, 8)
+            self.canv.drawString(0, y + 2, label)
+            fill_w = 0.0 if ymax == 0 else bar_w * (value / ymax)
+            if fill_w > 0:
+                self.canv.setFillColorRGB(*_INK)
+                self.canv.rect(bar_left, y, max(fill_w, 1.5), 9, fill=1, stroke=0)
+            pct = MISSING if total <= 0 else f"{100 * value / total:.0f}%"
+            self.canv.setFillColorRGB(*_INK)
+            self.canv.setFont(FONT_REGULAR, 8)
+            value_text = (
+                f"{_fmt_int(value)}  {pct}" if self.show_share else _fmt_int(value)
+            )
+            self.canv.drawRightString(self.width, y + 2, value_text)
 
 
 def period_calendar_dates(
@@ -115,64 +422,64 @@ def _styles() -> dict[str, ParagraphStyle]:
     return {
         "kicker": ParagraphStyle(
             "kicker",
-            fontName="Times-Bold",
+            fontName=FONT_BOLD,
             fontSize=8,
             leading=10,
             textColor=_MUTED,
             alignment=TA_LEFT,
-            spaceAfter=6,
+            spaceAfter=4,
         ),
         "title": ParagraphStyle(
             "title",
-            fontName="Times-Bold",
-            fontSize=18,
-            leading=22,
+            fontName=FONT_BOLD,
+            fontSize=20,
+            leading=24,
             textColor=_INK,
-            spaceAfter=6,
+            spaceAfter=4,
         ),
         "meta": ParagraphStyle(
             "meta",
-            fontName="Times-Italic",
+            fontName=FONT_ITALIC,
             fontSize=9,
             leading=12,
             textColor=_MUTED,
-            spaceAfter=1,
+            spaceAfter=0,
         ),
-        "section": ParagraphStyle(
-            "section",
-            fontName="Times-Bold",
-            fontSize=8,
+        "caption": ParagraphStyle(
+            "caption",
+            fontName=FONT_REGULAR,
+            fontSize=7.5,
             leading=10,
-            textColor=_INK,
+            textColor=_MUTED,
             spaceBefore=0,
             spaceAfter=6,
         ),
         "body": ParagraphStyle(
             "body",
-            fontName="Times-Roman",
+            fontName=FONT_REGULAR,
             fontSize=8,
             leading=11,
             textColor=_MUTED,
         ),
         "briefing": ParagraphStyle(
             "briefing",
-            fontName="Times-Roman",
+            fontName=FONT_REGULAR,
             fontSize=10,
             leading=14,
             textColor=_INK,
-            spaceBefore=10,
-            spaceAfter=4,
+            spaceBefore=8,
+            spaceAfter=2,
         ),
         "cell": ParagraphStyle(
             "cell",
-            fontName="Times-Roman",
+            fontName=FONT_REGULAR,
             fontSize=9,
             leading=12,
             textColor=_INK,
         ),
         "cell_right": ParagraphStyle(
             "cell_right",
-            fontName="Times-Roman",
+            fontName=FONT_REGULAR,
             fontSize=9,
             leading=12,
             textColor=_INK,
@@ -180,29 +487,22 @@ def _styles() -> dict[str, ParagraphStyle]:
         ),
         "th": ParagraphStyle(
             "th",
-            fontName="Times-Bold",
+            fontName=FONT_BOLD,
             fontSize=8,
             leading=11,
-            textColor=_INK,
+            textColor=_MUTED,
         ),
         "th_right": ParagraphStyle(
             "th_right",
-            fontName="Times-Bold",
+            fontName=FONT_BOLD,
             fontSize=8,
             leading=11,
-            textColor=_INK,
+            textColor=_MUTED,
             alignment=TA_RIGHT,
-        ),
-        "empty": ParagraphStyle(
-            "empty",
-            fontName="Times-Italic",
-            fontSize=9,
-            leading=12,
-            textColor=_INK,
         ),
         "footer": ParagraphStyle(
             "footer",
-            fontName="Times-Roman",
+            fontName=FONT_REGULAR,
             fontSize=8,
             leading=10,
             textColor=_INK,
@@ -237,8 +537,20 @@ def _fmt_rate(rate: float) -> str:
 
 def _fmt_hours(hours: float | None) -> str:
     if hours is None:
-        return "n/a"
+        return MISSING
     return f"{hours:.1f} hours"
+
+
+def _fmt_hours_short(hours: float | None) -> str:
+    if hours is None:
+        return MISSING
+    return f"{hours:.1f}h"
+
+
+def _fmt_approval(metrics: OpsMetricsResponse) -> str:
+    if metrics.approvals + metrics.rejects == 0:
+        return MISSING
+    return _fmt_rate(metrics.approval_rate)
 
 
 def _plural(n: int, singular: str, plural: str | None = None) -> str:
@@ -309,101 +621,59 @@ def _table(data: list[list[Paragraph]], col_widths: list[float]) -> Table:
     table.setStyle(
         TableStyle(
             [
-                ("FONTNAME", (0, 0), (-1, -1), "Times-Roman"),
+                ("FONTNAME", (0, 0), (-1, -1), FONT_REGULAR),
                 ("TEXTCOLOR", (0, 0), (-1, -1), _INK),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-                ("TOPPADDING", (0, 0), (-1, 0), 2),
-                ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-                ("TOPPADDING", (0, 1), (-1, -1), 4),
-                ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
-                ("LINEBELOW", (0, 0), (-1, 0), 0.5, _RULE),
-                ("LINEBELOW", (0, -1), (-1, -1), 0.4, _RULE),
+                ("TOPPADDING", (0, 0), (-1, 0), 0),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+                ("TOPPADDING", (0, 1), (-1, -2), 7),
+                ("BOTTOMPADDING", (0, 1), (-1, -2), 7),
+                ("TOPPADDING", (0, -1), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, -1), (-1, -1), 2),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.6, _INK),
+                ("LINEABOVE", (0, -1), (-1, -1), 0.45, _RULE),
             ]
         )
     )
     return table
 
 
-def _kv_table(
-    rows: list[tuple[str, str]],
-    styles: dict[str, ParagraphStyle],
-    width: float,
-) -> Table:
-    data = [
-        [Paragraph(label, styles["cell"]), Paragraph(value, styles["cell_right"])]
-        for label, value in rows
+def _kpi_strip(metrics: OpsMetricsResponse, usable: float) -> Table:
+    cells = [
+        _KpiCell(_fmt_int(metrics.total_volume), "Inbound threads", usable / 5),
+        _KpiCell(_fmt_int(metrics.drafts_generated), "Drafts generated", usable / 5),
+        _KpiCell(_fmt_approval(metrics), "Approval rate", usable / 5),
+        _KpiCell(
+            _fmt_hours_short(metrics.avg_resolve_hours),
+            "Time to resolve",
+            usable / 5,
+        ),
+        _KpiCell(
+            _fmt_int(metrics.queue.awaiting_action),
+            "Awaiting action",
+            usable / 5,
+        ),
     ]
-    table = Table(data, colWidths=[width * 0.58, width * 0.42], hAlign="LEFT")
+    col = usable / 5
+    table = Table([cells], colWidths=[col] * 5, hAlign="LEFT")
     table.setStyle(
         TableStyle(
             [
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                ("LINEBELOW", (0, 0), (-1, -2), 0.25, _RULE),
-                ("LINEBELOW", (0, -1), (-1, -1), 0.4, _RULE),
-                ("LINEABOVE", (0, 0), (-1, 0), 0.5, _RULE),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]
         )
     )
     return table
 
 
-def _period_kpis(
-    metrics: OpsMetricsResponse,
-    styles: dict[str, ParagraphStyle],
-    width: float,
-) -> Table:
-    denom = metrics.approvals + metrics.rejects
-    approval_detail = (
-        f"{_fmt_rate(metrics.approval_rate)}  "
-        f"({_fmt_int(metrics.approvals)} / {_fmt_int(metrics.rejects)})"
-        if denom
-        else "n/a"
-    )
-    resolve_detail = (
-        f"{_fmt_hours(metrics.avg_resolve_hours)}  (n={_fmt_int(metrics.resolve_sample_count)})"
-        if metrics.resolve_sample_count
-        else "n/a"
-    )
-    return _kv_table(
-        [
-            ("Inbound threads", _fmt_int(metrics.total_volume)),
-            ("Spam / no-action", _fmt_int(metrics.spam_filtered)),
-            ("Drafts generated", _fmt_int(metrics.drafts_generated)),
-            ("Approval rate", approval_detail),
-            ("Time to resolve", resolve_detail),
-        ],
-        styles,
-        width,
-    )
-
-
-def _queue_kpis(
-    metrics: OpsMetricsResponse,
-    styles: dict[str, ParagraphStyle],
-    width: float,
-) -> Table:
-    queue = metrics.queue
-    return _kv_table(
-        [
-            ("Awaiting action", _fmt_int(queue.awaiting_action)),
-            ("Stale", _fmt_int(queue.stale)),
-            ("Critical", _fmt_int(queue.urgency_critical)),
-            ("High", _fmt_int(queue.urgency_high)),
-            ("Normal / low", _fmt_int(queue.urgency_normal + queue.urgency_low)),
-        ],
-        styles,
-        width,
-    )
-
-
 def _pair(left: list[Flowable], right: list[Flowable], usable: float) -> Table:
-    gap = 0.28 * inch
+    gap = 0.32 * inch
     col = (usable - gap) / 2
     table = Table(
         [[left, "", right]],
@@ -436,7 +706,7 @@ def _volume_table(metrics: OpsMetricsResponse, styles: dict[str, ParagraphStyle]
         data.append(
             [
                 Paragraph(
-                    f"{row.mailbox}<br/><font size='8'>{row.email}</font>",
+                    f"{row.mailbox}<br/><font size='8' color='#6B6B6B'>{row.email}</font>",
                     styles["cell"],
                 ),
                 Paragraph(_fmt_int(row.thread_volume), styles["cell_right"]),
@@ -455,62 +725,44 @@ def _volume_table(metrics: OpsMetricsResponse, styles: dict[str, ParagraphStyle]
     return _table(data, [3.1 * inch, 1.3 * inch, 1.3 * inch, 1.3 * inch])
 
 
-def _count_table(
-    rows: list[tuple[str, int]],
-    styles: dict[str, ParagraphStyle],
-    left_header: str,
-    width: float | None = None,
-) -> Table:
-    header = [
-        Paragraph(left_header, styles["th"]),
-        Paragraph("Count", styles["th_right"]),
+def _mailbox_groups(metrics: OpsMetricsResponse) -> list[tuple[str, list[int]]]:
+    return [
+        (row.mailbox, [row.thread_volume, row.awaiting_action, row.stale])
+        for row in metrics.volume_by_mailbox
     ]
-    data: list[list[Paragraph]] = [header]
-    for label, count in rows:
-        data.append(
-            [
-                Paragraph(label, styles["cell"]),
-                Paragraph(_fmt_int(count), styles["cell_right"]),
-            ]
-        )
-    left = (width or 7.0 * inch) - 1.15 * inch
-    return _table(data, [left, 1.15 * inch])
 
 
-def _themes_table(
-    metrics: OpsMetricsResponse,
-    styles: dict[str, ParagraphStyle],
-    width: float | None = None,
-) -> Table:
-    return _count_table(
-        [(_reason_label(row.reason_code), row.count) for row in metrics.top_reject_themes],
-        styles,
-        "Reason",
-        width,
-    )
+def _urgency_slices(metrics: OpsMetricsResponse) -> list[SliceRow]:
+    queue = metrics.queue
+    return [
+        ("Critical", queue.urgency_critical, _SLICES[0]),
+        ("High", queue.urgency_high, _SLICES[1]),
+        ("Normal", queue.urgency_normal, _SLICES[2]),
+        ("Low", queue.urgency_low, _SLICES[3]),
+    ]
 
 
-def _category_table(
-    metrics: OpsMetricsResponse,
-    styles: dict[str, ParagraphStyle],
-    width: float | None = None,
-) -> Table:
-    return _count_table(
-        [(row.category.replace("_", " ").title(), row.count) for row in metrics.volume_by_category],
-        styles,
-        "Category",
-        width,
-    )
+def _pipeline_rows(metrics: OpsMetricsResponse) -> list[tuple[str, int]]:
+    return [
+        ("Inbound", metrics.total_volume),
+        ("Filtered", metrics.spam_filtered),
+        ("Drafts", metrics.drafts_generated),
+        ("Reviewed", metrics.approvals + metrics.rejects),
+        ("Resolved", metrics.resolve_sample_count),
+    ]
+
+
+def _theme_rows(metrics: OpsMetricsResponse) -> list[tuple[str, int]]:
+    return [
+        (_reason_label(row.reason_code), row.count) for row in metrics.top_reject_themes
+    ]
 
 
 def _draw_footer(canvas: Canvas, doc: SimpleDocTemplate) -> None:
     canvas.saveState()
-    canvas.setStrokeColorRGB(*_RULE)
-    canvas.setLineWidth(0.4)
+    canvas.setFillColorRGB(*_MUTED)
+    canvas.setFont(FONT_REGULAR, 8)
     y = 0.55 * inch
-    canvas.line(doc.leftMargin, y + 12, doc.pagesize[0] - doc.rightMargin, y + 12)
-    canvas.setFont("Times-Roman", 8)
-    canvas.setFillColorRGB(*_INK)
     canvas.drawString(doc.leftMargin, y, FOOTER_LINE)
     canvas.drawRightString(
         doc.pagesize[0] - doc.rightMargin,
@@ -525,6 +777,7 @@ def render_pdf(
     timezone_name: str = "America/New_York",
 ) -> bytes:
     """Build a one-to-two page letter PDF from already-computed metrics."""
+    _ensure_fonts()
     styles = _styles()
     buffer = BytesIO()
     usable = letter[0] - 1.5 * inch
@@ -533,88 +786,116 @@ def render_pdf(
         pagesize=letter,
         leftMargin=0.75 * inch,
         rightMargin=0.75 * inch,
-        topMargin=0.7 * inch,
-        bottomMargin=0.75 * inch,
+        topMargin=0.65 * inch,
+        bottomMargin=0.7 * inch,
         title=f"{COMPANY_NAME} Weekly Operations Report",
         author=COMPANY_NAME,
         pageCompression=0,
     )
     period = metrics.period
-    gap = 0.28 * inch
+    gap = 0.32 * inch
     col = (usable - gap) / 2
-    category_body: Flowable = (
-        _category_table(metrics, styles, col)
-        if metrics.volume_by_category
-        else Paragraph("No inbound threads in this period.", styles["empty"])
-    )
-    themes_body: Flowable = (
-        _themes_table(metrics, styles, col)
-        if metrics.top_reject_themes
-        else Paragraph("No rejects in this period.", styles["empty"])
-    )
+    mailbox_series: list[tuple[str, Rgb]] = [
+        ("Inbound", _SERIES_INBOUND),
+        ("Awaiting", _SERIES_AWAITING),
+        ("Stale", _SERIES_STALE),
+    ]
+    theme_rows = _theme_rows(metrics)
+    mailbox_groups = _mailbox_groups(metrics)
+
     story: list[Flowable] = [
         Paragraph(COMPANY_NAME.upper(), styles["kicker"]),
         Paragraph("Weekly Operations Report", styles["title"]),
         Paragraph(
-            f"{_fmt_day(period.date_from, timezone_name)} through "
-            f"{_fmt_day(period.date_to, timezone_name)}",
+            f"{_fmt_day(period.date_from, timezone_name)} – "
+            f"{_fmt_day(period.date_to, timezone_name)}"
+            f"  ·  Generated {_fmt_dt(metrics.generated_at, timezone_name)}",
             styles["meta"],
         ),
-        Paragraph(
-            f"Generated {_fmt_dt(metrics.generated_at, timezone_name)}",
-            styles["meta"],
-        ),
-        Spacer(1, 10),
-        _Hairline(usable, 0.6),
         Paragraph(briefing_text(metrics), styles["briefing"]),
+        Spacer(1, 12),
+        _SectionHead("Snapshot"),
+        _kpi_strip(metrics, usable),
+        Spacer(1, 14),
+        _SectionHead("Volume by mailbox"),
+        Paragraph(
+            "Inbound threads this period against the live awaiting and stale queue.",
+            styles["caption"],
+        ),
+        _ChartLegend(mailbox_series, usable),
+        Spacer(1, 4),
+        _GroupedBarChart(mailbox_groups, mailbox_series, usable)
+        if mailbox_groups
+        else _GroupedBarChart([], mailbox_series, usable),
         Spacer(1, 14),
         _pair(
             [
-                _SectionHead("This period", col),
-                Spacer(1, 6),
-                _period_kpis(metrics, styles, col),
+                _SectionHead("Period pipeline"),
+                Paragraph(
+                    "How this period's mail moved through triage.",
+                    styles["caption"],
+                ),
+                _HBarAxisChart(_pipeline_rows(metrics), col, show_share=False),
             ],
             [
-                _SectionHead("Open queue", col),
-                Spacer(1, 6),
-                _queue_kpis(metrics, styles, col),
+                _SectionHead("Open queue mix"),
+                Paragraph(
+                    "Live urgency mix at generation time, not limited to the period.",
+                    styles["caption"],
+                ),
+                _DonutChart(_urgency_slices(metrics), col, center_label="Open"),
             ],
             usable,
         ),
-        Spacer(1, 16),
-        _SectionHead("Volume by mailbox", usable),
-        Spacer(1, 6),
-        _volume_table(metrics, styles)
-        if metrics.volume_by_mailbox
-        else Paragraph("No configured mailboxes in this window.", styles["empty"]),
-        Spacer(1, 16),
-        _pair(
+        Spacer(1, 14),
+        KeepTogether(
             [
-                _SectionHead("Inbound by category", col),
-                Spacer(1, 6),
-                category_body,
-            ],
-            [
-                _SectionHead("Top reject themes", col),
-                Spacer(1, 6),
-                themes_body,
-            ],
-            usable,
-        ),
-        Spacer(1, 18),
-        _SectionHead("Definitions", usable),
-        Spacer(1, 6),
-        Paragraph(
-            "Inbound counts threads with at least one inbound message in the period. "
-            "Spam / no-action counts threads that entered SPAM or NO_ACTION. "
-            "Drafts generated counts drafts created in the period. "
-            "Approval rate is approvals divided by approvals plus rejects. "
-            "Time to resolve is sent-reply time minus the thread's first inbound "
-            "message. Awaiting and stale are the live queue at generation time. "
-            "Stale means awaiting action with no inbound message in the last 24 hours.",
-            styles["body"],
+                _SectionHead("Mailbox detail"),
+                Spacer(1, 4),
+                _volume_table(metrics, styles)
+                if metrics.volume_by_mailbox
+                else Paragraph(MISSING, styles["body"]),
+            ]
         ),
     ]
+    if theme_rows:
+        story.extend(
+            [
+                Spacer(1, 14),
+                KeepTogether(
+                    [
+                        _SectionHead("Reject themes"),
+                        Paragraph(
+                            "Share of rejected drafts this period, by reviewer reason.",
+                            styles["caption"],
+                        ),
+                        _HBarAxisChart(theme_rows, usable),
+                    ]
+                ),
+            ]
+        )
+    story.extend(
+        [
+            Spacer(1, 14),
+            KeepTogether(
+                [
+                    _SectionHead("Definitions"),
+                    Spacer(1, 4),
+                    Paragraph(
+                        "Inbound counts threads with at least one inbound message in the period. "
+                        "Spam / no-action counts threads that entered SPAM or NO_ACTION. "
+                        "Drafts generated counts drafts created in the period. "
+                        "Approval rate is approvals divided by approvals plus rejects. "
+                        "Time to resolve is sent-reply time minus the thread's first inbound "
+                        "message. Awaiting and stale are the live queue at generation time. "
+                        "Stale means awaiting action with no inbound message in the last 24 hours. "
+                        "Reviewed is approvals plus rejects. Resolved is sent replies in the period.",
+                        styles["body"],
+                    ),
+                ]
+            ),
+        ]
+    )
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     return buffer.getvalue()
 

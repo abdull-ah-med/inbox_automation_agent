@@ -40,6 +40,7 @@ import type {
   SkillUpdate,
   ToneProfileResponse,
 } from "@/lib/types"
+import { cn, textLinkClass } from "@/lib/utils"
 
 const emptyForm = (): SkillCreate => ({
   name: "",
@@ -513,7 +514,7 @@ export default function SettingsPage() {
                         aria-label={`View imported skill ${skill.name}`}
                         onClick={() => handleOpenViewer(skill)}
                         onKeyDown={(event) => handleViewerKeyDown(event, skill)}
-                        className="cursor-pointer font-medium text-blue-600 hover:underline dark:text-blue-400"
+                        className={cn(textLinkClass, "font-medium")}
                       >
                         {skill.name}
                       </button>
