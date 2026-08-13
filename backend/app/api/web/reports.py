@@ -69,7 +69,7 @@ async def download_ops_weekly(
     response: Response,
     session: DbSession,
     settings: AppSettings,
-    _user: CurrentUser,
+    user: CurrentUser,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     mailbox: Annotated[str | None, Query()] = None,
@@ -83,6 +83,7 @@ async def download_ops_weekly(
         mailbox=mailbox,
         persist=False,
         send_email=False,
+        generated_by=str(user.email),
     )
     quoted = quote(result.filename)
     disposition = f"attachment; filename=\"{result.filename}\"; filename*=UTF-8''{quoted}"
@@ -108,7 +109,7 @@ async def generate_ops_weekly(
     response: Response,
     session: DbSession,
     settings: AppSettings,
-    _user: CurrentUser,
+    user: CurrentUser,
     date_from: Annotated[datetime | None, Query(alias="from")] = None,
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     mailbox: Annotated[str | None, Query()] = None,
@@ -122,5 +123,6 @@ async def generate_ops_weekly(
         mailbox=mailbox,
         persist=True,
         send_email=False,
+        generated_by=str(user.email),
     )
     return result

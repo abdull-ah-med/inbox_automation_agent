@@ -107,6 +107,7 @@ async def generate_ops_report(
     mailbox: str | None = None,
     persist: bool = True,
     send_email: bool = False,
+    generated_by: str | None = None,
 ) -> tuple[bytes, OpsReportGenerateResponse]:
     """Metrics → PDF → optional disk store → optional SMTP.
 
@@ -120,7 +121,9 @@ async def generate_ops_report(
         mailbox=mailbox,
     )
     tz_name = settings.ops_report_timezone
-    pdf_bytes = await render_pdf_async(metrics, timezone_name=tz_name)
+    pdf_bytes = await render_pdf_async(
+        metrics, timezone_name=tz_name, generated_by=generated_by
+    )
     filename = report_filename(
         metrics.period.date_from, metrics.period.date_to, timezone_name=tz_name
     )
