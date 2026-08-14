@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 const downloadWeekly = vi.fn()
 const toastError = vi.fn()
@@ -23,26 +23,6 @@ import {
   OpsReportDownload,
   validateReportRange,
 } from "@/components/ops-report-download"
-
-const formatYmdInTimezone = (date: Date, timeZone: string): string => {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date)
-}
-
-const addCalendarDays = (ymd: string, days: number): string => {
-  const [year, month, day] = ymd.split("-").map(Number)
-  const utc = new Date(Date.UTC(year, month - 1, day + days))
-  return utc.toISOString().slice(0, 10)
-}
-
-const expectedDefaultRange = () => {
-  const to = formatYmdInTimezone(new Date(), "America/New_York")
-  return { from: addCalendarDays(to, -6), to }
-}
 
 const openDialog = async () => {
   const user = userEvent.setup()
@@ -71,6 +51,8 @@ describe("OpsReportDownload", () => {
     downloadWeekly.mockReset()
     toastError.mockReset()
     vi.restoreAllMocks()
+    vi.useFakeTimers({ toFake: ["Date"] })
+    vi.setSystemTime(new Date("2026-08-12T03:00:00.000Z"))
     vi.stubGlobal(
       "URL",
       {
@@ -78,6 +60,10 @@ describe("OpsReportDownload", () => {
         revokeObjectURL: vi.fn(),
       } as unknown as typeof URL,
     )
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it("opens a modal from the download reports button", async () => {
@@ -117,10 +103,9 @@ describe("OpsReportDownload", () => {
       within(dialog).getByRole("button", { name: "Confirm download reports" }),
     )
 
-    const to = formatYmdInTimezone(new Date(), "America/New_York")
     expect(downloadWeekly).toHaveBeenCalledWith({
-      from: addCalendarDays(to, -29),
-      to,
+      from: "2026-07-13",
+      to: "2026-08-11",
     })
   })
 
@@ -157,7 +142,10 @@ describe("OpsReportDownload", () => {
       within(dialog).getByRole("button", { name: "Confirm download reports" }),
     )
 
-    expect(downloadWeekly).toHaveBeenCalledWith(expectedDefaultRange())
+    expect(downloadWeekly).toHaveBeenCalledWith({
+      from: "2026-08-05",
+      to: "2026-08-11",
+    })
     expect(click).toHaveBeenCalled()
   })
 

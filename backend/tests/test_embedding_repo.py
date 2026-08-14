@@ -27,6 +27,8 @@ def _row(
     row.id = uuid.uuid4()
     row.conversation_id = conversation_id
     row.message_id = message_id
+    row.mailbox = "elise@example.com"
+    row.body_preview = "hi"
     return row
 
 
@@ -295,3 +297,39 @@ async def test_update_embedding_document_updates_row() -> None:
     assert row.body_preview == "preview"
     assert row.embed_clean_version == 1
     session.flush.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_search_similar_empty_mailboxes_does_not_query() -> None:
+    session = AsyncMock()
+    matches = await embedding_repo.search_similar(
+        session,
+        embedding=_vector(),
+        min_similarity=0.78,
+        top_k=3,
+        mailboxes=[],
+    )
+    assert matches == []
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_fts_mailboxes_in_clause() -> None:
+    session = AsyncMock()
+    keep = _row(conversation_id="c-match", message_id=uuid.uuid4())
+    result = MagicMock()
+    result.all.return_value = [(keep, 0.42)]
+    session.execute = AsyncMock(return_value=result)
+
+    matches = await embedding_repo.search_fts(
+        session,
+        query_text="intake packet",
+        top_k=5,
+        mailboxes=["elise@example.com", "sales@example.com"],
+    )
+
+    assert len(matches) == 1
+    assert matches[0].mailbox == "elise@example.com"
+    stmt = session.execute.await_args.args[0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
+    assert "mailbox" in compiled.lower()

@@ -3,15 +3,44 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import Select, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.repositories import message_repo
+
+
+def _apply_mailbox_scope(
+    stmt: Select[Any],
+    *,
+    mailbox: str | None,
+    mailboxes: Sequence[str] | None,
+) -> Select[Any] | None:
+    """Apply mailbox equality or IN. ``None`` means skip the query (empty allowlist)."""
+    if mailbox is not None:
+        return stmt.where(EmailEmbedding.mailbox == mailbox)
+    if mailboxes is not None:
+        if not mailboxes:
+            return None
+        return stmt.where(EmailEmbedding.mailbox.in_(list(mailboxes)))
+    return stmt
+
+
+def _match_from_row(row: EmailEmbedding, score: float) -> EmbeddingMatchSchema:
+    return EmbeddingMatchSchema(
+        id=row.id,
+        conversation_id=row.conversation_id,
+        similarity_score=score,
+        message_id=row.message_id,
+        mailbox=row.mailbox,
+        body_preview=row.body_preview,
+    )
 
 
 async def insert_embedding(
@@ -137,12 +166,14 @@ async def search_similar(
     min_similarity: float,
     top_k: int,
     mailbox: str | None = None,
+    mailboxes: Sequence[str] | None = None,
     exclude_conversation_id: str | None = None,
 ) -> list[EmbeddingMatchSchema]:
     """Return top-K cosine matches at or above ``min_similarity``.
 
     When ``mailbox`` is set, results are scoped to that mailbox so draft/context
-    retrieval cannot leak content across TARGET_MAILBOXES.
+    retrieval cannot leak content across TARGET_MAILBOXES. ``mailboxes`` applies
+    the same isolation to an allowlist (empty list → no query).
     """
     max_distance = 1.0 - min_similarity
     distance = EmailEmbedding.embedding.cosine_distance(embedding)
@@ -153,22 +184,17 @@ async def search_similar(
         .order_by(distance)
         .limit(top_k)
     )
-    if mailbox is not None:
-        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
+    scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
+    if scoped is None:
+        return []
+    stmt = scoped
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
     result = await session.execute(stmt)
     matches: list[EmbeddingMatchSchema] = []
     for row, score in result.all():
-        matches.append(
-            EmbeddingMatchSchema(
-                id=row.id,
-                conversation_id=row.conversation_id,
-                similarity_score=float(score),
-                message_id=row.message_id,
-            )
-        )
+        matches.append(_match_from_row(row, float(score)))
     return matches
 
 
@@ -178,12 +204,14 @@ async def search_fts(
     query_text: str,
     top_k: int,
     mailbox: str | None = None,
+    mailboxes: Sequence[str] | None = None,
     exclude_conversation_id: str | None = None,
 ) -> list[EmbeddingMatchSchema]:
     """Return top-K full-text matches by ``ts_rank_cd`` on ``search_vector``.
 
     When ``mailbox`` is set, results are scoped to that mailbox (same isolation
-    as ``search_similar``).
+    as ``search_similar``). ``mailboxes`` applies the same isolation to an
+    allowlist (empty list → no query).
     """
     from sqlalchemy import column, func, literal_column
 
@@ -201,8 +229,10 @@ async def search_fts(
         .order_by(rank.desc())
         .limit(top_k)
     )
-    if mailbox is not None:
-        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
+    scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
+    if scoped is None:
+        return []
+    stmt = scoped
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
@@ -212,12 +242,5 @@ async def search_fts(
         # Normalize FTS rank into [0, 1] soft range for schema validation; RRF
         # uses ranks not raw scores so absolute magnitude is unused downstream.
         raw = float(score) if score is not None else 0.0
-        matches.append(
-            EmbeddingMatchSchema(
-                id=row.id,
-                conversation_id=row.conversation_id,
-                similarity_score=min(1.0, max(0.0, raw)),
-                message_id=row.message_id,
-            )
-        )
+        matches.append(_match_from_row(row, min(1.0, max(0.0, raw))))
     return matches

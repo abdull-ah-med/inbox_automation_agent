@@ -1,11 +1,10 @@
-"""Ops metrics preview API auth and validation."""
+"""Search API: auth, blank query, mailbox filter, response contract."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
-from zoneinfo import ZoneInfo
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,12 +14,10 @@ from app.core.dependencies import get_db
 from app.core.dependencies_auth import get_current_user
 from app.main import create_app
 from app.models.schemas.auth import UserMe
-from app.models.schemas.ops_report import (
-    MailboxVolume,
-    OpsMetricsResponse,
-    OpsPeriod,
-    RejectThemeCount,
-)
+from app.models.schemas.search import SearchHit, SearchResponse
+
+SALES = "sales@example.com"
+THREAD_ID = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
 @pytest.fixture
@@ -66,35 +63,28 @@ def app(local_settings: Settings):
     get_settings.cache_clear()
 
 
-def _metrics() -> OpsMetricsResponse:
-    start = datetime(2026, 8, 3, tzinfo=UTC)
-    end = datetime(2026, 8, 9, tzinfo=UTC)
-    return OpsMetricsResponse(
-        period=OpsPeriod(date_from=start, date_to=end),
-        volume_by_mailbox=[
-            MailboxVolume(
-                mailbox="sales",
-                email="sales@example.com",
-                thread_volume=4,
-                awaiting_action=2,
-                stale=1,
+def _response() -> SearchResponse:
+    return SearchResponse(
+        query="drug screen packet",
+        mailbox=SALES,
+        hits=[
+            SearchHit(
+                thread_id=THREAD_ID,
+                mailbox=SALES,
+                conversation_id="conv-sales-packet",
+                subject="Drug screen packet",
+                state="DRAFTED",
+                urgency="HIGH",
+                snippet="Drug screen packet — Please send the packet by Friday.",
+                score=0.0203125,
+                last_message_at=datetime(2026, 8, 5, 15, 0, tzinfo=UTC),
             )
         ],
-        total_volume=5,
-        spam_filtered=3,
-        drafts_generated=5,
-        approvals=2,
-        rejects=3,
-        approval_rate=0.4,
-        top_reject_themes=[RejectThemeCount(reason_code="tone", count=2)],
-        avg_resolve_hours=15.0,
-        resolve_sample_count=2,
-        generated_at=datetime(2026, 8, 12, 16, 0, tzinfo=UTC),
     )
 
 
 @pytest.mark.asyncio
-async def test_ops_metrics_requires_auth(local_settings: Settings) -> None:
+async def test_search_requires_auth(local_settings: Settings) -> None:
     get_settings.cache_clear()
     with (
         patch("app.main.get_settings", return_value=local_settings),
@@ -109,14 +99,14 @@ async def test_ops_metrics_requires_auth(local_settings: Settings) -> None:
         application.dependency_overrides[get_settings] = lambda: local_settings
         transport = ASGITransport(app=application)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/reports/ops-metrics")
+            resp = await client.get("/api/search", params={"q": "packet"})
         application.dependency_overrides.clear()
     assert resp.status_code == 401
     get_settings.cache_clear()
 
 
 @pytest.mark.asyncio
-async def test_ops_metrics_date_only_uses_ny_calendar_days(app) -> None:
+async def test_search_happy_path_returns_ranked_hits(app) -> None:
     mock_session = AsyncMock()
 
     async def fake_db():
@@ -124,60 +114,34 @@ async def test_ops_metrics_date_only_uses_ny_calendar_days(app) -> None:
 
     app.dependency_overrides[get_db] = fake_db
     with patch(
-        "app.api.web.reports.ops_metrics_service.get_metrics",
-        AsyncMock(return_value=_metrics()),
-    ) as get_metrics:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get(
-                "/api/reports/ops-metrics",
-                params={"from": "2026-08-03", "to": "2026-08-09"},
-            )
-    assert resp.status_code == 200
-    start = get_metrics.await_args.args[2]
-    end = get_metrics.await_args.args[3]
-    ny = ZoneInfo("America/New_York")
-    assert start.astimezone(ny).date().isoformat() == "2026-08-03"
-    assert start.astimezone(ny).hour == 0
-    assert end.astimezone(ny).date().isoformat() == "2026-08-09"
-    assert end.astimezone(ny).hour == 23
-
-
-@pytest.mark.asyncio
-async def test_ops_metrics_ok(app) -> None:
-    mock_session = AsyncMock()
-
-    async def fake_db():
-        yield mock_session
-
-    app.dependency_overrides[get_db] = fake_db
-    with patch(
-        "app.api.web.reports.ops_metrics_service.get_metrics",
-        AsyncMock(return_value=_metrics()),
+        "app.api.web.search.search_service.search_threads",
+        AsyncMock(return_value=_response()),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get(
-                "/api/reports/ops-metrics",
-                params={"from": "2026-08-03T00:00:00Z", "to": "2026-08-09T23:59:59Z"},
+                "/api/search",
+                params={"q": "drug screen packet", "mailbox": "sales", "limit": 10},
             )
     assert resp.status_code == 200
     body = resp.json()
-    assert body["total_volume"] == 5
-    assert body["spam_filtered"] == 3
-    assert body["approvals"] == 2
-    assert body["rejects"] == 3
-    assert body["approval_rate"] == pytest.approx(0.4)
-    assert body["avg_resolve_hours"] == pytest.approx(15.0)
-    assert body["resolve_sample_count"] == 2
-    assert body["volume_by_mailbox"][0]["mailbox"] == "sales"
-    assert body["top_reject_themes"][0] == {"reason_code": "tone", "count": 2}
-    assert "from" in body["period"]
-    assert "to" in body["period"]
+    assert body["query"] == "drug screen packet"
+    assert body["mailbox"] == SALES
+    assert len(body["hits"]) == 1
+    hit = body["hits"][0]
+    assert hit["thread_id"] == str(THREAD_ID)
+    assert hit["mailbox"] == SALES
+    assert hit["conversation_id"] == "conv-sales-packet"
+    assert hit["subject"] == "Drug screen packet"
+    assert hit["state"] == "DRAFTED"
+    assert hit["urgency"] == "HIGH"
+    assert hit["snippet"] == "Drug screen packet — Please send the packet by Friday."
+    assert hit["score"] == pytest.approx(0.0203125)
+    assert hit["last_message_at"] is not None
 
 
 @pytest.mark.asyncio
-async def test_ops_metrics_inverted_range_422(app) -> None:
+async def test_search_blank_query_422(app) -> None:
     mock_session = AsyncMock()
 
     async def fake_db():
@@ -186,16 +150,29 @@ async def test_ops_metrics_inverted_range_422(app) -> None:
     app.dependency_overrides[get_db] = fake_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(
-            "/api/reports/ops-metrics",
-            params={"from": "2026-08-09T00:00:00Z", "to": "2026-08-03T00:00:00Z"},
-        )
+        missing = await client.get("/api/search")
+        empty = await client.get("/api/search", params={"q": ""})
+    assert missing.status_code == 422
+    assert empty.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_search_whitespace_query_422(app) -> None:
+    mock_session = AsyncMock()
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/search", params={"q": "   "})
     assert resp.status_code == 422
-    assert resp.json()["error_type"] == "InvalidDateRangeError"
+    assert resp.json()["error_type"] == "EmptySearchQueryError"
 
 
 @pytest.mark.asyncio
-async def test_ops_metrics_unknown_mailbox_404(app) -> None:
+async def test_search_unknown_mailbox_404(app) -> None:
     mock_session = AsyncMock()
 
     async def fake_db():
@@ -205,18 +182,15 @@ async def test_ops_metrics_unknown_mailbox_404(app) -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get(
-            "/api/reports/ops-metrics",
-            params={
-                "from": "2026-08-03T00:00:00Z",
-                "to": "2026-08-09T00:00:00Z",
-                "mailbox": "unknown@example.com",
-            },
+            "/api/search",
+            params={"q": "packet", "mailbox": "unknown@example.com"},
         )
     assert resp.status_code == 404
+    assert resp.json()["error_type"] == "UnknownMailboxError"
 
 
 @pytest.mark.asyncio
-async def test_ops_metrics_partial_range_422(app) -> None:
+async def test_search_limit_above_cap_422(app) -> None:
     mock_session = AsyncMock()
 
     async def fake_db():
@@ -225,8 +199,5 @@ async def test_ops_metrics_partial_range_422(app) -> None:
     app.dependency_overrides[get_db] = fake_db
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get(
-            "/api/reports/ops-metrics",
-            params={"from": "2026-08-03T00:00:00Z"},
-        )
+        resp = await client.get("/api/search", params={"q": "packet", "limit": 26})
     assert resp.status_code == 422
