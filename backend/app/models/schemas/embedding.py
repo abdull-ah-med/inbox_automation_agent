@@ -16,3 +16,5 @@ class EmbeddingMatchSchema(BaseModel):
     conversation_id: str
     similarity_score: float = Field(ge=0.0, le=1.0)
     message_id: uuid.UUID | None = None
+    mailbox: str | None = None
+    body_preview: str | None = None

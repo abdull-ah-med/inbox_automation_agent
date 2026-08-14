@@ -5,11 +5,12 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Select, case, func, select, update
+from sqlalchemy import Select, case, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,6 +86,19 @@ async def get_by_id(session: AsyncSession, thread_id: uuid.UUID) -> ThreadSchema
     if thread is None:
         return None
     return ThreadSchema.model_validate(thread)
+
+
+async def list_by_mailbox_conversations(
+    session: AsyncSession,
+    pairs: Sequence[tuple[str, str]],
+) -> dict[tuple[str, str], ThreadSchema]:
+    """Load threads keyed by ``(mailbox, conversation_id)`` in one query."""
+    if not pairs:
+        return {}
+    stmt = select(Thread).where(tuple_(Thread.mailbox, Thread.conversation_id).in_(list(pairs)))
+    result = await session.execute(stmt)
+    threads = result.scalars().all()
+    return {(row.mailbox, row.conversation_id): ThreadSchema.model_validate(row) for row in threads}
 
 
 async def upsert_thread(

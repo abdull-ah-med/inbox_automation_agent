@@ -84,8 +84,12 @@ async def test_weekly_job_swallows_errors() -> None:
             "app.workers.ops_report_worker.generate_ops_report",
             AsyncMock(side_effect=RuntimeError("db down")),
         ),
+        patch("app.workers.ops_report_worker.logger.exception") as log_exc,
     ):
         await run_weekly_ops_report()
+
+    log_exc.assert_called_once()
+    assert log_exc.call_args.args[0] == "ops_report_job_failed"
 
 
 @pytest.mark.asyncio
@@ -165,3 +169,43 @@ def test_ops_report_email_default_is_false() -> None:
     settings = Settings(environment="local")
     assert settings.ops_report_email_enabled is False
     assert settings.ops_report_smtp_host == ""
+
+
+@pytest.mark.asyncio
+async def test_email_sends_via_smtp_never_graph() -> None:
+    settings = Settings(
+        environment="local",
+        ops_report_email_enabled=True,
+        ops_report_smtp_host="smtp.example.com",
+        ops_report_smtp_to="ops@example.com",
+        ops_report_smtp_from="reports@example.com",
+    )
+    from app.models.schemas.ops_report import MailboxVolume, OpsMetricsResponse
+
+    metrics = OpsMetricsResponse(
+        period=OpsPeriod(
+            date_from=datetime(2026, 8, 3, tzinfo=UTC),
+            date_to=datetime(2026, 8, 9, tzinfo=UTC),
+        ),
+        volume_by_mailbox=[
+            MailboxVolume(mailbox="sales", email="sales@example.com", thread_volume=1)
+        ],
+        total_volume=1,
+        spam_filtered=0,
+        approvals=1,
+        rejects=0,
+        approval_rate=1.0,
+        top_reject_themes=[],
+        avg_resolve_hours=None,
+        resolve_sample_count=0,
+        generated_at=datetime.now(UTC),
+    )
+    graph_send = MagicMock()
+    with (
+        patch("app.services.ops_report_job._send_smtp") as send,
+        patch("app.graph.client.GraphClient.send_mail", graph_send, create=True),
+    ):
+        sent = await maybe_send_email(settings, metrics, b"%PDF", "ops-weekly.pdf")
+    assert sent is True
+    send.assert_called_once()
+    graph_send.assert_not_called()

@@ -122,3 +122,11 @@ class InvalidDateRangeError(InboxTriageError):
 
 class UnknownMailboxError(InboxTriageError):
     """Raised when a mailbox filter is not in the configured allowlist."""
+
+
+class EmptySearchQueryError(InboxTriageError):
+    """Raised when a search query is missing or blank after strip."""
+
+
+class SearchError(InboxTriageError):
+    """Raised when hybrid retrieval cannot complete either search leg."""

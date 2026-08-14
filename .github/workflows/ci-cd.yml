@@ -23,6 +23,19 @@ jobs:
       run:
         working-directory: backend
     services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: inbox_triage_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d inbox_triage_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
       redis:
         image: redis:7-alpine
         ports:
@@ -52,6 +65,7 @@ jobs:
       - name: Pytest
         env:
           ENVIRONMENT: local
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test
         run: pytest
 
   frontend-ci:

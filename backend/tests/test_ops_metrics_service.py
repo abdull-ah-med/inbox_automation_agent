@@ -1,4 +1,10 @@
-"""Ops metrics service: formulas, windows, mailbox scoping."""
+"""Ops metrics service: date windows, mailbox scope, and formula assembly.
+
+Window tests use literal calendar dates. Rate tests use independent literals
+(0.4, 0.0, 1.0), not `approvals / (approvals + rejects)` recomputed in the
+test. End-to-end formula checks live in ``test_ops_metrics_repo`` and
+``test_get_metrics_on_worked_example``.
+"""
 
 from __future__ import annotations
 
@@ -11,27 +17,61 @@ import pytest
 
 from app.core.config import Settings
 from app.core.exceptions import InvalidDateRangeError, UnknownMailboxError
-from app.models.schemas.ops_report import MailboxVolume, QueueSnapshot, RejectThemeCount
+from app.models.schemas.ops_report import MailboxVolume, QueueSnapshot
 from app.services import ops_metrics_service
+from app.services.ops_report_renderer import briefing_text
+from tests.ops_metrics_fixtures import (
+    EXPECTED_APPROVAL_RATE,
+    EXPECTED_APPROVALS,
+    EXPECTED_AVG_RESOLVE_HOURS,
+    EXPECTED_AWAITING,
+    EXPECTED_CR_VOLUME,
+    EXPECTED_CRITICAL,
+    EXPECTED_DRAFTS_GENERATED,
+    EXPECTED_FILTERED,
+    EXPECTED_HIGH,
+    EXPECTED_NORMAL,
+    EXPECTED_REJECTS,
+    EXPECTED_RESOLVE_SAMPLE,
+    EXPECTED_SALES_VOLUME,
+    EXPECTED_SPAM,
+    EXPECTED_STALE,
+    EXPECTED_TOTAL_VOLUME,
+    QUEUE_NOW,
+    SALES,
+    WINDOW_END,
+    WINDOW_START,
+    seed_worked_example,
+)
 
 
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "environment": "local",
         "target_mailboxes": "sales@example.com,cr@example.com",
+        "staleness_threshold_hours": 24,
     }
     values.update(overrides)
     return Settings(**values)  # type: ignore[arg-type]
 
 
 def test_rolling_days_spans_seven_ny_calendar_days() -> None:
-    now = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)  # 12:00 EDT
+    now = datetime(2026, 8, 12, 16, 0, tzinfo=UTC)  # 12:00 EDT Aug 12
     start, end = ops_metrics_service.rolling_days(now=now)
     ny = ZoneInfo("America/New_York")
     assert start.astimezone(ny).date().isoformat() == "2026-08-06"
     assert start.astimezone(ny).hour == 0
     assert end.astimezone(ny).date().isoformat() == "2026-08-12"
     assert end.astimezone(ny).hour == 23
+
+
+def test_rolling_days_uses_ny_date_not_utc_date() -> None:
+    """03:00 UTC Aug 12 is still Aug 11 in New York."""
+    now = datetime(2026, 8, 12, 3, 0, tzinfo=UTC)
+    start, end = ops_metrics_service.rolling_days(now=now)
+    ny = ZoneInfo("America/New_York")
+    assert start.astimezone(ny).date().isoformat() == "2026-08-05"
+    assert end.astimezone(ny).date().isoformat() == "2026-08-11"
 
 
 def test_inclusive_calendar_range_naive_dates_are_ny_days() -> None:
@@ -133,77 +173,125 @@ def test_scoped_mailboxes_unknown_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_metrics_approval_rate_and_empty_resolve() -> None:
-    settings = _settings()
-    start = datetime(2026, 8, 3, tzinfo=UTC)
-    end = datetime(2026, 8, 9, 23, 59, tzinfo=UTC)
+async def test_approval_rate_is_zero_when_nothing_was_decided() -> None:
+    session = AsyncMock()
+    with _repo_patches(count_approvals_rejects=AsyncMock(return_value=(0, 0))):
+        metrics = await ops_metrics_service.get_metrics(
+            session, _settings(), WINDOW_START, WINDOW_END
+        )
+    assert metrics.approvals == 0
+    assert metrics.rejects == 0
+    assert metrics.approval_rate == 0.0
+
+
+@pytest.mark.asyncio
+async def test_approval_rate_is_one_when_every_decision_is_approve() -> None:
+    session = AsyncMock()
+    with _repo_patches(count_approvals_rejects=AsyncMock(return_value=(4, 0))):
+        metrics = await ops_metrics_service.get_metrics(
+            session, _settings(), WINDOW_START, WINDOW_END
+        )
+    assert metrics.approval_rate == 1.0
+
+
+@pytest.mark.asyncio
+async def test_approval_rate_is_two_fifths_for_two_approves_three_rejects() -> None:
+    session = AsyncMock()
+    with _repo_patches(count_approvals_rejects=AsyncMock(return_value=(2, 3))):
+        metrics = await ops_metrics_service.get_metrics(
+            session, _settings(), WINDOW_START, WINDOW_END
+        )
+    assert metrics.approval_rate == 0.4
+
+
+@pytest.mark.asyncio
+async def test_mailbox_key_and_queue_merge_onto_volume_rows() -> None:
     volume = [
-        MailboxVolume(mailbox="sales@example.com", email="sales@example.com", thread_volume=4),
-        MailboxVolume(mailbox="cr@example.com", email="cr@example.com", thread_volume=0),
+        MailboxVolume(mailbox=SALES, email=SALES, thread_volume=4),
+        MailboxVolume(mailbox="cr@example.com", email="cr@example.com", thread_volume=1),
     ]
     session = AsyncMock()
     with _repo_patches(
         volume_by_mailbox=AsyncMock(return_value=volume),
-        count_spam_filtered=AsyncMock(return_value=3),
-        count_approvals_rejects=AsyncMock(return_value=(16, 3)),
-        top_reject_themes=AsyncMock(
-            return_value=[RejectThemeCount(reason_code="tone", count=2)]
-        ),
-        avg_resolve_hours=AsyncMock(return_value=(None, 0)),
-        count_drafts_generated=AsyncMock(return_value=18),
         queue_snapshot=AsyncMock(
             return_value=(
-                QueueSnapshot(awaiting_action=2, stale=1),
-                {"sales@example.com": (2, 1), "cr@example.com": (0, 0)},
+                QueueSnapshot(awaiting_action=3, stale=1),
+                {SALES: (2, 1), "cr@example.com": (1, 0)},
             )
         ),
     ):
-        metrics = await ops_metrics_service.get_metrics(session, settings, start, end)
-
-    assert metrics.total_volume == 4
-    assert metrics.spam_filtered == 3
-    assert metrics.drafts_generated == 18
-    assert metrics.approvals == 16
-    assert metrics.rejects == 3
-    assert metrics.approval_rate == pytest.approx(16 / 19)
-    assert metrics.avg_resolve_hours is None
-    assert metrics.resolve_sample_count == 0
+        metrics = await ops_metrics_service.get_metrics(
+            session, _settings(), WINDOW_START, WINDOW_END
+        )
     assert metrics.volume_by_mailbox[0].mailbox == "sales"
     assert metrics.volume_by_mailbox[0].awaiting_action == 2
     assert metrics.volume_by_mailbox[0].stale == 1
+    assert metrics.volume_by_mailbox[1].mailbox == "cr"
+    assert metrics.volume_by_mailbox[1].awaiting_action == 1
+    assert metrics.total_volume == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_get_metrics_on_worked_example(db_session) -> None:
+    await seed_worked_example(db_session)
+    with patch("app.repositories.ops_metrics_repo.datetime") as mocked_dt:
+        mocked_dt.now.return_value = QUEUE_NOW
+        metrics = await ops_metrics_service.get_metrics(
+            db_session, _settings(), WINDOW_START, WINDOW_END
+        )
+    assert metrics.total_volume == EXPECTED_TOTAL_VOLUME
+    assert metrics.volume_by_mailbox[0].thread_volume == EXPECTED_SALES_VOLUME
+    assert metrics.volume_by_mailbox[1].thread_volume == EXPECTED_CR_VOLUME
+    assert metrics.spam_filtered == EXPECTED_SPAM
+    assert metrics.drafts_generated == EXPECTED_DRAFTS_GENERATED
+    assert metrics.approvals == EXPECTED_APPROVALS
+    assert metrics.rejects == EXPECTED_REJECTS
+    assert metrics.approval_rate == EXPECTED_APPROVAL_RATE
+    assert metrics.avg_resolve_hours == pytest.approx(EXPECTED_AVG_RESOLVE_HOURS)
+    assert metrics.resolve_sample_count == EXPECTED_RESOLVE_SAMPLE
+    assert metrics.queue.awaiting_action == EXPECTED_AWAITING
+    assert metrics.queue.stale == EXPECTED_STALE
+    assert metrics.queue.filtered == EXPECTED_FILTERED
+    assert metrics.queue.urgency_critical == EXPECTED_CRITICAL
+    assert metrics.queue.urgency_high == EXPECTED_HIGH
+    assert metrics.queue.urgency_normal == EXPECTED_NORMAL
+    assert {row.reason_code: row.count for row in metrics.top_reject_themes} == {
+        "tone": 2,
+        "other": 1,
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.db
+async def test_get_metrics_sales_scope_excludes_cr(db_session) -> None:
+    await seed_worked_example(db_session)
+    with patch("app.repositories.ops_metrics_repo.datetime") as mocked_dt:
+        mocked_dt.now.return_value = QUEUE_NOW
+        metrics = await ops_metrics_service.get_metrics(
+            db_session, _settings(), WINDOW_START, WINDOW_END, mailbox="sales"
+        )
+    assert metrics.total_volume == EXPECTED_SALES_VOLUME
+    assert [row.email for row in metrics.volume_by_mailbox] == [SALES]
+    assert metrics.spam_filtered == 2
     assert metrics.queue.awaiting_action == 2
-    assert metrics.top_reject_themes[0].reason_code == "tone"
+    assert metrics.queue.stale == 1
 
 
 @pytest.mark.asyncio
-async def test_get_metrics_empty_week_zeros() -> None:
-    settings = _settings()
-    start = datetime(2026, 8, 3, tzinfo=UTC)
-    end = datetime(2026, 8, 9, tzinfo=UTC)
-    volume = [
-        MailboxVolume(mailbox="sales@example.com", email="sales@example.com", thread_volume=0),
-        MailboxVolume(mailbox="cr@example.com", email="cr@example.com", thread_volume=0),
-    ]
-    session = AsyncMock()
-    with _repo_patches(volume_by_mailbox=AsyncMock(return_value=volume)):
-        metrics = await ops_metrics_service.get_metrics(session, settings, start, end)
-
-    assert metrics.total_volume == 0
-    assert metrics.spam_filtered == 0
-    assert metrics.approval_rate == 0.0
-    assert metrics.avg_resolve_hours is None
-    assert metrics.resolve_sample_count == 0
-    assert metrics.top_reject_themes == []
-
-
-@pytest.mark.asyncio
-async def test_get_metrics_resolve_average() -> None:
-    settings = _settings()
-    start = datetime(2026, 8, 3, tzinfo=UTC)
-    end = datetime(2026, 8, 9, tzinfo=UTC)
-    session = AsyncMock()
-    with _repo_patches(avg_resolve_hours=AsyncMock(return_value=(6.5, 4))):
-        metrics = await ops_metrics_service.get_metrics(session, settings, start, end)
-
-    assert metrics.avg_resolve_hours == pytest.approx(6.5)
-    assert metrics.resolve_sample_count == 4
+@pytest.mark.db
+async def test_briefing_prints_worked_example_numbers(db_session) -> None:
+    await seed_worked_example(db_session)
+    with patch("app.repositories.ops_metrics_repo.datetime") as mocked_dt:
+        mocked_dt.now.return_value = QUEUE_NOW
+        metrics = await ops_metrics_service.get_metrics(
+            db_session, _settings(), WINDOW_START, WINDOW_END
+        )
+    text = briefing_text(metrics)
+    assert "5 inbound threads" in text
+    assert "3 filtered as spam or no-action" in text
+    assert "40.0% approved" in text
+    assert "2 approved, 3 rejected" in text
+    assert "15.0 hours" in text
+    assert "3 awaiting action" in text
+    assert "1 stale" in text

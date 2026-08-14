@@ -22,6 +22,7 @@ from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
 from app.api.web.reply_memory import router as reply_memory_router
 from app.api.web.reports import router as reports_router
+from app.api.web.search import router as search_router
 from app.api.web.skill_candidates import router as skill_candidates_router
 from app.api.web.skills import router as skills_router
 from app.api.web.threads import router as threads_router
@@ -42,6 +43,7 @@ from app.core.exceptions import (
     ClassificationError,
     DraftGenerationError,
     DraftNotFoundError,
+    EmptySearchQueryError,
     GraphClientError,
     InboxTriageError,
     InvalidCredentialsError,
@@ -51,6 +53,7 @@ from app.core.exceptions import (
     ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
     RuleEngineError,
+    SearchError,
     SkillBudgetExceededError,
     SkillNameConflictError,
     SkillNotFoundError,
@@ -92,7 +95,9 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     AuthError: status.HTTP_401_UNAUTHORIZED,
     InvalidCursorError: status.HTTP_400_BAD_REQUEST,
     InvalidDateRangeError: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    EmptySearchQueryError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnknownMailboxError: status.HTTP_404_NOT_FOUND,
+    SearchError: status.HTTP_502_BAD_GATEWAY,
 }
 
 _scheduler: AsyncIOScheduler | None = None
@@ -269,6 +274,7 @@ def create_app() -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(dashboard_router)
+    app.include_router(search_router)
     app.include_router(reports_router)
     app.include_router(mailboxes_router)
     app.include_router(threads_router)

@@ -9,6 +9,8 @@ import pytest
 from app.core.config import Settings
 from app.models.schemas.graph import GraphMessageSchema
 
+pytest_plugins = ["tests.ops_metrics_fixtures"]
+
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo[None]):
