@@ -1,6 +1,7 @@
-"""User-facing hybrid search over draft-pipeline memory (pgvector + FTS + RRF).
+"""User-facing thread search over draft-pipeline memory.
 
-Day 4 chat should call ``search_threads`` rather than reimplementing retrieval.
+``keyword`` (the HTTP default) is Outlook-style full-text search.
+``hybrid`` adds pgvector + RRF and is what chat/InboxAssistant uses for retrieval.
 Snippets and thread ids are citation raw material; untrusted-content delimiters
 belong in the chat prompt layer, not this API.
 
@@ -25,6 +26,8 @@ from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.models.schemas.search import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_MAX_LIMIT,
+    SEARCH_MODE_HYBRID,
+    SEARCH_MODE_KEYWORD,
     SEARCH_SNIPPET_MAX_CHARS,
     SearchHit,
     SearchResponse,
@@ -41,6 +44,73 @@ logger = structlog.get_logger(__name__)
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _SCOPE_SEP = "\x1f"
+_PROPER_NAME_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b")
+_NAME_FILLER = frozenset(
+    {
+        "what",
+        "whats",
+        "happening",
+        "happen",
+        "give",
+        "latest",
+        "tell",
+        "show",
+        "about",
+        "status",
+        "update",
+        "news",
+        "please",
+        "could",
+        "would",
+        "can",
+        "you",
+        "me",
+        "the",
+        "on",
+        "with",
+        "for",
+        "any",
+        "going",
+        "something",
+    }
+)
+
+
+def _trim_filler_name_parts(span: str) -> str | None:
+    parts = span.split()
+    while parts and parts[0].lower().strip("'") in _NAME_FILLER:
+        parts = parts[1:]
+    while parts and parts[-1].lower().strip("'") in _NAME_FILLER:
+        parts = parts[:-1]
+    if len(parts) < 2:
+        return None
+    return " ".join(parts)
+
+
+def build_fts_query(query: str) -> str:
+    """Quote proper names so chatty asks do not AND filler tokens in FTS.
+
+    ``websearch_to_tsquery('english', "What's happening on Ashley Cantrell…")``
+    becomes ``happen & ashley & cantrel & give & latest`` and misses mail that
+    only names the person. Quoted names keep the lookup.
+    """
+    cleaned = " ".join((query or "").split())
+    if not cleaned:
+        return cleaned
+    names: list[str] = []
+    seen: set[str] = set()
+    for span in _PROPER_NAME_RE.findall(cleaned):
+        name = _trim_filler_name_parts(span)
+        if name is None:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    if not names:
+        return cleaned
+    return " OR ".join(f'"{name}"' for name in names)
 
 
 def build_snippet(*, subject: str | None, body: str | None) -> str:
@@ -108,11 +178,14 @@ async def search_threads(
     query: str,
     mailbox: str | None = None,
     limit: int = SEARCH_DEFAULT_LIMIT,
+    mode: str = SEARCH_MODE_HYBRID,
 ) -> SearchResponse:
-    """Hybrid search → ranked threads. Blank ``query`` is a 422."""
+    """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings. Blank query is a 422."""
     cleaned = (query or "").strip()
     if not cleaned:
         raise EmptySearchQueryError("query must not be blank")
+    if mode not in (SEARCH_MODE_KEYWORD, SEARCH_MODE_HYBRID):
+        mode = SEARCH_MODE_HYBRID
 
     mailboxes = _scoped_mailboxes(settings, mailbox)
     resolved = mailboxes[0] if mailbox is not None and mailbox.strip() else None
@@ -127,37 +200,39 @@ async def search_threads(
     vector_failed = False
     fts_failed = False
     top_k = max(settings.embedding_candidate_k, limit)
+    use_vector = mode == SEARCH_MODE_HYBRID
 
     vector: list[float] | None = None
-    if openai_client is None:
-        logger.warning("search_embed_skipped_unconfigured", query_length=len(cleaned))
-    else:
-        try:
-            vector = await embedding_service.embed_text(
-                cleaned,
-                client=openai_client,
-                settings=settings,
-            )
-        except Exception:
-            logger.exception("search_embed_failed", query_length=len(cleaned))
+    if use_vector:
+        if openai_client is None:
+            logger.warning("search_embed_skipped_unconfigured", query_length=len(cleaned))
+        else:
+            try:
+                vector = await embedding_service.embed_text(
+                    cleaned,
+                    client=openai_client,
+                    settings=settings,
+                )
+            except Exception:
+                logger.exception("search_embed_failed", query_length=len(cleaned))
 
-    if vector is not None:
-        try:
-            vector_matches = await embedding_repo.search_similar(
-                session,
-                embedding=vector,
-                min_similarity=settings.embedding_min_similarity,
-                top_k=top_k,
-                mailboxes=mailboxes,
-            )
-        except Exception:
-            vector_failed = True
-            logger.exception("search_vector_failed", query_length=len(cleaned))
+        if vector is not None:
+            try:
+                vector_matches = await embedding_repo.search_similar(
+                    session,
+                    embedding=vector,
+                    min_similarity=settings.embedding_min_similarity,
+                    top_k=top_k,
+                    mailboxes=mailboxes,
+                )
+            except Exception:
+                vector_failed = True
+                logger.exception("search_vector_failed", query_length=len(cleaned))
 
     try:
         fts_matches = await embedding_repo.search_fts(
             session,
-            query_text=cleaned,
+            query_text=build_fts_query(cleaned),
             top_k=top_k,
             mailboxes=mailboxes,
         )
@@ -217,6 +292,7 @@ async def search_threads(
         "search_completed",
         query_length=len(cleaned),
         mailbox=resolved,
+        mode=mode,
         hit_count=len(hits),
         vector_count=len(vector_matches),
         fts_count=len(fts_matches),

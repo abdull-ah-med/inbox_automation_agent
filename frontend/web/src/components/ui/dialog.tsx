@@ -17,6 +17,8 @@ const dialogContentVariants = cva(
         md: "sm:max-w-lg",
         lg: "sm:max-w-2xl",
         xl: "sm:max-w-3xl",
+        "2xl":
+          "md:max-w-[min(48rem,calc(100%-2rem))] lg:max-w-[min(64rem,calc(100%-2rem))] xl:max-w-[min(72rem,calc(100%-2rem))]",
       },
     },
     defaultVariants: {

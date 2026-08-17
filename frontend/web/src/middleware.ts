@@ -27,6 +27,7 @@ export const config = {
   matcher: [
     "/login",
     "/dashboard/:path*",
+    "/search/:path*",
     "/mailboxes/:path*",
     "/threads/:path*",
     "/settings/:path*",

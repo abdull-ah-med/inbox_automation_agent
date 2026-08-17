@@ -17,6 +17,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.api.auth.routes import router as auth_router
 from app.api.debug.graph_check import router as debug_graph_check_router
 from app.api.simulate.ingest import router as simulate_ingest_router
+from app.api.web.chat import router as chat_router
 from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
 from app.api.web.mailboxes import router as mailboxes_router
@@ -40,6 +41,7 @@ from app.core.dependencies import (
 from app.core.exceptions import (
     AuditError,
     AuthError,
+    ChatError,
     ClassificationError,
     DraftGenerationError,
     DraftNotFoundError,
@@ -98,6 +100,7 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     EmptySearchQueryError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     UnknownMailboxError: status.HTTP_404_NOT_FOUND,
     SearchError: status.HTTP_502_BAD_GATEWAY,
+    ChatError: status.HTTP_502_BAD_GATEWAY,
 }
 
 _scheduler: AsyncIOScheduler | None = None
@@ -275,6 +278,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(dashboard_router)
     app.include_router(search_router)
+    app.include_router(chat_router)
     app.include_router(reports_router)
     app.include_router(mailboxes_router)
     app.include_router(threads_router)

@@ -59,7 +59,10 @@ class Settings(BaseSettings):
 
     classification_model: str = "claude-haiku-4-5"
     draft_model: str = "claude-sonnet-4-6"
+    # Haiku for ask latency; Sonnet stays on drafts. Override via CHAT_MODEL.
+    chat_model: str = "claude-haiku-4-5"
     triage_max_tokens: int = Field(default=200, ge=64, le=1024)
+    chat_max_tokens: int = Field(default=1024, ge=256, le=4096)
 
     # OpenAI embeddings (official: text-embedding-3-small defaults to 1536 dims).
     # Docs: https://platform.openai.com/docs/guides/embeddings

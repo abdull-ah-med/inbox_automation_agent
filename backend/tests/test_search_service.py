@@ -237,6 +237,45 @@ async def test_unknown_mailbox_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_keyword_mode_returns_fts_hits_not_vector_only_matches() -> None:
+    """Keyword search is Outlook-style FTS. A vector-only CR hit must not appear."""
+
+    async def fake_vector(_session: object, **kwargs: object) -> list[EmbeddingMatchSchema]:
+        return [CR_MATCH]
+
+    async def fake_fts(_session: object, **kwargs: object) -> list[EmbeddingMatchSchema]:
+        return [SALES_MATCH]
+
+    embed = AsyncMock(return_value=[0.1] * 8)
+    similar = AsyncMock(side_effect=fake_vector)
+    session = AsyncMock()
+    with (
+        patch("app.services.search_service.embedding_service.embed_text", new=embed),
+        patch("app.services.search_service.embedding_repo.search_similar", new=similar),
+        patch(
+            "app.services.search_service.embedding_repo.search_fts",
+            new=AsyncMock(side_effect=fake_fts),
+        ),
+        patch(
+            "app.services.search_service.thread_repo.list_by_mailbox_conversations",
+            new=AsyncMock(side_effect=_fake_list_threads),
+        ),
+    ):
+        result = await search_service.search_threads(
+            session,
+            _settings(),
+            openai_client=AsyncMock(),
+            query="drug screen packet",
+            mode="keyword",
+        )
+
+    assert [hit.thread_id for hit in result.hits] == [SALES_THREAD_ID]
+    assert result.hits[0].subject == "Drug screen packet"
+    assert embed.await_count == 0
+    assert similar.await_count == 0
+
+
+@pytest.mark.asyncio
 async def test_mailbox_filter_returns_only_that_mailbox() -> None:
     session = AsyncMock()
     with _patch_retrieval():
@@ -698,3 +737,89 @@ async def test_fts_search_does_not_leak_across_mailboxes(db_session) -> None:
         mailbox=CR,
     )
     assert [hit.thread_id for hit in cr_only.hits] == [ids["cr"]]
+
+
+def test_fts_query_quotes_proper_names_and_drops_chat_filler() -> None:
+    from app.services.search_service import build_fts_query
+
+    rewritten = build_fts_query(
+        "What's happening on Ashley Cantrell, give me the latest"
+    )
+    assert rewritten == '"Ashley Cantrell"'
+
+
+def test_fts_query_keeps_keyword_asks_unchanged() -> None:
+    from app.services.search_service import build_fts_query
+
+    assert build_fts_query("drug screen packet") == "drug screen packet"
+    assert build_fts_query("billing disputes waiting on review") == (
+        "billing disputes waiting on review"
+    )
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_conversational_person_ask_finds_named_thread(db_session) -> None:
+    """Chatty 'what's happening on NAME' must not AND filler tokens like happen/give/latest."""
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    thread = Thread(
+        id=thread_id,
+        mailbox=SALES,
+        conversation_id="conv-ashley-background",
+        subject="Background check inquiry",
+        state="DRAFTED",
+        urgency="NORMAL",
+        last_message_at=now,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    message = Message(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="alex@sample-legal.example.com",
+        body_text=(
+            "A colleague of mine, Ashley Cantrell with Stronger Together, "
+            "asked about the background check."
+        ),
+        body_preview="A colleague of mine, Ashley Cantrell with Stronger Together.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    db_session.add(message)
+    await db_session.flush()
+    db_session.add(
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-ashley-background",
+            sender_email="alex@sample-legal.example.com",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=[0.0] * _embedding_dim(),
+            sent_at=now,
+            body_preview="A colleague of mine, Ashley Cantrell with Stronger Together.",
+            search_document=(
+                "From: alex@sample-legal.example.com | Subject: Background check inquiry\n\n"
+                "A colleague of mine, Ashley Cantrell with Stronger Together, "
+                "asked about the background check."
+            ),
+            message_id=message.id,
+        )
+    )
+    await db_session.commit()
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="What's happening on Ashley Cantrell, give me the latest",
+    )
+    assert [hit.thread_id for hit in result.hits] == [thread_id]
+    assert "Ashley Cantrell" in result.hits[0].snippet
