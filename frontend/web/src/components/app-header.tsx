@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Moon, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
+import { InboxSearch } from "@/components/inbox-search"
 import { Button } from "@/components/ui/button"
 import { useAuthState, useLogout } from "@/features/auth/use-auth"
 
@@ -29,8 +30,8 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
-      <div className="app-shell mx-auto flex items-center justify-between gap-4">
-        <div className="min-w-0">
+      <div className="app-shell mx-auto flex items-center gap-3 sm:gap-4">
+        <div className="min-w-0 shrink-0">
           <p className="text-[11px] font-medium tracking-wide text-gray-500 uppercase dark:text-gray-400">
             SampleSite Support
           </p>
@@ -40,11 +41,11 @@ export function AppHeader() {
           >
             Inbox Triage Automation
           </Link>
-          <p className="hidden text-sm text-gray-500 sm:block dark:text-gray-400">
-            Read-only assistant for inbox classification, drafting, and review
-          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <InboxSearch />
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
             Read-Only
           </span>

@@ -268,3 +268,45 @@ export interface DraftVsSentDiff {
   added: string[]
   removed: string[]
 }
+
+export interface ChatCitation {
+  thread_id: string
+  mailbox: string
+  subject: string | null
+  state: string
+  urgency: string | null
+  snippet?: string | null
+  url_path: string
+}
+
+export interface ChatAskResponse {
+  answer: string
+  citations: ChatCitation[]
+  retrieval_count: number
+  mailbox: string | null
+  refused_write: boolean
+}
+
+export interface ChatAskRequest {
+  message: string
+  mailbox?: string
+  limit?: number
+}
+
+export interface SearchHit {
+  thread_id: string
+  mailbox: string
+  conversation_id: string
+  subject: string | null
+  state: string
+  urgency: string | null
+  snippet: string
+  score: number
+  last_message_at: string | null
+}
+
+export interface SearchResponse {
+  query: string
+  mailbox: string | null
+  hits: SearchHit[]
+}

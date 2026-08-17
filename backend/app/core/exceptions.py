@@ -130,3 +130,7 @@ class EmptySearchQueryError(InboxTriageError):
 
 class SearchError(InboxTriageError):
     """Raised when hybrid retrieval cannot complete either search leg."""
+
+
+class ChatError(InboxTriageError):
+    """Raised when the grounded chat answer call fails after retry."""

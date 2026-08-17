@@ -10,11 +10,14 @@ import {
 } from "@/features/auth/auth-store";
 import { messageForStatus } from "@/lib/error-messages";
 import type {
+  ChatAskRequest,
+  ChatAskResponse,
   DashboardOverview,
   DraftView,
   ImportSkillResult,
   MailboxOverview,
   ReplyMemoryResponse,
+  SearchResponse,
   SkillCandidateResponse,
   SkillCreate,
   SkillFileMeta,
@@ -402,6 +405,26 @@ export const api = {
       if (params.mailbox) qs.set("mailbox", params.mailbox);
       const query = qs.toString();
       return apiFetchBytes(`/api/reports/ops-weekly${query ? `?${query}` : ""}`);
+    },
+  },
+
+  search: {
+    threads(params: { q: string; mailbox?: string; limit?: number; mode?: "keyword" | "hybrid" }) {
+      const qs = new URLSearchParams();
+      qs.set("q", params.q);
+      if (params.mailbox) qs.set("mailbox", params.mailbox);
+      if (params.limit) qs.set("limit", String(params.limit));
+      if (params.mode) qs.set("mode", params.mode);
+      return apiFetch<SearchResponse>(`/api/search?${qs.toString()}`);
+    },
+  },
+
+  chat: {
+    ask(body: ChatAskRequest) {
+      return apiFetch<ChatAskResponse>("/api/chat/ask", {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
     },
   },
 

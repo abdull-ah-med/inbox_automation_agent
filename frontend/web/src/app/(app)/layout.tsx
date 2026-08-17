@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 
 import { AppHeader } from "@/components/app-header"
+import { InboxAssistant } from "@/components/inbox-assistant"
 import { Skeleton } from "@/components/ui/skeleton"
 import { clearAuthSession } from "@/features/auth/auth-store"
 import { useAuthBootstrap, useAuthState } from "@/features/auth/use-auth"
@@ -82,6 +83,7 @@ export default function AppShellLayout({
       <main id="main-content" className="app-shell mx-auto px-6 py-6">
         {children}
       </main>
+      <InboxAssistant />
     </div>
   )
 }

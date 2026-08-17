@@ -1,8 +1,11 @@
-"""User-facing hybrid search over mailbox-scoped thread memory."""
+"""User-facing search over mailbox-scoped thread memory.
+
+Default ``mode=keyword`` is FTS only. InboxAssistant uses ``hybrid`` via the chat API.
+"""
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +17,7 @@ from app.core.rate_limit import limiter
 from app.models.schemas.search import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_MAX_LIMIT,
+    SEARCH_MODE_KEYWORD,
     SEARCH_QUERY_MAX_CHARS,
     SearchResponse,
 )
@@ -43,7 +47,7 @@ async def search(
         Query(
             min_length=1,
             max_length=SEARCH_QUERY_MAX_CHARS,
-            description="Natural-language or keyword search text",
+            description="Keyword text; matched with full-text search unless mode=hybrid",
         ),
     ],
     mailbox: Annotated[
@@ -54,6 +58,10 @@ async def search(
         int,
         Query(ge=1, le=SEARCH_MAX_LIMIT, description="Max ranked thread hits"),
     ] = SEARCH_DEFAULT_LIMIT,
+    mode: Annotated[
+        Literal["keyword", "hybrid"],
+        Query(description="keyword = FTS only (default). hybrid = vector + FTS"),
+    ] = SEARCH_MODE_KEYWORD,
 ) -> SearchResponse:
     _ = request, response
     return await search_service.search_threads(
@@ -63,4 +71,5 @@ async def search(
         query=q,
         mailbox=mailbox,
         limit=limit,
+        mode=mode,
     )
