@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "doctor": "npx --yes react-doctor@0.9.12 --yes --no-telemetry --no-supply-chain --no-score",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

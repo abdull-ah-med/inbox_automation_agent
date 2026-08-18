@@ -27,6 +27,14 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useAuthState } from "@/features/auth/use-auth"
 import { api, type ImportSkillOptions } from "@/lib/api-client"
@@ -50,6 +58,11 @@ const emptyForm = (): SkillCreate => ({
   always_apply: false,
   is_active: true,
 })
+
+const ROUTING_CATEGORY_ITEMS = ROUTING_CATEGORIES.map((category) => ({
+  label: category,
+  value: category,
+}))
 
 const formatApprovedAt = (iso: string): string => {
   try {
@@ -862,25 +875,35 @@ export default function SettingsPage() {
               <label className="text-xs text-gray-500" htmlFor="skill-category">
                 Category
               </label>
-              <select
-                id="skill-category"
+              <Select
+                items={ROUTING_CATEGORY_ITEMS}
                 value={form.category ?? "general"}
-                onChange={(event) =>
+                onValueChange={(value) => {
+                  if (!value) return
                   setForm((prev) => ({
                     ...prev,
-                    category: event.target.value as RoutingCategory,
+                    category: value as RoutingCategory,
                   }))
-                }
-                aria-label="Skill category"
+                }}
                 disabled={form.always_apply}
-                className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
               >
-                {ROUTING_CATEGORIES.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  id="skill-category"
+                  aria-label="Skill category"
+                  className="mt-1 w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {ROUTING_CATEGORY_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="text-xs text-gray-500" htmlFor="skill-description">

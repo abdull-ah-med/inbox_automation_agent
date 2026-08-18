@@ -13,6 +13,9 @@ def require_eval_settings() -> Settings:
         raise RuntimeError("ANTHROPIC_API_KEY required (generation under test)")
     if not settings.openai_api_key.strip():
         raise RuntimeError("OPENAI_API_KEY required (OpenAI judge + RAGAS embeddings)")
+    # DeepEval/RAGAS SDKs read process env, not pydantic Settings.
+    os.environ.setdefault("ANTHROPIC_API_KEY", settings.anthropic_api_key)
+    os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
     return settings
 
 

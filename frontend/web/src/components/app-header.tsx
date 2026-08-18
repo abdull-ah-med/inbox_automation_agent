@@ -29,24 +29,24 @@ export function AppHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
-      <div className="app-shell mx-auto flex items-center gap-3 sm:gap-4">
-        <div className="min-w-0 shrink-0">
+    <header className="sticky top-0 z-50 border-b border-gray-200 bg-white px-4 py-3 sm:px-6 dark:border-gray-800 dark:bg-gray-900">
+      <div className="app-shell mx-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-4">
+        <div className="min-w-0">
           <p className="text-[11px] font-medium tracking-wide text-gray-500 uppercase dark:text-gray-400">
             SampleSite Support
           </p>
           <Link
             href="/dashboard"
-            className="text-lg font-semibold text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-100"
+            className="block truncate text-lg font-semibold text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-100"
           >
             Inbox Triage Automation
           </Link>
         </div>
-        <div className="min-w-0 flex-1">
+        <div className="col-span-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">
           <InboxSearch />
         </div>
-        <div className="ml-auto flex shrink-0 items-center gap-2">
-          <span className="rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400">
+        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-1.5 sm:col-start-3 sm:gap-2">
+          <span className="hidden rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 sm:inline dark:bg-green-900/30 dark:text-green-400">
             Read-Only
           </span>
           <span className="hidden text-sm text-gray-500 sm:inline dark:text-gray-400">
@@ -78,7 +78,7 @@ export function AppHeader() {
             variant="outline"
             size="sm"
             type="button"
-            className="min-h-10 px-3"
+            className="min-h-10 px-2 sm:px-3"
             disabled={logout.isPending}
             onClick={() => logout.mutate()}
           >

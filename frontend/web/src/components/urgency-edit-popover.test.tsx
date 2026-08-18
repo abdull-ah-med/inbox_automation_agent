@@ -55,11 +55,14 @@ describe("UrgencyEditPopover", () => {
   })
 
   it("sends correct payload on save", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderPopover()
     await user.click(screen.getByRole("button", { name: "Edit urgency" }))
     const dialog = await screen.findByRole("dialog")
-    await user.selectOptions(within(dialog).getByLabelText("Urgency level"), "HIGH")
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Urgency level" }),
+    )
+    await user.click(await screen.findByRole("option", { name: "HIGH" }))
     await user.type(
       within(dialog).getByLabelText("Urgency reason"),
       "Client has an SLA deadline",

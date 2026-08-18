@@ -9,23 +9,38 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorPage } from "@/components/error-page"
 import { ThreadCard } from "@/components/thread-card"
 import { Button } from "@/components/ui/button"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 import { inboxColor, inboxLabel } from "@/lib/design-tokens"
 
-const STATE_OPTIONS = [
-  { value: "", label: "All actionable states" },
-  { value: "NEW", label: "New — not yet triaged" },
-  { value: "AWAITING_CLIENT", label: "Awaiting client" },
-  { value: "AWAITING_VENDOR", label: "Awaiting vendor" },
-  { value: "AWAITING_PARTNER", label: "Awaiting partner" },
-  { value: "DRAFTED", label: "Draft ready" },
-  { value: "REQUIRES_HUMAN", label: "Needs human review" },
-  { value: "RESOLVED", label: "Resolved" },
-  { value: "NO_ACTION", label: "No action needed" },
-  { value: "SPAM", label: "Spam" },
-]
-const URGENCIES = ["", "CRITICAL", "HIGH", "NORMAL", "LOW"]
+const STATE_ITEMS = [
+  { label: "All actionable states", value: null },
+  { label: "New — not yet triaged", value: "NEW" },
+  { label: "Awaiting client", value: "AWAITING_CLIENT" },
+  { label: "Awaiting vendor", value: "AWAITING_VENDOR" },
+  { label: "Awaiting partner", value: "AWAITING_PARTNER" },
+  { label: "Draft ready", value: "DRAFTED" },
+  { label: "Needs human review", value: "REQUIRES_HUMAN" },
+  { label: "Resolved", value: "RESOLVED" },
+  { label: "No action needed", value: "NO_ACTION" },
+  { label: "Spam", value: "SPAM" },
+] as const
+
+const URGENCY_ITEMS = [
+  { label: "All urgency", value: null },
+  { label: "CRITICAL", value: "CRITICAL" },
+  { label: "HIGH", value: "HIGH" },
+  { label: "NORMAL", value: "NORMAL" },
+  { label: "LOW", value: "LOW" },
+] as const
 
 export default function MailboxPage() {
   const params = useParams<{ mailbox: string }>()
@@ -162,30 +177,50 @@ export default function MailboxPage() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Filter by state"
-          className="min-h-10 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10"
-          value={state}
-          onChange={(e) => updateFilters({ state: e.target.value })}
+        <Select
+          items={STATE_ITEMS}
+          value={state || null}
+          onValueChange={(value) => updateFilters({ state: value ?? "" })}
         >
-          {STATE_OPTIONS.map((s) => (
-            <option key={s.value || "all"} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="Filter by urgency"
-          className="min-h-10 rounded-xl bg-card px-3 py-2 text-sm ring-1 ring-foreground/10"
-          value={urgency}
-          onChange={(e) => updateFilters({ urgency: e.target.value })}
+          <SelectTrigger
+            aria-label="Filter by state"
+            size="sm"
+            className="min-h-10"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {STATE_ITEMS.map((item) => (
+                <SelectItem key={item.value ?? "all"} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+        <Select
+          items={URGENCY_ITEMS}
+          value={urgency || null}
+          onValueChange={(value) => updateFilters({ urgency: value ?? "" })}
         >
-          {URGENCIES.map((u) => (
-            <option key={u || "all"} value={u}>
-              {u ? u : "All urgency"}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label="Filter by urgency"
+            size="sm"
+            className="min-h-10"
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {URGENCY_ITEMS.map((item) => (
+                <SelectItem key={item.value ?? "all"} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
         <Button
           type="button"
           variant={staleOnly ? "default" : "outline"}

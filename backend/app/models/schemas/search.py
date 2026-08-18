@@ -15,6 +15,18 @@ SEARCH_MODE_KEYWORD = "keyword"
 SEARCH_MODE_HYBRID = "hybrid"
 
 
+class SearchColumnFilters(BaseModel):
+    """SQL-side Discord filters applied in addition to FTS/vector ranking."""
+
+    senders: tuple[str, ...] = ()
+    contains: tuple[str, ...] = ()
+    subjects: tuple[str, ...] = ()
+    directions: tuple[str, ...] = ()
+
+    def active(self) -> bool:
+        return bool(self.senders or self.contains or self.subjects or self.directions)
+
+
 class SearchRequest(BaseModel):
     """Documented search contract. The HTTP route uses equivalent query params."""
 

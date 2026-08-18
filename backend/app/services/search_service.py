@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.exceptions import EmptySearchQueryError, SearchError, UnknownMailboxError
 from app.core.mailbox_keys import resolve_mailbox_email
+from app.core.sanitize import sanitize_user_text
 from app.llm.email_clean import clean_email_body
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.models.schemas.search import (
@@ -29,15 +30,22 @@ from app.models.schemas.search import (
     SEARCH_MODE_HYBRID,
     SEARCH_MODE_KEYWORD,
     SEARCH_SNIPPET_MAX_CHARS,
+    SearchColumnFilters,
     SearchHit,
     SearchResponse,
 )
 from app.repositories import embedding_repo, thread_repo
 from app.services import embedding_service
+from app.services.nl_mailbox_scope import extract_nl_mailbox_scope
 from app.services.rrf import (
     aggregate_conversation_scores,
     best_hit_for_conversation,
     rrf_fuse,
+)
+from app.services.search_query import (
+    ParsedSearchQuery,
+    format_search_query,
+    parse_search_query,
 )
 
 logger = structlog.get_logger(__name__)
@@ -92,7 +100,8 @@ def build_fts_query(query: str) -> str:
 
     ``websearch_to_tsquery('english', "What's happening on Ashley Cantrell…")``
     becomes ``happen & ashley & cantrel & give & latest`` and misses mail that
-    only names the person. Quoted names keep the lookup.
+    only names the person. Quoted names keep the lookup. Non-filler keywords
+    beside the name (``Ashley Cantrell invoice``) are kept.
     """
     cleaned = " ".join((query or "").split())
     if not cleaned:
@@ -110,21 +119,184 @@ def build_fts_query(query: str) -> str:
         names.append(name)
     if not names:
         return cleaned
-    return " OR ".join(f'"{name}"' for name in names)
+    remainder = cleaned
+    for name in names:
+        remainder = re.sub(re.escape(name), " ", remainder, count=1, flags=re.IGNORECASE)
+    kept: list[str] = []
+    seen_tokens: set[str] = set()
+    for token in _FTS_WORD_RE.findall(remainder):
+        lowered = token.lower()
+        if len(lowered) < 2 or lowered in _NAME_FILLER:
+            continue
+        if lowered in seen_tokens:
+            continue
+        seen_tokens.add(lowered)
+        kept.append(token)
+    quoted = " OR ".join(f'"{name}"' for name in names)
+    if not kept:
+        return quoted
+    return f"{quoted} {' '.join(kept)}"
 
 
-def build_snippet(*, subject: str | None, body: str | None) -> str:
-    """Subject + cleaned body fragment, truncated to ``SEARCH_SNIPPET_MAX_CHARS``."""
+_FTS_WORD_RE = re.compile(r"\w+", re.UNICODE)
+_FTS_FILLER = _NAME_FILLER | frozenset(
+    {
+        "i",
+        "im",
+        "ive",
+        "id",
+        "ill",
+        "we",
+        "our",
+        "ours",
+        "your",
+        "yours",
+        "they",
+        "them",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "here",
+        "there",
+        "then",
+        "than",
+        "too",
+        "also",
+        "just",
+        "still",
+        "really",
+        "very",
+        "how",
+        "why",
+        "when",
+        "where",
+        "who",
+        "which",
+        "does",
+        "did",
+        "doing",
+        "done",
+        "do",
+        "have",
+        "has",
+        "had",
+        "was",
+        "were",
+        "been",
+        "being",
+        "am",
+        "is",
+        "are",
+        "not",
+        "no",
+        "yes",
+        "first",
+        "last",
+        "next",
+        "now",
+        "today",
+        "need",
+        "needs",
+        "needed",
+        "focus",
+        "focusing",
+        "to",
+        "of",
+        "in",
+        "at",
+        "as",
+        "or",
+        "an",
+        "a",
+        "it",
+        "its",
+        "so",
+        "if",
+        "but",
+        "get",
+        "got",
+        "make",
+        "want",
+        "should",
+        "must",
+        "will",
+        "whats",
+        "and",
+    }
+)
+
+
+def build_prefix_tsquery(query: str) -> str:
+    """Outlook-style prefix match: SampleH hits SampleHelpdesk.
+
+    Chatty asks AND every token unless filler is dropped — ``give me the latest
+    on info`` must not require the document to contain give/latest/happening.
+    Tokens are ``\\w+`` only so operators cannot break the query.
+    """
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for token in _FTS_WORD_RE.findall(query or ""):
+        lowered = token.lower()
+        if len(lowered) < 2 or lowered in _FTS_FILLER:
+            continue
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        tokens.append(token)
+    if not tokens:
+        return ""
+    return " & ".join(f"{token}:*" for token in tokens)
+
+
+def build_snippet(*, body: str | None, highlight: str | None = None) -> str:
+    """Cleaned body window, truncated to ``SEARCH_SNIPPET_MAX_CHARS``.
+
+    Subject is shown separately in the UI, so it is not prefixed here. When
+    ``highlight`` is set, the window centers on the first matching term.
+    """
     raw_body = body or ""
     content_type = "html" if "<" in raw_body else "text"
     cleaned_body = clean_email_body(raw_body, content_type=content_type).body_clean
     cleaned_body = _HTML_TAG_RE.sub(" ", cleaned_body)
     cleaned_body = " ".join(cleaned_body.split())
-    subject_part = " ".join((subject or "").split())
-    if subject_part and cleaned_body:
-        text = f"{subject_part} — {cleaned_body}"
-    else:
-        text = subject_part or cleaned_body
+    if not cleaned_body:
+        return ""
+
+    text = cleaned_body
+    highlight_terms = [
+        term
+        for term in _FTS_WORD_RE.findall(highlight or "")
+        if len(term) >= 2 and term.lower() not in _FTS_FILLER
+    ]
+    if highlight_terms:
+        lower_body = cleaned_body.lower()
+        match_at: int | None = None
+        match_len = 0
+        for term in highlight_terms:
+            idx = lower_body.find(term.lower())
+            if idx < 0:
+                continue
+            if match_at is None or idx < match_at:
+                match_at = idx
+                match_len = len(term)
+        if match_at is not None:
+            # Prefer a window that keeps the match near the middle.
+            budget = SEARCH_SNIPPET_MAX_CHARS
+            if len(cleaned_body) > budget:
+                half = max(0, (budget - match_len) // 2)
+                start = max(0, match_at - half)
+                end = min(len(cleaned_body), start + budget)
+                if end - start < budget:
+                    start = max(0, end - budget)
+                text = cleaned_body[start:end].strip()
+                if start > 0:
+                    text = "..." + text.lstrip()
+                if end < len(cleaned_body):
+                    text = text.rstrip() + "..."
+                return text
+
     if len(text) <= SEARCH_SNIPPET_MAX_CHARS:
         return text
     ellipsis = "..."
@@ -136,10 +308,29 @@ def _scoped_mailboxes(settings: Settings, mailbox: str | None) -> list[str]:
     allowed = list(settings.mailbox_list)
     if mailbox is None or not mailbox.strip():
         return allowed
-    email = resolve_mailbox_email(mailbox.strip(), allowed)
+    email = resolve_mailbox_email(sanitize_user_text(mailbox.strip()), allowed)
     if email is None or not settings.mailbox_allowed(email):
         raise UnknownMailboxError("Mailbox not found")
     return [email]
+
+
+def _mailboxes_for_search(
+    settings: Settings,
+    *,
+    mailbox: str | None,
+    mailbox_tokens: tuple[str, ...],
+) -> list[str]:
+    scoped = _scoped_mailboxes(settings, mailbox)
+    if not mailbox_tokens:
+        return scoped
+    wanted: list[str] = []
+    for token in mailbox_tokens:
+        email = resolve_mailbox_email(sanitize_user_text(token), list(settings.mailbox_list))
+        if email is None or not settings.mailbox_allowed(email):
+            raise UnknownMailboxError("Mailbox not found")
+        if email not in wanted:
+            wanted.append(email)
+    return [item for item in scoped if item in set(wanted)]
 
 
 def _normalize_limit(limit: int) -> int:
@@ -181,15 +372,47 @@ async def search_threads(
     mode: str = SEARCH_MODE_HYBRID,
 ) -> SearchResponse:
     """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings. Blank query is a 422."""
-    cleaned = (query or "").strip()
-    if not cleaned:
+    parsed = parse_search_query(query)
+    nl = extract_nl_mailbox_scope(parsed.free_text, list(settings.mailbox_list))
+    if nl.mailboxes:
+        # Filler-only residue ("what s the latest on the") must become empty so
+        # mailbox-only recency listing runs instead of an empty FTS AND.
+        content = nl.free_text
+        if not build_prefix_tsquery(build_fts_query(content)):
+            content = ""
+        merged = parsed.mailboxes + tuple(
+            token for token in nl.mailboxes if token not in parsed.mailboxes
+        )
+        parsed = ParsedSearchQuery(
+            free_text=content,
+            senders=parsed.senders,
+            contains=parsed.contains,
+            subjects=parsed.subjects,
+            directions=parsed.directions,
+            mailboxes=merged,
+        )
+    if parsed.is_empty():
         raise EmptySearchQueryError("query must not be blank")
+    cleaned = format_search_query(parsed)
     if mode not in (SEARCH_MODE_KEYWORD, SEARCH_MODE_HYBRID):
         mode = SEARCH_MODE_HYBRID
 
-    mailboxes = _scoped_mailboxes(settings, mailbox)
+    mailboxes = _mailboxes_for_search(
+        settings,
+        mailbox=mailbox,
+        mailbox_tokens=parsed.mailboxes,
+    )
     resolved = mailboxes[0] if mailbox is not None and mailbox.strip() else None
+    if parsed.mailboxes and len(mailboxes) == 1:
+        resolved = mailboxes[0]
     limit = _normalize_limit(limit)
+    column_filters = SearchColumnFilters(
+        senders=parsed.senders,
+        contains=parsed.contains,
+        subjects=parsed.subjects,
+        directions=parsed.directions,
+    )
+    filters = column_filters if column_filters.active() else None
 
     if not mailboxes:
         logger.info("search_empty_mailbox_allowlist", query=cleaned)
@@ -200,7 +423,7 @@ async def search_threads(
     vector_failed = False
     fts_failed = False
     top_k = max(settings.embedding_candidate_k, limit)
-    use_vector = mode == SEARCH_MODE_HYBRID
+    use_vector = mode == SEARCH_MODE_HYBRID and bool(parsed.free_text)
 
     vector: list[float] | None = None
     if use_vector:
@@ -209,7 +432,7 @@ async def search_threads(
         else:
             try:
                 vector = await embedding_service.embed_text(
-                    cleaned,
+                    parsed.free_text,
                     client=openai_client,
                     settings=settings,
                 )
@@ -224,17 +447,31 @@ async def search_threads(
                     min_similarity=settings.embedding_min_similarity,
                     top_k=top_k,
                     mailboxes=mailboxes,
+                    filters=filters,
                 )
             except Exception:
                 vector_failed = True
                 logger.exception("search_vector_failed", query_length=len(cleaned))
 
     try:
+        prefix_query = (
+            build_prefix_tsquery(build_fts_query(parsed.free_text))
+            if parsed.free_text
+            else ""
+        )
+        # mailbox: alone is a valid Discord filter; FTS text and column filters
+        # are both empty, so allow a recency listing within the allowlist.
+        mailbox_only = (
+            not parsed.free_text and bool(parsed.mailboxes) and filters is None
+        )
         fts_matches = await embedding_repo.search_fts(
             session,
-            query_text=build_fts_query(cleaned),
+            query_text=prefix_query,
             top_k=top_k,
             mailboxes=mailboxes,
+            use_prefix=True,
+            filters=filters,
+            allow_empty=mailbox_only,
         )
     except Exception:
         fts_failed = True
@@ -272,6 +509,9 @@ async def search_threads(
             match = by_embedding.get(top_hit.embedding_id)
             if match is not None:
                 preview = match.body_preview
+        highlight_parts = [*parsed.contains, *parsed.subjects]
+        if parsed.free_text:
+            highlight_parts.append(parsed.free_text)
         hits.append(
             SearchHit(
                 thread_id=thread.id,
@@ -280,7 +520,10 @@ async def search_threads(
                 subject=thread.subject or None,
                 state=thread.state,
                 urgency=thread.urgency,
-                snippet=build_snippet(subject=thread.subject, body=preview),
+                snippet=build_snippet(
+                    body=preview,
+                    highlight=" ".join(highlight_parts) or None,
+                ),
                 score=score,
                 last_message_at=thread.last_message_at,
             )

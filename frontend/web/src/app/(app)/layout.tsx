@@ -72,7 +72,7 @@ export default function AppShellLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen overflow-x-hidden bg-gray-50 dark:bg-gray-950">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
@@ -80,7 +80,7 @@ export default function AppShellLayout({
         Skip to main content
       </a>
       <AppHeader />
-      <main id="main-content" className="app-shell mx-auto px-6 py-6">
+      <main id="main-content" className="app-shell mx-auto px-4 py-6 sm:px-6">
         {children}
       </main>
       <InboxAssistant />

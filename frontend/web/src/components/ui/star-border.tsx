@@ -15,7 +15,7 @@ type StarBorderProps = {
 export const StarBorder = ({
   children,
   className,
-  color = "#95d5b2",
+  color = "#2563eb",
   speed = "6s",
   thickness = 1,
 }: StarBorderProps) => {

@@ -1,0 +1,24 @@
+{
+  "id": "chat-keyword-billing",
+  "dataset_version": "chat_evals_v1",
+  "suite_tags": ["A", "B"],
+  "question": "billing disputes waiting on review",
+  "mailbox": "sales@example.com",
+  "hits": [
+    {
+      "thread_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-billing-1",
+      "subject": "Invoice dispute — overdue billing",
+      "state": "REQUIRES_HUMAN",
+      "urgency": "HIGH",
+      "snippet": "Invoice dispute — Please review the overdue billing packet.",
+      "score": 0.02,
+      "last_message_at": "2026-08-05T15:00:00Z"
+    }
+  ],
+  "expected_output": "The Invoice dispute — overdue billing thread is REQUIRES_HUMAN with HIGH urgency. It asks to review the overdue billing packet.",
+  "expected_facts": ["overdue billing", "REQUIRES_HUMAN"],
+  "forbidden_facts": ["Ashley Cantrell", "approved and sent"],
+  "geval_criteria": "The answer must stay grounded in the overdue billing dispute thread. It must not invent send, approve, or unrelated person details."
+}

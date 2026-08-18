@@ -3,23 +3,29 @@
 import { Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { useQuery } from "@tanstack/react-query"
-import { Search } from "lucide-react"
 
 import { EmptyState } from "@/components/empty-state"
 import { SearchHitLink } from "@/components/search-hit-link"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
+import { sanitizeSearchInput, isSearchableQuery } from "@/lib/search-query"
 
 const SearchResults = () => {
   const searchParams = useSearchParams()
-  const q = (searchParams.get("q") ?? "").trim()
+  const q = sanitizeSearchInput(searchParams.get("q") ?? "")
+  const searchable = isSearchableQuery(q)
 
   const resultsQuery = useQuery({
     queryKey: ["inbox-search-page", q],
     queryFn: () => api.search.threads({ q }),
-    enabled: q.length > 0,
+    enabled: searchable,
   })
   const hits = resultsQuery.data?.hits ?? []
+
+  const handleRetry = () => {
+    void resultsQuery.refetch()
+  }
 
   return (
     <div className="space-y-4">
@@ -28,33 +34,34 @@ const SearchResults = () => {
           Mail
         </p>
         <h1 className="text-xl font-semibold tracking-tight">Search</h1>
-        {q ? (
+        {searchable ? (
           <p className="mt-1 text-sm text-muted-foreground">Results for “{q}”</p>
         ) : (
           <p className="mt-1 text-sm text-muted-foreground">
-            Type a keyword in the search box. This is plain-text search, like Outlook.
+            Type a keyword or stack filters like Discord: from: contains: subject:
+            direction: mailbox:
           </p>
         )}
       </div>
 
-      {!q ? (
+      {!searchable ? (
         <EmptyState
           title="Search the inbox"
           description="Use the search box in the header. InboxAssistant is for questions and overviews."
         />
       ) : null}
 
-      {q && resultsQuery.isFetching && hits.length === 0 ? (
+      {searchable && resultsQuery.isFetching && hits.length === 0 ? (
         <div className="space-y-2" aria-busy="true" aria-live="polite">
           <Skeleton className="h-20 rounded-xl" />
           <Skeleton className="h-20 rounded-xl" />
         </div>
       ) : null}
 
-      {q && resultsQuery.isSuccess && hits.length === 0 ? (
+      {searchable && resultsQuery.isSuccess && hits.length === 0 ? (
         <EmptyState
           title="No matching threads"
-          description="Try a name, subject word, or invoice number."
+          description="Try a name, subject word, filter, or invoice number."
         />
       ) : null}
 
@@ -68,12 +75,14 @@ const SearchResults = () => {
         </ul>
       ) : null}
 
-      {q && resultsQuery.isError ? (
+      {searchable && resultsQuery.isError ? (
         <EmptyState
           title="Search failed"
           description="Try again in a moment."
           action={
-            <Search className="mx-auto size-4 text-muted-foreground" aria-hidden="true" />
+            <Button type="button" variant="outline" onClick={handleRetry}>
+              Retry search
+            </Button>
           }
         />
       ) : null}

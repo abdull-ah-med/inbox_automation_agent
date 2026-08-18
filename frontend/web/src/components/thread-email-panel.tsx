@@ -31,15 +31,7 @@ const MessageBlock = ({
   return (
     <Card size="sm" className="gap-0 py-0">
       <div className="flex items-start gap-2 px-4 py-3">
-        <button
-          type="button"
-          tabIndex={0}
-          aria-expanded={open}
-          aria-label={`${open ? "Hide" : "Show"} message from ${message.sender}`}
-          className="min-w-0 flex-1 cursor-pointer text-left"
-          onClick={handleToggle}
-          onKeyDown={handleKeyDown}
-        >
+        <div className="min-w-0 flex-1 select-text text-left">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
               {message.sender}
@@ -56,7 +48,7 @@ const MessageBlock = ({
               To: {message.to.join(", ")}
             </p>
           ) : null}
-        </button>
+        </div>
         <div className="flex shrink-0 items-center gap-3 pt-0.5">
           {message.outlook_url ? (
             <a
@@ -74,7 +66,7 @@ const MessageBlock = ({
             type="button"
             tabIndex={0}
             aria-expanded={open}
-            aria-label={`${open ? "Hide" : "Show"} message from ${message.sender}`}
+            aria-label={open ? "Hide" : "Show"}
             className={cn(
               textActionClass,
               "cursor-pointer text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300",
