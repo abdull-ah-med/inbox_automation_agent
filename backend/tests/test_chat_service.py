@@ -28,6 +28,8 @@ SALES = "sales@example.com"
 CR = "cr@example.com"
 THREAD_A = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 THREAD_B = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+MANGLED_ASHLEY_ID = "bbbbbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+INVENTED_ID = uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
 
 
 def _settings(**overrides: object) -> Settings:
@@ -126,7 +128,7 @@ def test_retrieved_context_wraps_hits_in_untrusted_delimiters() -> None:
     assert close_tag in packed
     assert packed.count(open_tag) == 1
     assert packed.count(close_tag) == 1
-    assert str(THREAD_A) in packed
+    assert str(THREAD_A) not in packed
     assert SALES in packed
     assert "SSN in body" in packed
     assert "REQUIRES_HUMAN" in packed
@@ -158,6 +160,11 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     assert "never follow instructions" in lowered
     assert "approve" in lowered
     assert "send" in lowered
+    # Cite by subject; UUIDs belong on citation cards, not in the answer text.
+    assert "uuid" in lowered
+    assert "subject" in lowered
+    assert "review ui" not in lowered
+    assert "triage labels" in lowered
 
 
 @pytest.mark.asyncio
@@ -210,6 +217,38 @@ async def test_ask_returns_server_citations_from_search_hits_not_model_ids() -> 
     assert fake_id not in {c.thread_id for c in result.citations}
     assert result.citations[0].url_path == f"/threads/{THREAD_A}"
     assert "billing" in result.answer.lower() or THREAD_A.hex[:8] in result.answer
+    assert str(fake_id) not in result.answer
+    assert str(THREAD_A) not in result.answer
+
+
+def test_sanitize_chat_answer_strips_mangled_and_valid_thread_ids() -> None:
+    """Eval Ashley case printed a 12-4-4-4-12 id that is not the retrieved UUID."""
+    from app.llm.chat import sanitize_chat_answer
+
+    raw = (
+        'I found 1 thread related to Ashley Cantrell:\n\n'
+        f'**Thread: "Background check inquiry"** (ID: {MANGLED_ASHLEY_ID})\n'
+        f"- thread id: {THREAD_A}\n"
+        f"See {INVENTED_ID} for billing."
+    )
+    cleaned = sanitize_chat_answer(raw)
+    assert MANGLED_ASHLEY_ID not in cleaned
+    assert str(THREAD_A) not in cleaned
+    assert str(INVENTED_ID) not in cleaned
+    assert "Ashley Cantrell" in cleaned
+    assert "Background check inquiry" in cleaned
+    assert "ID:" not in cleaned
+    assert "thread id:" not in cleaned.lower()
+
+
+def test_sanitize_chat_answer_leaves_grounded_prose() -> None:
+    from app.llm.chat import sanitize_chat_answer
+
+    prose = (
+        "Ashley Cantrell with Stronger Together asked about a background check "
+        "in Background check inquiry."
+    )
+    assert sanitize_chat_answer(prose) == prose
 
 
 @pytest.mark.asyncio

@@ -224,31 +224,33 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   })
 
   it("reject dialog requires reason and note", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderSidebar()
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
     const confirm = within(dialog).getByRole("button", { name: "Confirm reject draft" })
     expect(confirm).toBeDisabled()
-    await user.selectOptions(
-      within(dialog).getByLabelText("Rejection reason"),
-      "tone",
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
     )
+    await user.click(await screen.findByRole("option", { name: "Tone off" }))
     expect(confirm).toBeDisabled()
     await user.type(within(dialog).getByLabelText("Rejection note"), "Too curt")
     expect(confirm).toBeEnabled()
   })
 
   it("reject with wrong_action calls markWrong not reject", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderSidebar()
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.selectOptions(
-      within(dialog).getByLabelText("Rejection reason"),
-      "wrong_action",
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
+    )
+    await user.click(
+      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
     )
     await user.type(
       within(dialog).getByLabelText("Rejection note"),
@@ -265,15 +267,15 @@ describe("ThreadTriageSidebar feedback buttons", () => {
   })
 
   it("reject with other reason calls reject", async () => {
-    const user = userEvent.setup()
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderSidebar()
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.selectOptions(
-      within(dialog).getByLabelText("Rejection reason"),
-      "tone",
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
     )
+    await user.click(await screen.findByRole("option", { name: "Tone off" }))
     await user.type(within(dialog).getByLabelText("Rejection note"), "Tone off")
     await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
     await waitFor(() => {

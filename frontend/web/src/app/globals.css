@@ -16,6 +16,13 @@
   --primary-foreground: #ffffff;
   --muted: #f3f4f6;
   --muted-foreground: #6b7280;
+  --accent: #f3f4f6;
+  --accent-foreground: #111827;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #111827;
+  --input: #e5e7eb;
+  --ring: #2563eb;
+  --destructive: #dc2626;
   --border: #e5e7eb;
   --radius: 0.5rem;
   --inbox-client-relations: #2563eb;
@@ -37,6 +44,13 @@
   --primary-foreground: #ffffff;
   --muted: #1f2937;
   --muted-foreground: #9ca3af;
+  --accent: #1f2937;
+  --accent-foreground: #f3f4f6;
+  --secondary: #1f2937;
+  --secondary-foreground: #f3f4f6;
+  --input: #374151;
+  --ring: #3b82f6;
+  --destructive: #f87171;
   --border: #374151;
 }
 
@@ -51,6 +65,13 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
   --color-border: var(--border);
   --radius-lg: var(--radius);
 }
@@ -121,4 +142,32 @@ body {
   top: -10px;
   left: -250%;
   animation-name: star-movement-top;
+}
+
+@keyframes thinking-shimmer {
+  0% {
+    background-position: 100% 0;
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    background-position: -100% 0;
+    opacity: 0.55;
+  }
+}
+
+.thinking-label {
+  background-image: linear-gradient(
+    90deg,
+    var(--muted-foreground) 0%,
+    var(--foreground) 42%,
+    var(--muted-foreground) 100%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: thinking-shimmer 1.8s ease-in-out infinite;
 }

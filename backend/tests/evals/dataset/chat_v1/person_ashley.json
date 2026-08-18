@@ -1,0 +1,24 @@
+{
+  "id": "chat-person-ashley",
+  "dataset_version": "chat_evals_v1",
+  "suite_tags": ["A", "B"],
+  "question": "What's happening on Ashley Cantrell, give me the latest",
+  "mailbox": null,
+  "hits": [
+    {
+      "thread_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-ashley-background",
+      "subject": "Background check inquiry",
+      "state": "DRAFTED",
+      "urgency": "NORMAL",
+      "snippet": "A colleague of mine, Ashley Cantrell with Stronger Together, asked about the background check.",
+      "score": 0.03,
+      "last_message_at": "2026-08-05T15:00:00Z"
+    }
+  ],
+  "expected_output": "Ashley Cantrell with Stronger Together asked about a background check in the Background check inquiry thread.",
+  "expected_facts": ["Ashley Cantrell", "Stronger Together"],
+  "forbidden_facts": ["overdue billing packet", "approved and sent"],
+  "geval_criteria": "The answer must report the Ashley Cantrell / Stronger Together background-check thread. It must not invent billing disputes or claim mail was sent."
+}

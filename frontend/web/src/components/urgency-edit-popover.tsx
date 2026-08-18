@@ -13,13 +13,28 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Select } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api-client"
 
-const URGENCY_LEVELS = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const
+const URGENCY_ITEMS = [
+  { label: "CRITICAL", value: "CRITICAL" },
+  { label: "HIGH", value: "HIGH" },
+  { label: "NORMAL", value: "NORMAL" },
+  { label: "LOW", value: "LOW" },
+] as const
 
-type UrgencyLevel = (typeof URGENCY_LEVELS)[number]
+type UrgencyLevel = (typeof URGENCY_ITEMS)[number]["value"]
+
+const isUrgencyLevel = (value: string | null): value is UrgencyLevel =>
+  URGENCY_ITEMS.some((item) => item.value === value)
 
 export const UrgencyEditPopover = ({
   draftId,
@@ -35,9 +50,7 @@ export const UrgencyEditPopover = ({
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
   const [urgency, setUrgency] = useState<UrgencyLevel>(
-    (URGENCY_LEVELS.includes(currentUrgency as UrgencyLevel)
-      ? currentUrgency
-      : "NORMAL") as UrgencyLevel,
+    isUrgencyLevel(currentUrgency) ? currentUrgency : "NORMAL",
   )
   const [reason, setReason] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -61,9 +74,7 @@ export const UrgencyEditPopover = ({
 
   const handleOpen = () => {
     setUrgency(
-      (URGENCY_LEVELS.includes(currentUrgency as UrgencyLevel)
-        ? currentUrgency
-        : "NORMAL") as UrgencyLevel,
+      isUrgencyLevel(currentUrgency) ? currentUrgency : "NORMAL",
     )
     setReason("")
     setError(null)
@@ -113,20 +124,29 @@ export const UrgencyEditPopover = ({
                 Urgency level
               </label>
               <Select
-                id="urgency-level"
-                name="urgency_level"
+                items={URGENCY_ITEMS}
                 value={urgency}
-                onChange={(event) =>
-                  setUrgency(event.target.value as UrgencyLevel)
-                }
-                aria-label="Urgency level"
-                className="mt-1"
+                onValueChange={(value) => {
+                  if (!value) return
+                  setUrgency(value)
+                }}
               >
-                {URGENCY_LEVELS.map((level) => (
-                  <option key={level} value={level}>
-                    {level}
-                  </option>
-                ))}
+                <SelectTrigger
+                  id="urgency-level"
+                  aria-label="Urgency level"
+                  className="mt-1 w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {URGENCY_ITEMS.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
               </Select>
             </div>
             <div>

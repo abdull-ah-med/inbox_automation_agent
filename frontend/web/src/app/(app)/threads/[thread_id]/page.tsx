@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { formatThreadHeaderMeta } from "@/lib/thread-header-meta"
 import { cn, textLinkClass } from "@/lib/utils"
 
 export default function ThreadDetailPage() {
@@ -112,8 +113,12 @@ export default function ThreadDetailPage() {
                 {subject}
               </h1>
               <p className="mt-1 text-sm text-muted-foreground">
-                {thread.last_sender ?? "Unknown sender"} · {thread.message_count}{" "}
-                messages · {thread.mailbox}
+                {formatThreadHeaderMeta({
+                  mailbox: thread.mailbox,
+                  lastSender: thread.last_sender,
+                  messageCount: thread.message_count,
+                  messages,
+                })}
               </p>
             </div>
             {thread.outlook_url ? (

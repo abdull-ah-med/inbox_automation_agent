@@ -3,7 +3,7 @@
 import Link from "next/link"
 
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
-import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { formatRelativeTime, inboxColor, inboxLabel } from "@/lib/design-tokens"
 import { cn } from "@/lib/utils"
 import type { SearchHit } from "@/lib/types"
 
@@ -22,6 +22,7 @@ export const SearchHitLink = ({
   const key = mailboxKeyFor(hit.mailbox)
   const subject = hit.subject?.trim() || "Untitled thread"
   const href = `/threads/${hit.thread_id}`
+  const when = formatRelativeTime(hit.last_message_at)
 
   const handleClick = () => {
     onNavigate?.()
@@ -48,6 +49,9 @@ export const SearchHitLink = ({
         <StatusBadge label={stateLabel(hit.state)} tone={stateTone(hit.state)} />
         {hit.urgency ? (
           <StatusBadge label={hit.urgency} tone={urgencyTone(hit.urgency)} />
+        ) : null}
+        {hit.last_message_at ? (
+          <span className="text-xs text-muted-foreground">{when}</span>
         ) : null}
       </div>
       <p className="truncate text-sm font-medium text-foreground">{subject}</p>

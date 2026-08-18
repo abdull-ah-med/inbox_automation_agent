@@ -89,6 +89,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: React Doctor
+        run: npm run doctor -- --blocking none
+
       - name: Typecheck
         run: npm run typecheck
 

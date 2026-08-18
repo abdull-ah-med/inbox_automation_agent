@@ -9,6 +9,10 @@ import {
   setAuthSession,
 } from "@/features/auth/auth-store";
 import { messageForStatus } from "@/lib/error-messages";
+import {
+  dispatchChatStreamBlock,
+  type ChatStreamHandlers,
+} from "@/lib/chat-stream";
 import type {
   ChatAskRequest,
   ChatAskResponse,
@@ -424,7 +428,85 @@ export const api = {
       return apiFetch<ChatAskResponse>("/api/chat/ask", {
         method: "POST",
         body: JSON.stringify(body),
-      });
+      })
+    },
+    async askStream(body: ChatAskRequest, handlers: ChatStreamHandlers) {
+      const headers = new Headers()
+      headers.set("Content-Type", "application/json")
+      headers.set("Accept", "text/event-stream")
+      const token = getAccessToken()
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`)
+      }
+      const post = () =>
+        fetch(`${API_BASE}/api/chat/ask/stream`, {
+          method: "POST",
+          headers,
+          credentials: "include",
+          body: JSON.stringify(body),
+        })
+      let resp = await post()
+      if (resp.status === 401) {
+        const ok = await refreshAccessToken()
+        if (ok) {
+          const retryHeaders = new Headers(headers)
+          const nextToken = getAccessToken()
+          if (nextToken) {
+            retryHeaders.set("Authorization", `Bearer ${nextToken}`)
+          }
+          resp = await fetch(`${API_BASE}/api/chat/ask/stream`, {
+            method: "POST",
+            headers: retryHeaders,
+            credentials: "include",
+            body: JSON.stringify(body),
+          })
+        }
+      }
+      if (!resp.ok) {
+        let errorBody: unknown
+        try {
+          errorBody = await resp.json()
+        } catch {
+          errorBody = undefined
+        }
+        throw new ApiError(messageForStatus(resp.status), resp.status, errorBody)
+      }
+      if (!resp.body) {
+        throw new ApiError(messageForStatus(502), 502)
+      }
+      const reader = resp.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ""
+      let sawError = false
+      const wrapped: ChatStreamHandlers = {
+        ...handlers,
+        onError: (message) => {
+          sawError = true
+          handlers.onError?.(message)
+        },
+      }
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const parts = buffer.split("\n\n")
+        buffer = parts.pop() ?? ""
+        for (const part of parts) {
+          const status = dispatchChatStreamBlock(part, wrapped)
+          if (status === "error") {
+            throw new ApiError("Claude chat failed", 502)
+          }
+        }
+      }
+      if (buffer.trim()) {
+        const status = dispatchChatStreamBlock(buffer, wrapped)
+        if (status === "error") {
+          throw new ApiError("Claude chat failed", 502)
+        }
+      }
+      if (sawError) {
+        throw new ApiError("Claude chat failed", 502)
+      }
     },
   },
 

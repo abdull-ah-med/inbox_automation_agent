@@ -16,8 +16,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Select } from "@/components/ui/select"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { api } from "@/lib/api-client"
@@ -36,8 +43,13 @@ import type {
 } from "@/lib/types"
 import { cn, textLinkClass } from "@/lib/utils"
 
-const REVIEW_TAB_TRIGGER_CLASS =
-  "h-full cursor-pointer rounded-md border-0 px-2 py-1.5 text-xs shadow-none data-active:bg-white data-active:shadow-sm sm:text-sm dark:data-active:border-transparent dark:data-active:bg-gray-950 dark:data-active:text-gray-100"
+const REJECT_ITEMS = [
+  { label: "Select a reason", value: null },
+  ...REJECT_REASON_CODES.map((code) => ({
+    label: REJECT_REASON_LABELS[code],
+    value: code,
+  })),
+]
 
 const Panel = ({
   title,
@@ -293,19 +305,11 @@ export const ThreadTriageSidebar = ({
       </Panel>
 
       <Tabs defaultValue="classification" className="w-full gap-3">
-        <TabsList
-          className="grid h-9 w-full grid-cols-3 rounded-xl bg-muted p-1 ring-1 ring-foreground/10"
-          aria-label="Thread review sections"
-        >
-          <TabsTrigger value="classification" className={REVIEW_TAB_TRIGGER_CLASS}>
-            Classification
-          </TabsTrigger>
-          <TabsTrigger value="draft" className={REVIEW_TAB_TRIGGER_CLASS}>
-            Draft
-          </TabsTrigger>
-          <TabsTrigger value="audit" className={REVIEW_TAB_TRIGGER_CLASS}>
-            Audit ({auditLog.length})
-          </TabsTrigger>
+        <TabsList className="w-full" aria-label="Thread review sections">
+          <TabsTrigger value="classification">Classification</TabsTrigger>
+          <TabsTrigger value="draft">Draft</TabsTrigger>
+          <TabsTrigger value="audit">Audit ({auditLog.length})</TabsTrigger>
+          <TabsIndicator />
         </TabsList>
 
         <TabsContent value="classification" className="space-y-4 outline-none">
@@ -671,22 +675,28 @@ export const ThreadTriageSidebar = ({
                 Why is this wrong?
               </label>
               <Select
-                id="reject-reason"
-                name="reject_reason"
-                value={rejectReason}
-                onChange={(event) =>
-                  setRejectReason(event.target.value as RejectReasonCode | "")
+                items={REJECT_ITEMS}
+                value={rejectReason || null}
+                onValueChange={(value) =>
+                  setRejectReason((value ?? "") as RejectReasonCode | "")
                 }
-                aria-label="Rejection reason"
-                autoComplete="off"
-                className="mt-1"
               >
-                <option value="">Select a reason</option>
-                {REJECT_REASON_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {REJECT_REASON_LABELS[code]}
-                  </option>
-                ))}
+                <SelectTrigger
+                  id="reject-reason"
+                  aria-label="Rejection reason"
+                  className="mt-1 w-full"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {REJECT_ITEMS.map((item) => (
+                      <SelectItem key={item.value ?? "placeholder"} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
               </Select>
               <p className="mt-1 text-xs text-gray-500">
                 &ldquo;Wrong action / no reply needed&rdquo; just flags this thread as

@@ -1,0 +1,24 @@
+{
+  "id": "chat-info-mailbox-latest",
+  "dataset_version": "chat_evals_v1",
+  "suite_tags": ["A", "B"],
+  "question": "what s the latest on the info mailbox",
+  "mailbox": "info@sample-services.example.com",
+  "hits": [
+    {
+      "thread_id": "11111111-1111-1111-1111-111111111111",
+      "mailbox": "info@sample-services.example.com",
+      "conversation_id": "conv-info-latest",
+      "subject": "Background order confirmation",
+      "state": "DRAFTED",
+      "urgency": "HIGH",
+      "snippet": "Please confirm the background order for Friday.",
+      "score": 0.04,
+      "last_message_at": "2026-08-05T15:00:00Z"
+    }
+  ],
+  "expected_output": "The latest on the info mailbox is Background order confirmation. The client asked to confirm the background order for Friday.",
+  "expected_facts": ["background order", "info@sample-services.example.com"],
+  "forbidden_facts": ["drug screen packet", "sales@example.com"],
+  "geval_criteria": "The answer must stay on the info mailbox background-order thread. It must not mention a sales drug screen packet or claim mail was sent."
+}

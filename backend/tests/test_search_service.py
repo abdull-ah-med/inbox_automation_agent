@@ -224,6 +224,18 @@ async def test_empty_query_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dangling_from_filter_raises_like_a_blank_query() -> None:
+    session = AsyncMock()
+    with pytest.raises(EmptySearchQueryError):
+        await search_service.search_threads(
+            session,
+            _settings(),
+            openai_client=None,
+            query="from:",
+        )
+
+
+@pytest.mark.asyncio
 async def test_unknown_mailbox_raises() -> None:
     session = AsyncMock()
     with pytest.raises(UnknownMailboxError):
@@ -328,7 +340,6 @@ async def test_happy_path_hit_fields_and_snippet() -> None:
     assert hit.subject == "Drug screen packet"
     assert hit.state == "DRAFTED"
     assert hit.urgency == "HIGH"
-    assert "Drug screen packet" in hit.snippet
     assert "drug screen packet by Friday" in hit.snippet
     assert "<" not in hit.snippet
     assert hit.score > 0
@@ -540,30 +551,41 @@ async def test_empty_allowlist_returns_no_hits_without_searching() -> None:
     assert result.hits == []
 
 
-def test_snippet_joins_subject_and_body() -> None:
+def test_snippet_is_body_only_without_subject_prefix() -> None:
+    """UI already shows the subject — snippet is the body window only."""
     snippet = build_snippet(
-        subject="Drug screen packet",
         body="Please send the drug screen packet by Friday.",
     )
-    assert snippet == "Drug screen packet — Please send the drug screen packet by Friday."
+    assert snippet == "Please send the drug screen packet by Friday."
+    assert "—" not in snippet
+
+
+def test_snippet_centers_on_highlight_term() -> None:
+    """Match-centered window so deep hits are visible, not only the email opening."""
+    prefix = "Opening pleasantries and more filler words. " * 12
+    body = f"{prefix}Please remit unpaid invoice 9921 this week. Thanks again."
+    assert len(body) > SEARCH_SNIPPET_MAX_CHARS
+    snippet = build_snippet(body=body, highlight="unpaid invoice")
+    assert "unpaid invoice 9921" in snippet
+    assert not snippet.startswith("Opening pleasantries")
+    assert len(snippet) <= SEARCH_SNIPPET_MAX_CHARS + 6  # optional leading/trailing ...
+
 
 
 def test_snippet_truncates_to_240_chars() -> None:
     body = "x" * 400
-    snippet = build_snippet(subject="Hi", body=body)
+    snippet = build_snippet(body=body)
     assert len(snippet) == SEARCH_SNIPPET_MAX_CHARS
-    assert snippet.startswith("Hi — ")
     assert snippet.endswith("...")
 
 
 def test_snippet_strips_html_tags() -> None:
     snippet = build_snippet(
-        subject="Hello",
         body="<p>Please send the <b>packet</b> today.</p>",
     )
     assert "<" not in snippet
     assert "packet" in snippet
-    assert snippet.startswith("Hello — ")
+    assert "Please send the packet today" in snippet
 
 
 def _embedding_dim() -> int:
@@ -748,6 +770,14 @@ def test_fts_query_quotes_proper_names_and_drops_chat_filler() -> None:
     assert rewritten == '"Ashley Cantrell"'
 
 
+def test_fts_query_keeps_keywords_beside_quoted_names() -> None:
+    """A name plus a real keyword must keep both — invoice must not be dropped."""
+    from app.services.search_service import build_fts_query
+
+    rewritten = build_fts_query("Ashley Cantrell invoice")
+    assert rewritten == '"Ashley Cantrell" invoice'
+
+
 def test_fts_query_keeps_keyword_asks_unchanged() -> None:
     from app.services.search_service import build_fts_query
 
@@ -755,6 +785,19 @@ def test_fts_query_keeps_keyword_asks_unchanged() -> None:
     assert build_fts_query("billing disputes waiting on review") == (
         "billing disputes waiting on review"
     )
+
+
+def test_prefix_tsquery_drops_chat_filler_and_keeps_the_entity() -> None:
+    from app.services.search_service import build_prefix_tsquery
+
+    q = build_prefix_tsquery(
+        "give me the latest on info what s happening there "
+        "what do i need to focus on first"
+    )
+    assert q == "info:*"
+    assert "give" not in q
+    assert "happening" not in q
+    assert "focus" not in q
 
 
 @pytest.mark.db
@@ -823,3 +866,604 @@ async def test_conversational_person_ask_finds_named_thread(db_session) -> None:
     )
     assert [hit.thread_id for hit in result.hits] == [thread_id]
     assert "Ashley Cantrell" in result.hits[0].snippet
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_chatty_overview_ask_finds_info_thread(db_session) -> None:
+    """'Latest on info / what should I focus on' must not AND filler tokens."""
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    thread = Thread(
+        id=thread_id,
+        mailbox=SALES,
+        conversation_id="conv-info-order",
+        subject="Info background order",
+        state="DRAFTED",
+        urgency="HIGH",
+        last_message_at=now,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    message = Message(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="orders@info.test",
+        body_text="Please process the Info background order by Friday.",
+        body_preview="Please process the Info background order by Friday.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    db_session.add(message)
+    await db_session.flush()
+    db_session.add(
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-info-order",
+            sender_email="orders@info.test",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=[0.0] * _embedding_dim(),
+            sent_at=now,
+            body_preview="Please process the Info background order by Friday.",
+            search_document=(
+                "From: orders@info.test | Subject: Info background order\n\n"
+                "Please process the Info background order by Friday."
+            ),
+            message_id=message.id,
+        )
+    )
+    await db_session.commit()
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query=(
+            "give me the latest on info. what s happening there? "
+            "what do i need to focus on first?"
+        ),
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in result.hits] == [thread_id]
+    assert result.hits[0].subject == "Info background order"
+
+
+async def _seed_samplehelpdesk_thread(session: object) -> uuid.UUID:
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    session.add(  # type: ignore[union-attr]
+        Thread(
+            id=thread_id,
+            mailbox=SALES,
+            conversation_id="conv-samplehelpdesk-order",
+            subject="SampleHelpdesk order",
+            state="DRAFTED",
+            urgency="NORMAL",
+            last_message_at=now,
+        )
+    )
+    await session.flush()  # type: ignore[union-attr]
+    message = Message(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="orders@sample-helpdesk.test",
+        body_text="Please process the SampleHelpdesk background order.",
+        body_preview="Please process the SampleHelpdesk background order.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    session.add(message)  # type: ignore[union-attr]
+    await session.flush()  # type: ignore[union-attr]
+    session.add(  # type: ignore[union-attr]
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-samplehelpdesk-order",
+            sender_email="orders@sample-helpdesk.test",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=[0.0] * _embedding_dim(),
+            sent_at=now,
+            body_preview="Please process the SampleHelpdesk background order.",
+            search_document=(
+                "From: orders@sample-helpdesk.test | Subject: SampleHelpdesk order\n\n"
+                "Please process the SampleHelpdesk background order."
+            ),
+            message_id=message.id,
+        )
+    )
+    await session.commit()  # type: ignore[union-attr]
+    return thread_id
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_keyword_prefix_finds_compound_name(db_session) -> None:
+    """Outlook-style search: SampleH must hit a thread tokenized as SampleHelpdesk."""
+    thread_id = await _seed_samplehelpdesk_thread(db_session)
+
+    prefix = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="SampleH",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in prefix.hits] == [thread_id]
+    assert prefix.hits[0].subject == "SampleHelpdesk order"
+
+    full = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="SampleHelpdesk",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in full.hits] == [thread_id]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_keyword_query_strips_html_and_fts_operators(db_session) -> None:
+    """Tags and FTS operators cannot 500, echo markup, or hide a prefix match."""
+    thread_id = await _seed_samplehelpdesk_thread(db_session)
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="<script>SampleH</script> & !()",
+        mode="keyword",
+    )
+    assert result.query == "SampleH"
+    assert "<" not in result.query
+    assert "script" not in result.query.lower()
+    assert [hit.thread_id for hit in result.hits] == [thread_id]
+
+
+async def _seed_filter_search_rows(session: object) -> dict[str, uuid.UUID]:
+    """Three threads so stacked filters can be counted by hand.
+
+    1. sales inbound from vendor — subject packet, body 'Please send the packet'
+    2. sales outbound from sales — same subject, body 'We sent the packet'
+    3. cr inbound from vendor — subject invoice, body 'unpaid invoice'
+    """
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    sales_in_id = uuid.uuid4()
+    sales_out_id = uuid.uuid4()
+    cr_id = uuid.uuid4()
+    sales_in = Thread(
+        id=sales_in_id,
+        mailbox=SALES,
+        conversation_id="conv-sales-in-packet",
+        subject="Drug screen packet",
+        state="DRAFTED",
+        urgency="HIGH",
+        last_message_at=now,
+    )
+    sales_out = Thread(
+        id=sales_out_id,
+        mailbox=SALES,
+        conversation_id="conv-sales-out-packet",
+        subject="Drug screen packet",
+        state="DRAFTED",
+        urgency="NORMAL",
+        last_message_at=now,
+    )
+    cr = Thread(
+        id=cr_id,
+        mailbox=CR,
+        conversation_id="conv-cr-unpaid",
+        subject="Invoice follow-up",
+        state="DRAFTED",
+        urgency="HIGH",
+        last_message_at=now,
+    )
+    session.add_all([sales_in, sales_out, cr])  # type: ignore[union-attr]
+    await session.flush()  # type: ignore[union-attr]
+
+    sales_in_msg = Message(
+        id=uuid.uuid4(),
+        thread_id=sales_in_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="Please send the packet",
+        body_preview="Please send the packet",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    sales_out_msg = Message(
+        id=uuid.uuid4(),
+        thread_id=sales_out_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="outbound",
+        sender=SALES,
+        body_text="We sent the packet",
+        body_preview="We sent the packet",
+        received_at=now,
+        to_recipients=["vendor@example.com"],
+        cc_recipients=[],
+    )
+    cr_msg = Message(
+        id=uuid.uuid4(),
+        thread_id=cr_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="Following up on the unpaid invoice.",
+        body_preview="Following up on the unpaid invoice.",
+        received_at=now,
+        to_recipients=[CR],
+        cc_recipients=[],
+    )
+    session.add_all([sales_in_msg, sales_out_msg, cr_msg])  # type: ignore[union-attr]
+    await session.flush()  # type: ignore[union-attr]
+
+    zeros = [0.0] * _embedding_dim()
+    session.add_all(  # type: ignore[union-attr]
+        [
+            EmailEmbedding(
+                mailbox=SALES,
+                conversation_id="conv-sales-in-packet",
+                sender_email="vendor@example.com",
+                recipient_emails=[SALES],
+                cc_emails=[],
+                embedding=zeros,
+                sent_at=now,
+                body_preview="Please send the packet",
+                search_document=(
+                    "From: vendor@example.com | Subject: Drug screen packet\n\n"
+                    "Please send the packet"
+                ),
+                message_id=sales_in_msg.id,
+            ),
+            EmailEmbedding(
+                mailbox=SALES,
+                conversation_id="conv-sales-out-packet",
+                sender_email=SALES,
+                recipient_emails=["vendor@example.com"],
+                cc_emails=[],
+                embedding=zeros,
+                sent_at=now,
+                body_preview="We sent the packet",
+                search_document=(
+                    f"From: {SALES} | Subject: Drug screen packet\n\n"
+                    "We sent the packet"
+                ),
+                message_id=sales_out_msg.id,
+            ),
+            EmailEmbedding(
+                mailbox=CR,
+                conversation_id="conv-cr-unpaid",
+                sender_email="vendor@example.com",
+                recipient_emails=[CR],
+                cc_emails=[],
+                embedding=zeros,
+                sent_at=now,
+                body_preview="Following up on the unpaid invoice.",
+                search_document=(
+                    "From: vendor@example.com | Subject: Invoice follow-up\n\n"
+                    "Following up on the unpaid invoice."
+                ),
+                message_id=cr_msg.id,
+            ),
+        ]
+    )
+    await session.commit()  # type: ignore[union-attr]
+    return {"sales_in": sales_in_id, "sales_out": sales_out_id, "cr": cr_id}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_stacked_discord_filters_narrow_to_one_hand_counted_thread(
+    db_session,
+) -> None:
+    ids = await _seed_filter_search_rows(db_session)
+    settings = _settings()
+
+    stacked = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="from:vendor@example.com subject:packet mailbox:sales direction:inbound",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in stacked.hits] == [ids["sales_in"]]
+
+    outbound = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="direction:outbound mailbox:sales",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in outbound.hits] == [ids["sales_out"]]
+
+    unpaid = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="contains:unpaid",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in unpaid.hits] == [ids["cr"]]
+
+    spaced = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="from: vendor@example.com",
+        mode="keyword",
+    )
+    spaced_ids = [hit.thread_id for hit in spaced.hits]
+    assert ids["sales_in"] in spaced_ids
+    assert ids["cr"] in spaced_ids
+    assert ids["sales_out"] not in spaced_ids
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_contains_matches_deep_search_document_not_only_preview(
+    db_session,
+) -> None:
+    """contains: must find terms past the truncated body_preview window."""
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    thread = Thread(
+        id=thread_id,
+        mailbox=SALES,
+        conversation_id="conv-deep-contains",
+        subject="Long follow-up",
+        state="DRAFTED",
+        urgency="NORMAL",
+        last_message_at=now,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    message = Message(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="Please see attached.",
+        body_preview="Please see attached.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    db_session.add(message)
+    await db_session.flush()
+    zeros = [0.0] * _embedding_dim()
+    deep_token = "ZZDEEPCONTAINS991"
+    db_session.add(
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-deep-contains",
+            sender_email="vendor@example.com",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=zeros,
+            sent_at=now,
+            body_preview="Please see attached.",
+            search_document=(
+                "From: vendor@example.com | Subject: Long follow-up\n\n"
+                f"{'filler ' * 40}{deep_token} at the end."
+            ),
+            message_id=message.id,
+        )
+    )
+    await db_session.commit()
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query=f"contains:{deep_token}",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in result.hits] == [thread_id]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_mailbox_only_filter_lists_that_mailbox_not_others(
+    db_session,
+) -> None:
+    """Discord ``mailbox:sales`` alone is a valid search — both sales threads, not CR.
+
+    Hand count from fixture: sales inbound + sales outbound = 2; CR unpaid stays out.
+    """
+    ids = await _seed_filter_search_rows(db_session)
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="mailbox:sales",
+        mode="keyword",
+    )
+    hit_ids = {hit.thread_id for hit in result.hits}
+    assert hit_ids == {ids["sales_in"], ids["sales_out"]}
+    assert ids["cr"] not in hit_ids
+
+
+INFO = "info@sample-services.example.com"
+
+
+async def _seed_info_and_sales_mailboxes(session: object) -> dict[str, uuid.UUID]:
+    """Worked example: info@ has one thread; sales has an unrelated packet thread.
+
+    Hand count: NL 'info mailbox' must return only the info thread (1), never sales.
+    Bodies intentionally omit the word 'mailbox' so keyword AND would fail.
+    """
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    info_id = uuid.uuid4()
+    sales_id = uuid.uuid4()
+    session.add(  # type: ignore[union-attr]
+        Thread(
+            id=info_id,
+            mailbox=INFO,
+            conversation_id="conv-info-latest",
+            subject="Background order confirmation",
+            state="DRAFTED",
+            urgency="HIGH",
+            last_message_at=now,
+        )
+    )
+    session.add(  # type: ignore[union-attr]
+        Thread(
+            id=sales_id,
+            mailbox=SALES,
+            conversation_id="conv-sales-unrelated",
+            subject="Drug screen packet",
+            state="DRAFTED",
+            urgency="NORMAL",
+            last_message_at=now,
+        )
+    )
+    await session.flush()  # type: ignore[union-attr]
+
+    info_msg = Message(
+        id=uuid.uuid4(),
+        thread_id=info_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="client@example.com",
+        body_text="Please confirm the background order for Friday.",
+        body_preview="Please confirm the background order for Friday.",
+        received_at=now,
+        to_recipients=[INFO],
+        cc_recipients=[],
+    )
+    sales_msg = Message(
+        id=uuid.uuid4(),
+        thread_id=sales_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="buyer@example.com",
+        body_text="Please send the drug screen packet.",
+        body_preview="Please send the drug screen packet.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    session.add(info_msg)  # type: ignore[union-attr]
+    session.add(sales_msg)  # type: ignore[union-attr]
+    await session.flush()  # type: ignore[union-attr]
+
+    dim = _embedding_dim()
+    session.add(  # type: ignore[union-attr]
+        EmailEmbedding(
+            mailbox=INFO,
+            conversation_id="conv-info-latest",
+            sender_email="client@example.com",
+            recipient_emails=[INFO],
+            cc_emails=[],
+            embedding=[0.0] * dim,
+            sent_at=now,
+            body_preview="Please confirm the background order for Friday.",
+            search_document=(
+                "From: client@example.com | Subject: Background order confirmation\n\n"
+                "Please confirm the background order for Friday."
+            ),
+            message_id=info_msg.id,
+        )
+    )
+    session.add(  # type: ignore[union-attr]
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-sales-unrelated",
+            sender_email="buyer@example.com",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=[0.0] * dim,
+            sent_at=now,
+            body_preview="Please send the drug screen packet.",
+            search_document=(
+                "From: buyer@example.com | Subject: Drug screen packet\n\n"
+                "Please send the drug screen packet."
+            ),
+            message_id=sales_msg.id,
+        )
+    )
+    await session.commit()  # type: ignore[union-attr]
+    return {"info": info_id, "sales": sales_id}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_nl_info_mailbox_ask_lists_info_threads_not_sales(
+    db_session,
+) -> None:
+    """'latest on the info mailbox' scopes to info@; bodies have no word 'mailbox'."""
+    ids = await _seed_info_and_sales_mailboxes(db_session)
+    settings = _settings(target_mailboxes=f"{SALES},{CR},{INFO}")
+
+    result = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="what s the latest on the info mailbox",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in result.hits] == [ids["info"]]
+    assert result.hits[0].mailbox == INFO
+    assert result.mailbox == INFO
+    assert ids["sales"] not in {hit.thread_id for hit in result.hits}
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_nl_info_mailbox_with_topic_keeps_content_keywords(
+    db_session,
+) -> None:
+    """Scope to info@ but still require the topic keyword in that mailbox."""
+    ids = await _seed_info_and_sales_mailboxes(db_session)
+    settings = _settings(target_mailboxes=f"{SALES},{CR},{INFO}")
+
+    miss = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="info mailbox drug screen packet",
+        mode="keyword",
+    )
+    assert miss.hits == []
+
+    hit = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="info mailbox background order",
+        mode="keyword",
+    )
+    assert [h.thread_id for h in hit.hits] == [ids["info"]]

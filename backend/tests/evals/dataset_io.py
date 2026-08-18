@@ -10,6 +10,7 @@ from typing import Any
 
 EVALS_ROOT = Path(__file__).resolve().parent
 DATASET_V1 = EVALS_ROOT / "dataset" / "v1"
+CHAT_DATASET_V1 = EVALS_ROOT / "dataset" / "chat_v1"
 ARTIFACTS_ROOT = EVALS_ROOT.parent / "artifacts" / "evals"
 
 
@@ -29,6 +30,22 @@ def list_v1_cases() -> list[dict[str, Any]]:
 def cases_for_suite(suite: str) -> list[dict[str, Any]]:
     tag = suite.upper()
     return [c for c in list_v1_cases() if tag in {t.upper() for t in c.get("suite_tags", [])}]
+
+
+def list_chat_v1_cases() -> list[dict[str, Any]]:
+    cases: list[dict[str, Any]] = []
+    for path in sorted(CHAT_DATASET_V1.glob("*.json")):
+        case = load_case(path)
+        case["_source_path"] = str(path)
+        cases.append(case)
+    return cases
+
+
+def chat_cases_for_suite(suite: str) -> list[dict[str, Any]]:
+    tag = suite.upper()
+    return [
+        c for c in list_chat_v1_cases() if tag in {t.upper() for t in c.get("suite_tags", [])}
+    ]
 
 
 def new_run_dir(prefix: str = "run") -> Path:
