@@ -20,6 +20,7 @@ import type {
   DraftView,
   ImportSkillResult,
   MailboxOverview,
+  RelatedThreadList,
   ReplyMemoryResponse,
   SearchResponse,
   SkillCandidateResponse,
@@ -542,6 +543,41 @@ export const api = {
   threads: {
     detail(id: string) {
       return apiFetch<ThreadDetail>(`/api/threads/${id}`);
+    },
+    related(id: string, purpose: "siblings" | "associated") {
+      return apiFetch<RelatedThreadList>(
+        `/api/threads/${id}/related?purpose=${encodeURIComponent(purpose)}`,
+      );
+    },
+    applyTreatment(
+      id: string,
+      body: {
+        treatment: "no_reply" | "urgency";
+        thread_ids: string[];
+        reason: string;
+        urgency?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW";
+      },
+    ) {
+      return apiFetch<{ applied_thread_ids: string[] }>(
+        `/api/threads/${id}/apply-treatment`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+    },
+    reviewRelated(
+      id: string,
+      relatedId: string,
+      body: { status: "confirmed" | "dismissed" },
+    ) {
+      return apiFetch<{ status: "confirmed" | "dismissed" }>(
+        `/api/threads/${id}/related/${relatedId}/review`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
     },
   },
 

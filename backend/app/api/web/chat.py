@@ -50,6 +50,7 @@ async def ask(
         message=body.message,
         mailbox=body.mailbox,
         limit=body.limit,
+        history=body.history,
     )
 
 
@@ -82,6 +83,7 @@ async def ask_stream(
                 message=body.message,
                 mailbox=body.mailbox,
                 limit=body.limit,
+                history=body.history,
             ):
                 yield _sse_data(payload)
         except ChatError:

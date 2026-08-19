@@ -21,6 +21,9 @@ export interface TriageFlags {
   spam_reason: string | null
   context_reason: string | null
   action_items_summary: string | null
+  routing_category?: string | null
+  is_internal?: boolean | null
+  is_automated?: boolean | null
   outcome: string | null
 }
 
@@ -242,6 +245,21 @@ export interface SkillCandidateResponse {
   created_at: string
 }
 
+export interface RelatedThreadItem {
+  thread_id: string
+  mailbox: string
+  subject: string
+  sender: string
+  last_message_at: string | null
+  urgency: string | null
+  score: number
+  status: "proposed" | "confirmed" | "dismissed"
+}
+
+export interface RelatedThreadList {
+  items: RelatedThreadItem[]
+}
+
 export interface ThreadDetail {
   thread: ThreadSummary
   messages: MessageDetail[]
@@ -251,6 +269,7 @@ export interface ThreadDetail {
   audit_log: AuditEntry[]
   sent_reply?: SentReplyView | null
   draft_vs_sent_diff?: DraftVsSentDiff | null
+  associated_threads?: RelatedThreadItem[]
 }
 
 export interface SentReplyView {
@@ -287,10 +306,22 @@ export interface ChatAskResponse {
   refused_write: boolean
 }
 
+export interface ChatCitedThread {
+  thread_id: string
+  subject?: string | null
+}
+
+export interface ChatHistoryTurn {
+  role: "user" | "assistant"
+  content: string
+  citations?: ChatCitedThread[]
+}
+
 export interface ChatAskRequest {
   message: string
   mailbox?: string
   limit?: number
+  history?: ChatHistoryTurn[]
 }
 
 export interface SearchHit {

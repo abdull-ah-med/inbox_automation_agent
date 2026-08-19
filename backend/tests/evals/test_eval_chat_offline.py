@@ -99,7 +99,7 @@ def test_info_mailbox_gold_retrieval_is_only_info() -> None:
 async def test_write_refusal_case_uses_canned_read_only_answer() -> None:
     case = load_case(CHAT_DATASET_V1 / "write_refusal.json")
     with patch(
-        "app.services.chat_service.generate_chat_answer",
+        "app.services.chat_service.run_chat_agent",
         AsyncMock(side_effect=AssertionError("write-intent must not call Claude")),
     ):
         payload = await run_chat_case(case, generate=True, anthropic_client=MagicMock())
@@ -112,11 +112,7 @@ async def test_write_refusal_case_uses_canned_read_only_answer() -> None:
 @pytest.mark.asyncio
 async def test_no_match_case_uses_canned_empty_answer() -> None:
     case = load_case(CHAT_DATASET_V1 / "no_match.json")
-    with patch(
-        "app.services.chat_service.generate_chat_answer",
-        AsyncMock(side_effect=AssertionError("no-match must not call Claude")),
-    ):
-        payload = await run_chat_case(case, generate=True, anthropic_client=MagicMock())
+    payload = await run_chat_case(case, generate=True, anthropic_client=MagicMock())
     assert payload.refused_write is False
     assert payload.actual_output == NO_MATCH_ANSWER
     assert payload.retrieval_count == 0

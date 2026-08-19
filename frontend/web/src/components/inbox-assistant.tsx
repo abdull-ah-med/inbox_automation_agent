@@ -58,7 +58,7 @@ import {
 import { api } from "@/lib/api-client"
 import { getErrorMessage } from "@/lib/error-messages"
 import { sanitizeUserText } from "@/lib/sanitize"
-import type { ChatCitation, MailboxOverview } from "@/lib/types"
+import type { ChatAskRequest, ChatCitation, ChatHistoryTurn, MailboxOverview } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const ALL_MAILBOXES = ""
@@ -97,8 +97,8 @@ type PendingAskMeta = {
 }
 
 const EXAMPLE_ASKS = [
+  "What should I focus on today?",
   "Billing disputes waiting on review",
-  "Spam we filtered about invoices",
   "Threads about SampleLab",
 ] as const
 
@@ -110,6 +110,7 @@ export const InboxAssistant = () => {
   const [isAsking, setIsAsking] = useState(false)
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [panelSize, setPanelSize] = useState<PanelSize>("compact")
+  const [toolStatus, setToolStatus] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const pendingMetaRef = useRef<PendingAskMeta | null>(null)
   const sizeIndex = PANEL_SIZES.indexOf(panelSize)
@@ -141,6 +142,7 @@ export const InboxAssistant = () => {
 
   const handleReset = () => {
     pendingMetaRef.current = null
+    setToolStatus(null)
     setTurns([])
     setMessage("")
     setValidation(null)
@@ -180,6 +182,21 @@ export const InboxAssistant = () => {
     }
     setValidation(null)
     setMessage("")
+    const history: ChatHistoryTurn[] = turns
+      .filter((turn) => !turn.error && turn.text.trim())
+      .map((turn) => {
+        if (turn.role !== "assistant" || !turn.citations?.length) {
+          return { role: turn.role, content: turn.text }
+        }
+        return {
+          role: turn.role,
+          content: turn.text,
+          citations: turn.citations.map((citation) => ({
+            thread_id: citation.thread_id,
+            subject: citation.subject,
+          })),
+        }
+      })
     const userTurn: ChatTurn = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -187,11 +204,16 @@ export const InboxAssistant = () => {
     }
     setTurns((current) => [...current, userTurn])
     const assistantId = `assistant-${Date.now()}`
+    setToolStatus(null)
     setIsAsking(true)
     try {
-      const payload: { message: string; mailbox?: string } = { message: trimmed }
+      const payload: ChatAskRequest = { message: trimmed }
       if (mailbox) payload.mailbox = mailbox
+      if (history.length > 0) payload.history = history
       await api.chat.askStream(payload, {
+        onStatus: (text) => {
+          setToolStatus(text)
+        },
         onMeta: (meta) => {
           pendingMetaRef.current = {
             citations: meta.citations,
@@ -222,6 +244,7 @@ export const InboxAssistant = () => {
         onDone: () => {
           const pending = pendingMetaRef.current
           pendingMetaRef.current = null
+          setToolStatus(null)
           setTurns((current) => {
             const existing = current.find((turn) => turn.id === assistantId)
             const citations = pending?.citations ?? []
@@ -254,6 +277,7 @@ export const InboxAssistant = () => {
       })
     } catch (error) {
       pendingMetaRef.current = null
+      setToolStatus(null)
       setTurns((current) => [
         ...current.map((turn) =>
           turn.id === assistantId ? { ...turn, streaming: false } : turn,
@@ -531,7 +555,7 @@ export const InboxAssistant = () => {
                             aria-busy="true"
                             className="thinking-label px-1 py-1 text-sm font-medium"
                           >
-                            Thinking
+                            {toolStatus ?? "Thinking"}
                           </p>
                         </MessageScrollerItem>
                       ) : null}

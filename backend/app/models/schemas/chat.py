@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,6 +12,20 @@ from app.models.schemas.search import SEARCH_DEFAULT_LIMIT, SEARCH_MAX_LIMIT, SE
 CHAT_DEFAULT_LIMIT = SEARCH_DEFAULT_LIMIT
 CHAT_MAX_LIMIT = SEARCH_MAX_LIMIT
 CHAT_MESSAGE_MAX_CHARS = SEARCH_QUERY_MAX_CHARS
+CHAT_HISTORY_MAX_TURNS = 8
+
+
+class ChatCitedThread(BaseModel):
+    thread_id: uuid.UUID
+    subject: str | None = None
+
+
+class ChatHistoryTurn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)
+    citations: list[ChatCitedThread] = Field(default_factory=list)
 
 
 class ChatAskRequest(BaseModel):
@@ -19,6 +34,7 @@ class ChatAskRequest(BaseModel):
     message: str = Field(min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)
     mailbox: str | None = None
     limit: int | None = Field(default=None, ge=1, le=CHAT_MAX_LIMIT)
+    history: list[ChatHistoryTurn] = Field(default_factory=list, max_length=CHAT_HISTORY_MAX_TURNS)
 
 
 class ChatCitation(BaseModel):

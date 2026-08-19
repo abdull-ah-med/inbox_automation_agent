@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
 from app.db.session import get_session_factory
+from app.models.schemas.email import ThreadStateEnum
 from app.models.schemas.draft import DraftResponseSchema
 from app.repositories import draft_repo, thread_repo
 from app.services import (
@@ -364,6 +365,13 @@ async def mark_wrong(
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
 
+    if reason_code == "wrong_action":
+        await thread_repo.set_thread_outcome(
+            session,
+            existing.thread_id,
+            state=ThreadStateEnum.NO_ACTION.value,
+        )
+
     try:
         await audit_service.log_event(
             session,
@@ -383,6 +391,27 @@ async def mark_wrong(
             draft_id=str(draft_id),
             event_type="draft.marked_wrong",
         )
+
+    if reason_code == "wrong_action":
+        try:
+            await audit_service.log_event(
+                session,
+                event_type="thread.outcome.no_action",
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+                payload={
+                    "draft_id": str(draft_id),
+                    "thread_id": str(existing.thread_id),
+                    "reason_code": reason_code,
+                },
+                actor=actor,
+            )
+        except Exception:
+            logger.warning(
+                "draft_feedback_audit_failed",
+                draft_id=str(draft_id),
+                event_type="thread.outcome.no_action",
+            )
 
     logger.info(
         "draft_marked_wrong",

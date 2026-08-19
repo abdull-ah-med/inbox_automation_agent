@@ -10,6 +10,7 @@ import pytest
 
 from app.core.exceptions import DraftNotFoundError
 from app.models.schemas.draft import DraftResponseSchema
+from app.models.schemas.email import ThreadStateEnum
 from app.services import draft_feedback_service
 
 
@@ -379,6 +380,10 @@ async def test_mark_wrong_audits_without_rejection_memory() -> None:
             "app.services.draft_feedback_service.audit_service.log_event",
             AsyncMock(),
         ) as audit_mock,
+        patch(
+            "app.services.draft_feedback_service.thread_repo.set_thread_outcome",
+            AsyncMock(),
+        ) as outcome_mock,
     ):
         result = await draft_feedback_service.mark_wrong(
             session,
@@ -388,7 +393,9 @@ async def test_mark_wrong_audits_without_rejection_memory() -> None:
         )
 
     assert result.feedback_action == "wrong"
-    assert audit_mock.await_args.kwargs["event_type"] == "draft.marked_wrong"
+    assert audit_mock.await_args_list[0].kwargs["event_type"] == "draft.marked_wrong"
+    outcome_mock.assert_awaited_once()
+    assert outcome_mock.await_args.kwargs["state"] == ThreadStateEnum.NO_ACTION.value
 
 
 @pytest.mark.asyncio

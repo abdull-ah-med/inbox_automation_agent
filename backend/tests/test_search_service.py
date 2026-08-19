@@ -236,6 +236,19 @@ async def test_dangling_from_filter_raises_like_a_blank_query() -> None:
 
 
 @pytest.mark.asyncio
+async def test_filler_only_chat_ask_raises_without_allow_empty() -> None:
+    """'What should I focus on today?' is not a keyword. Search API stays blank."""
+    session = AsyncMock()
+    with pytest.raises(EmptySearchQueryError):
+        await search_service.search_threads(
+            session,
+            _settings(),
+            openai_client=None,
+            query="what should I focus on today?",
+        )
+
+
+@pytest.mark.asyncio
 async def test_unknown_mailbox_raises() -> None:
     session = AsyncMock()
     with pytest.raises(UnknownMailboxError):
@@ -798,6 +811,14 @@ def test_prefix_tsquery_drops_chat_filler_and_keeps_the_entity() -> None:
     assert "give" not in q
     assert "happening" not in q
     assert "focus" not in q
+
+
+def test_prefix_tsquery_drops_thread_meta_nouns() -> None:
+    """Chat phrasing must not AND 'threads'/'emails' with the topic token."""
+    from app.services.search_service import build_prefix_tsquery
+
+    assert build_prefix_tsquery("Threads about SampleLab") == "SampleLab:*"
+    assert build_prefix_tsquery("emails from invoices") == "invoices:*"
 
 
 @pytest.mark.db
@@ -1467,3 +1488,24 @@ async def test_nl_info_mailbox_with_topic_keeps_content_keywords(
         mode="keyword",
     )
     assert [h.thread_id for h in hit.hits] == [ids["info"]]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_filler_only_with_allow_empty_lists_recent_allowlist_threads(
+    db_session,
+) -> None:
+    """Chat overview: filler-only + allow_empty lists info and sales, not outsider CR."""
+    ids = await _seed_info_and_sales_mailboxes(db_session)
+    settings = _settings(target_mailboxes=f"{SALES},{INFO}")
+
+    result = await search_service.search_threads(
+        db_session,
+        settings,
+        openai_client=None,
+        query="what should I focus on today?",
+        allow_empty=True,
+        mode="keyword",
+    )
+    hit_ids = {hit.thread_id for hit in result.hits}
+    assert hit_ids == {ids["info"], ids["sales"]}

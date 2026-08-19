@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { Check, X } from "lucide-react"
 
+import { ApplySiblingsDialog } from "@/components/apply-siblings-dialog"
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
@@ -38,6 +39,7 @@ import type {
   AuditEntry,
   ClassificationView,
   DraftView,
+  RelatedThreadItem,
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
@@ -127,12 +129,41 @@ export const ThreadTriageSidebar = ({
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
+  const [siblingOpen, setSiblingOpen] = useState(false)
+  const [siblingItems, setSiblingItems] = useState<RelatedThreadItem[]>([])
+  const [siblingTreatment, setSiblingTreatment] = useState<"no_reply" | "urgency">(
+    "no_reply",
+  )
+  const [siblingReason, setSiblingReason] = useState("")
+  const [siblingUrgency, setSiblingUrgency] = useState<
+    "CRITICAL" | "HIGH" | "NORMAL" | "LOW" | undefined
+  >(undefined)
 
-  const invalidateThread = async () => {
+  const invalidateReviewQueues = async () => {
     await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
+    await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
+    await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
   }
 
   const draftId = draft?.id
+
+  const promptSiblings = async (
+    treatment: "no_reply" | "urgency",
+    reason: string,
+    urgency?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW",
+  ) => {
+    try {
+      const data = await api.threads.related(threadId, "siblings")
+      if (data.items.length === 0) return
+      setSiblingItems(data.items)
+      setSiblingTreatment(treatment)
+      setSiblingReason(reason)
+      setSiblingUrgency(urgency)
+      setSiblingOpen(true)
+    } catch {
+      // Source action already succeeded; an empty prompt is the fallback.
+    }
+  }
 
   const approveMutation = useMutation({
     mutationFn: (body?: {
@@ -150,7 +181,7 @@ export const ThreadTriageSidebar = ({
       setApprovalNote("")
       setApprovalScope("")
       setActionError(null)
-      await invalidateThread()
+      await invalidateReviewQueues()
     },
     onError: (error: Error) => {
       setActionError(error.message)
@@ -173,12 +204,15 @@ export const ThreadTriageSidebar = ({
       }
       return api.drafts.reject(draftId, payload)
     },
-    onSuccess: async () => {
+    onSuccess: async (_draft, payload) => {
       setRejectOpen(false)
       setRejectNote("")
       setRejectReason("")
       setActionError(null)
-      await invalidateThread()
+      await invalidateReviewQueues()
+      if (payload.reason_code === "wrong_action") {
+        await promptSiblings("no_reply", payload.feedback_note)
+      }
     },
     onError: (error: Error) => {
       setActionError(error.message)
@@ -288,6 +322,13 @@ export const ThreadTriageSidebar = ({
                           threadId={threadId}
                           currentUrgency={urgency}
                           disabled={busy}
+                          onSaved={(payload) => {
+                            void promptSiblings(
+                              "urgency",
+                              payload.reason,
+                              payload.urgency,
+                            )
+                          }}
                         />
                       ) : null}
                     </div>
@@ -352,6 +393,12 @@ export const ThreadTriageSidebar = ({
             {triage ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-1.5">
+                  {triage.is_internal ? (
+                    <StatusBadge label="Internal" tone="blue" />
+                  ) : null}
+                  {triage.is_automated ? (
+                    <StatusBadge label="Automated" tone="neutral" />
+                  ) : null}
                   {triage.is_spam != null ? (
                     <StatusBadge
                       label={triage.is_spam ? "Spam" : "Not spam"}
@@ -699,9 +746,9 @@ export const ThreadTriageSidebar = ({
                 </SelectContent>
               </Select>
               <p className="mt-1 text-xs text-gray-500">
-                &ldquo;Wrong action / no reply needed&rdquo; just flags this thread as
-                not requiring a reply. Any other reason will teach the system what
-                to change next time.
+                &ldquo;Wrong action / no reply needed&rdquo; marks this thread as no
+                action and leaves Needs Attention. Any other reason will teach the
+                system what to change next time.
               </p>
             </div>
             <Textarea
@@ -737,6 +784,16 @@ export const ThreadTriageSidebar = ({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <ApplySiblingsDialog
+        key={siblingItems.map((item) => item.thread_id).join(",")}
+        open={siblingOpen}
+        sourceThreadId={threadId}
+        items={siblingItems}
+        treatment={siblingTreatment}
+        reason={siblingReason}
+        urgency={siblingUrgency}
+        onOpenChange={setSiblingOpen}
+      />
     </div>
   )
 }

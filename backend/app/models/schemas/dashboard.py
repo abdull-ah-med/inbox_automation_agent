@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.schemas.related import RelatedThreadItem
+
 MailboxKey = Literal["client-relations", "sales", "vendor", "intermediary"]
 
 MAILBOX_KEYS: tuple[MailboxKey, ...] = (
@@ -35,6 +37,8 @@ class TriageFlags(BaseModel):
     context_reason: str | None = None
     action_items_summary: str | None = None
     routing_category: str | None = None
+    is_internal: bool | None = None
+    is_automated: bool | None = None
     outcome: str | None = None
 
 
@@ -177,3 +181,4 @@ class ThreadDetail(BaseModel):
     audit_log: list[AuditEntry] = Field(default_factory=list)
     sent_reply: SentReplyView | None = None
     draft_vs_sent_diff: DraftVsSentDiff | None = None
+    associated_threads: list[RelatedThreadItem] = Field(default_factory=list)

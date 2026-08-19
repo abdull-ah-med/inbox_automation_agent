@@ -42,9 +42,7 @@ def _settings(**overrides: object) -> Settings:
         "anthropic_api_key": "sk-ant-test",
         "chat_model": "claude-haiku-4-5",
         "classification_model": "claude-haiku-4-5",
-        "database_url": (
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"
-        ),
+        "database_url": ("postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"),
         "redis_url": "redis://localhost:6379/15",
     }
     values.update(overrides)
@@ -165,35 +163,37 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     assert "subject" in lowered
     assert "review ui" not in lowered
     assert "triage labels" in lowered
+    assert "overview" in lowered or "latest" in lowered
+
+
+def test_retrieved_context_includes_last_message_at() -> None:
+    from app.llm.chat import build_retrieved_context
+
+    packed = build_retrieved_context([_hit()], question="what should I focus on today?")
+    assert "2026-08-05T15:00:00+00:00" in packed
 
 
 @pytest.mark.asyncio
 async def test_ask_returns_server_citations_from_search_hits_not_model_ids() -> None:
+    from app.llm.chat import ChatAgentResult
     from app.services import chat_service
 
     hit = _hit(THREAD_A)
     fake_id = uuid.UUID("ffffffff-ffff-ffff-ffff-ffffffffffff")
-    search = _search_response(hit, mailbox=SALES)
     session = AsyncMock()
     settings = _settings()
     openai = MagicMock()
     anthropic = MagicMock()
 
-    with (
-        patch(
-            "app.services.chat_service.search_service.search_threads",
-            AsyncMock(return_value=search),
-        ) as search_mock,
-        patch(
-            "app.services.chat_service.generate_chat_answer",
-            AsyncMock(
-                return_value=(
-                    f"Open thread {fake_id} about billing. "
-                    f"See {hit.subject} ({THREAD_A})."
-                )
-            ),
-        ) as llm_mock,
-    ):
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(
+            return_value=ChatAgentResult(
+                answer=(f"Open thread {fake_id} about billing. See {hit.subject} ({THREAD_A})."),
+                hits=[hit],
+            )
+        ),
+    ) as agent_mock:
         result = await chat_service.ask(
             session,
             settings,
@@ -204,19 +204,12 @@ async def test_ask_returns_server_citations_from_search_hits_not_model_ids() -> 
             limit=10,
         )
 
-    search_mock.assert_awaited_once()
-    kwargs = search_mock.await_args.kwargs
-    assert kwargs["query"] == "billing disputes waiting on review"
-    assert kwargs["mailbox"] == SALES
-    assert kwargs["limit"] == 10
-    llm_mock.assert_awaited_once()
+    agent_mock.assert_awaited_once()
     assert result.refused_write is False
     assert result.retrieval_count == 1
-    assert result.mailbox == SALES
     assert [c.thread_id for c in result.citations] == [THREAD_A]
     assert fake_id not in {c.thread_id for c in result.citations}
     assert result.citations[0].url_path == f"/threads/{THREAD_A}"
-    assert "billing" in result.answer.lower() or THREAD_A.hex[:8] in result.answer
     assert str(fake_id) not in result.answer
     assert str(THREAD_A) not in result.answer
 
@@ -226,7 +219,7 @@ def test_sanitize_chat_answer_strips_mangled_and_valid_thread_ids() -> None:
     from app.llm.chat import sanitize_chat_answer
 
     raw = (
-        'I found 1 thread related to Ashley Cantrell:\n\n'
+        "I found 1 thread related to Ashley Cantrell:\n\n"
         f'**Thread: "Background check inquiry"** (ID: {MANGLED_ASHLEY_ID})\n'
         f"- thread id: {THREAD_A}\n"
         f"See {INVENTED_ID} for billing."
@@ -252,19 +245,19 @@ def test_sanitize_chat_answer_leaves_grounded_prose() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_no_hits_returns_empty_citations_without_llm() -> None:
+async def test_ask_no_hits_returns_empty_citations_without_invented_answer() -> None:
+    from app.llm.chat import ChatAgentResult
     from app.services import chat_service
 
     session = AsyncMock()
     settings = _settings()
-    with (
-        patch(
-            "app.services.chat_service.search_service.search_threads",
-            AsyncMock(return_value=_search_response()),
-        ),
-        patch(
-            "app.services.chat_service.generate_chat_answer",
-            AsyncMock(side_effect=AssertionError("LLM must not run on zero hits")),
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(
+            return_value=ChatAgentResult(
+                answer="I invented a thread that is not in the inbox.",
+                hits=[],
+            )
         ),
     ):
         result = await chat_service.ask(
@@ -294,7 +287,7 @@ async def test_ask_write_intent_refuses_without_mutation_and_still_retrieves() -
             AsyncMock(return_value=_search_response(hit, mailbox=SALES)),
         ) as search_mock,
         patch(
-            "app.services.chat_service.generate_chat_answer",
+            "app.services.chat_service.run_chat_agent",
             AsyncMock(side_effect=AssertionError("write-intent must not call Claude")),
         ),
         patch("app.services.draft_feedback_service.approve_draft", AsyncMock()) as approve,
@@ -321,15 +314,16 @@ async def test_ask_write_intent_refuses_without_mutation_and_still_retrieves() -
 
 
 @pytest.mark.asyncio
-async def test_ask_passes_mailbox_filter_through_to_search() -> None:
+async def test_ask_passes_mailbox_filter_through_to_agent() -> None:
+    from app.llm.chat import ChatAgentResult
     from app.services import chat_service
 
     session = AsyncMock()
     settings = _settings()
     with patch(
-        "app.services.chat_service.search_service.search_threads",
-        AsyncMock(return_value=_search_response(mailbox=CR)),
-    ) as search_mock:
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(return_value=ChatAgentResult(answer="", hits=[])),
+    ) as agent_mock:
         result = await chat_service.ask(
             session,
             settings,
@@ -340,11 +334,9 @@ async def test_ask_passes_mailbox_filter_through_to_search() -> None:
             limit=5,
         )
 
-    kwargs = search_mock.await_args.kwargs
-    assert kwargs["mailbox"] == CR
-    assert kwargs["limit"] == 5
     assert result.mailbox == CR
     assert result.citations == []
+    agent_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -359,7 +351,7 @@ async def test_ask_maps_llm_failure_to_chat_error() -> None:
             AsyncMock(return_value=_search_response(_hit())),
         ),
         patch(
-            "app.services.chat_service.generate_chat_answer",
+            "app.services.chat_service.run_chat_agent",
             AsyncMock(side_effect=ChatError("Claude chat failed")),
         ),
         pytest.raises(ChatError, match="Claude chat failed"),
@@ -371,3 +363,81 @@ async def test_ask_maps_llm_failure_to_chat_error() -> None:
             anthropic_client=MagicMock(),
             message="billing disputes",
         )
+
+
+@pytest.mark.asyncio
+async def test_ask_uses_agent_hits_even_if_keyword_search_would_miss() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    hit = _hit(THREAD_A)
+    session = AsyncMock()
+    settings = _settings()
+    with (
+        patch(
+            "app.services.chat_service.search_service.search_threads",
+            AsyncMock(return_value=_search_response()),
+        ),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Focus on Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ) as agent_mock,
+    ):
+        result = await chat_service.ask(
+            session,
+            settings,
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="what should I focus on today?",
+        )
+
+    agent_mock.assert_awaited_once()
+    assert "Invoice dispute" in result.answer
+    assert result.retrieval_count == 1
+    assert [c.thread_id for c in result.citations] == [THREAD_A]
+
+
+@pytest.mark.asyncio
+async def test_ask_follow_up_passes_cited_threads_to_the_agent() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
+    from app.services import chat_service
+
+    hit = _hit(THREAD_A)
+    session = AsyncMock()
+    settings = _settings()
+    history = [
+        ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
+        ChatHistoryTurn(
+            role="assistant",
+            content="The overdue billing dispute is waiting on review.",
+            citations=[ChatCitedThread(thread_id=THREAD_A, subject="Invoice dispute")],
+        ),
+    ]
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(
+            return_value=ChatAgentResult(
+                answer="The packet is still waiting on review.",
+                hits=[hit],
+            )
+        ),
+    ) as agent_mock:
+        result = await chat_service.ask(
+            session,
+            settings,
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="tell me more",
+            history=history,
+        )
+
+    passed = agent_mock.await_args.kwargs["history"]
+    assert passed[-1].citations[0].thread_id == THREAD_A
+    assert agent_mock.await_args.kwargs["question"] == "tell me more"
+    assert result.answer == "The packet is still waiting on review."

@@ -13,12 +13,14 @@ export type ChatStreamEvent =
   | { type: "delta"; text: string }
   | { type: "done" }
   | { type: "error"; message: string }
+  | { type: "status"; text: string }
 
 export type ChatStreamHandlers = {
   onMeta?: (meta: ChatStreamMeta) => void
   onDelta?: (text: string) => void
   onDone?: () => void
   onError?: (message: string) => void
+  onStatus?: (text: string) => void
 }
 
 export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
@@ -42,6 +44,11 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
       const message = (parsed as { message?: unknown }).message
       if (typeof message !== "string") return null
       return { type: "error", message }
+    }
+    if (parsed.type === "status") {
+      const text = (parsed as { text?: unknown }).text
+      if (typeof text !== "string") return null
+      return { type: "status", text }
     }
     if (parsed.type === "meta") {
       const meta = parsed as ChatStreamMeta
@@ -77,6 +84,10 @@ export const dispatchChatStreamBlock = (
   if (event.type === "error") {
     handlers.onError?.(event.message)
     return "error"
+  }
+  if (event.type === "status") {
+    handlers.onStatus?.(event.text)
+    return "continue"
   }
   handlers.onDone?.()
   return "done"

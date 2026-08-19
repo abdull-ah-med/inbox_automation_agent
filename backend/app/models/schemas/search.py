@@ -47,6 +47,7 @@ class SearchHit(BaseModel):
     snippet: str
     score: float
     last_message_at: datetime | None = None
+    similarity_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class SearchResponse(BaseModel):
