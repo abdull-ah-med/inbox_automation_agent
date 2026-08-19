@@ -41,11 +41,16 @@ export const UrgencyEditPopover = ({
   threadId,
   currentUrgency,
   disabled = false,
+  onSaved,
 }: {
   draftId: string
   threadId: string
   currentUrgency: string | null
   disabled?: boolean
+  onSaved?: (payload: {
+    urgency: UrgencyLevel
+    reason: string
+  }) => void
 }) => {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -62,10 +67,15 @@ export const UrgencyEditPopover = ({
         reason: reason.trim(),
       }),
     onSuccess: async () => {
+      const savedReason = reason.trim()
+      const savedUrgency = urgency
       setOpen(false)
       setReason("")
       setError(null)
       await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
+      await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
+      await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
+      onSaved?.({ urgency: savedUrgency, reason: savedReason })
     },
     onError: (err: Error) => {
       setError(err.message)

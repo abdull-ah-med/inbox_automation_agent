@@ -77,6 +77,7 @@ _NAME_FILLER = frozenset(
         "on",
         "with",
         "for",
+        "from",
         "any",
         "going",
         "something",
@@ -224,6 +225,33 @@ _FTS_FILLER = _NAME_FILLER | frozenset(
         "will",
         "whats",
         "and",
+        "thread",
+        "threads",
+        "email",
+        "emails",
+        "mail",
+        "message",
+        "messages",
+        "mailbox",
+        "inbox",
+        "folder",
+        "summarize",
+        "summary",
+        "overview",
+        "recap",
+        "anything",
+        "everything",
+        "hello",
+        "hey",
+        "hi",
+        "thanks",
+        "thank",
+        "more",
+        "else",
+        "again",
+        "additional",
+        "detail",
+        "details",
     }
 )
 
@@ -370,28 +398,37 @@ async def search_threads(
     mailbox: str | None = None,
     limit: int = SEARCH_DEFAULT_LIMIT,
     mode: str = SEARCH_MODE_HYBRID,
+    allow_empty: bool = False,
 ) -> SearchResponse:
-    """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings. Blank query is a 422."""
+    """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings.
+
+    Blank / filler-only queries raise unless ``allow_empty`` (chat overview).
+    """
     parsed = parse_search_query(query)
     nl = extract_nl_mailbox_scope(parsed.free_text, list(settings.mailbox_list))
     if nl.mailboxes:
-        # Filler-only residue ("what s the latest on the") must become empty so
-        # mailbox-only recency listing runs instead of an empty FTS AND.
-        content = nl.free_text
-        if not build_prefix_tsquery(build_fts_query(content)):
-            content = ""
         merged = parsed.mailboxes + tuple(
             token for token in nl.mailboxes if token not in parsed.mailboxes
         )
         parsed = ParsedSearchQuery(
-            free_text=content,
+            free_text=nl.free_text,
             senders=parsed.senders,
             contains=parsed.contains,
             subjects=parsed.subjects,
             directions=parsed.directions,
             mailboxes=merged,
         )
-    if parsed.is_empty():
+    # Chatty leftover ("what should I focus on") must not be embedded or AND-ed.
+    if parsed.free_text and not build_prefix_tsquery(build_fts_query(parsed.free_text)):
+        parsed = ParsedSearchQuery(
+            free_text="",
+            senders=parsed.senders,
+            contains=parsed.contains,
+            subjects=parsed.subjects,
+            directions=parsed.directions,
+            mailboxes=parsed.mailboxes,
+        )
+    if parsed.is_empty() and not allow_empty:
         raise EmptySearchQueryError("query must not be blank")
     cleaned = format_search_query(parsed)
     if mode not in (SEARCH_MODE_KEYWORD, SEARCH_MODE_HYBRID):
@@ -459,10 +496,11 @@ async def search_threads(
             if parsed.free_text
             else ""
         )
-        # mailbox: alone is a valid Discord filter; FTS text and column filters
-        # are both empty, so allow a recency listing within the allowlist.
-        mailbox_only = (
-            not parsed.free_text and bool(parsed.mailboxes) and filters is None
+        # mailbox: or a filler-only chat overview: empty FTS + recency listing.
+        recency_listing = (
+            not parsed.free_text
+            and filters is None
+            and (bool(parsed.mailboxes) or allow_empty)
         )
         fts_matches = await embedding_repo.search_fts(
             session,
@@ -471,7 +509,7 @@ async def search_threads(
             mailboxes=mailboxes,
             use_prefix=True,
             filters=filters,
-            allow_empty=mailbox_only,
+            allow_empty=recency_listing,
         )
     except Exception:
         fts_failed = True
@@ -496,6 +534,7 @@ async def search_threads(
     pairs = [_split_scope_key(key) for key, _score in ranked]
     threads = await thread_repo.list_by_mailbox_conversations(session, pairs)
     by_embedding = {match.id: match for match in [*vector_matches, *fts_matches]}
+    vector_ids = {match.id for match in vector_matches}
 
     hits: list[SearchHit] = []
     for key, score in ranked:
@@ -505,10 +544,13 @@ async def search_threads(
             continue
         top_hit = best_hit_for_conversation(fused, key)
         preview = None
+        cosine: float | None = None
         if top_hit is not None:
             match = by_embedding.get(top_hit.embedding_id)
             if match is not None:
                 preview = match.body_preview
+                if top_hit.embedding_id in vector_ids:
+                    cosine = match.similarity_score
         highlight_parts = [*parsed.contains, *parsed.subjects]
         if parsed.free_text:
             highlight_parts.append(parsed.free_text)
@@ -526,6 +568,7 @@ async def search_threads(
                 ),
                 score=score,
                 last_message_at=thread.last_message_at,
+                similarity_score=cosine,
             )
         )
         if len(hits) >= limit:

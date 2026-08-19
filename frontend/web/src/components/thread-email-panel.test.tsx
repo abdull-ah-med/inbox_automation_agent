@@ -39,4 +39,16 @@ describe("ThreadEmailPanel", () => {
     await user.click(screen.getByRole("button", { name: "Show" }))
     expect(screen.getByText(BODY)).toBeInTheDocument()
   })
+
+  it("shows the received time in US month-day order", () => {
+    render(
+      <ThreadEmailPanel
+        subject="Invoice dispute"
+        messages={[{ ...message, received_at: "2026-08-10T14:00:00Z" }]}
+      />,
+    )
+    const when = screen.getByText(/8\/10\/2026/)
+    expect(when).toBeInTheDocument()
+    expect(when.textContent).not.toMatch(/10\/8\/2026/)
+  })
 })

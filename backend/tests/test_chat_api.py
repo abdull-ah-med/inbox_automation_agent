@@ -151,6 +151,88 @@ async def test_chat_ask_returns_grounded_answer_and_citations(app) -> None:
     assert kwargs["message"] == "billing disputes waiting on review"
     assert kwargs["mailbox"] == SALES
     assert kwargs["limit"] == 10
+    assert kwargs["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_chat_ask_forwards_history_turns(app) -> None:
+    mock_session = AsyncMock()
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    with patch(
+        "app.api.web.chat.chat_service.ask",
+        AsyncMock(return_value=_ask_response()),
+    ) as ask_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/chat/ask",
+                json={
+                    "message": "tell me more",
+                    "history": [
+                        {
+                            "role": "user",
+                            "content": "billing disputes waiting on review",
+                        },
+                        {
+                            "role": "assistant",
+                            "content": "The overdue billing dispute is waiting on review.",
+                        },
+                    ],
+                },
+            )
+    assert resp.status_code == 200
+    history = ask_mock.await_args.kwargs["history"]
+    assert [turn.content for turn in history] == [
+        "billing disputes waiting on review",
+        "The overdue billing dispute is waiting on review.",
+    ]
+    assert [turn.role for turn in history] == ["user", "assistant"]
+
+
+@pytest.mark.asyncio
+async def test_chat_ask_forwards_cited_thread_ids_on_history(app) -> None:
+    mock_session = AsyncMock()
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    with patch(
+        "app.api.web.chat.chat_service.ask",
+        AsyncMock(return_value=_ask_response()),
+    ) as ask_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/chat/ask",
+                json={
+                    "message": "tell me more",
+                    "history": [
+                        {
+                            "role": "user",
+                            "content": "billing disputes waiting on review",
+                        },
+                        {
+                            "role": "assistant",
+                            "content": "The overdue billing dispute is waiting on review.",
+                            "citations": [
+                                {
+                                    "thread_id": str(THREAD_ID),
+                                    "subject": "Invoice dispute — overdue billing",
+                                }
+                            ],
+                        },
+                    ],
+                },
+            )
+    assert resp.status_code == 200
+    history = ask_mock.await_args.kwargs["history"]
+    assert history[1].citations[0].thread_id == THREAD_ID
+    assert history[1].citations[0].subject == "Invoice dispute — overdue billing"
 
 
 @pytest.mark.asyncio

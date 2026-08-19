@@ -8,6 +8,7 @@ import type { DraftView, ThreadSummary } from "@/lib/types"
 
 const approveMock = vi.fn()
 const rejectMock = vi.fn()
+const relatedMock = vi.fn()
 const markWrongMock = vi.fn()
 
 vi.mock("@/lib/api-client", () => ({
@@ -16,6 +17,9 @@ vi.mock("@/lib/api-client", () => ({
       approve: (...args: unknown[]) => approveMock(...args),
       reject: (...args: unknown[]) => rejectMock(...args),
       markWrong: (...args: unknown[]) => markWrongMock(...args),
+    },
+    threads: {
+      related: (...args: unknown[]) => relatedMock(...args),
     },
   },
 }))
@@ -67,7 +71,9 @@ const renderSidebar = (draft: DraftView | null = baseDraft()) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
-  return render(
+  client.setQueryData(["dashboard", "overview"], { total_awaiting: 4 })
+  client.setQueryData(["mailbox", "elise@example.com", "threads"], { items: [] })
+  const view = render(
     <QueryClientProvider client={client}>
       <ThreadTriageSidebar
         threadId="thread-1"
@@ -79,6 +85,7 @@ const renderSidebar = (draft: DraftView | null = baseDraft()) => {
       />
     </QueryClientProvider>,
   )
+  return { client, ...view }
 }
 
 const openDraftTab = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -90,9 +97,11 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     approveMock.mockReset()
     rejectMock.mockReset()
     markWrongMock.mockReset()
+    relatedMock.mockReset()
     approveMock.mockResolvedValue(baseDraft())
     rejectMock.mockResolvedValue(baseDraft())
     markWrongMock.mockResolvedValue(baseDraft())
+    relatedMock.mockResolvedValue({ items: [] })
   })
 
   it("renders exactly two action buttons when a draft is present", async () => {
@@ -266,6 +275,93 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(rejectMock).not.toHaveBeenCalled()
   })
 
+  it("opens apply-siblings dialog after no-reply when related threads exist", async () => {
+    relatedMock.mockResolvedValue({
+      items: [
+        {
+          thread_id: "sib-sampleclient",
+          mailbox: "sales@example.com",
+          subject: "SampleClient follow-up 8/14",
+          sender: "rep@sample-client.example.com",
+          last_message_at: "2026-08-14T15:00:00Z",
+          urgency: "NORMAL",
+          score: 0.02,
+          status: "proposed",
+        },
+      ],
+    })
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderSidebar()
+    await openDraftTab(user)
+    await user.click(screen.getByRole("button", { name: "Reject draft" }))
+    const rejectDialog = await screen.findByRole("dialog")
+    await user.click(
+      within(rejectDialog).getByRole("combobox", { name: "Rejection reason" }),
+    )
+    await user.click(
+      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
+    )
+    await user.type(
+      within(rejectDialog).getByLabelText("Rejection note"),
+      "No reply needed",
+    )
+    await user.click(within(rejectDialog).getByRole("button", { name: "Confirm reject draft" }))
+    const siblingDialog = await screen.findByRole("dialog")
+    expect(siblingDialog).toHaveTextContent("Apply no reply")
+    expect(siblingDialog).toHaveTextContent("SampleClient follow-up 8/14")
+  })
+
+  it("explains that no-reply leaves Needs Attention", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderSidebar()
+    await openDraftTab(user)
+    await user.click(screen.getByRole("button", { name: "Reject draft" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(dialog).toHaveTextContent("leaves Needs Attention")
+  })
+
+  it("refreshes dashboard and mailbox queues after no-reply", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const { client } = renderSidebar()
+    await openDraftTab(user)
+    await user.click(screen.getByRole("button", { name: "Reject draft" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(
+      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
+    )
+    await user.click(
+      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
+    )
+    await user.type(
+      within(dialog).getByLabelText("Rejection note"),
+      "No reply needed",
+    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
+    await waitFor(() => {
+      expect(markWrongMock).toHaveBeenCalled()
+    })
+    expect(client.getQueryState(["dashboard", "overview"])?.isInvalidated).toBe(true)
+    expect(
+      client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated,
+    ).toBe(true)
+  })
+
+  it("refreshes dashboard after approve so the thread leaves Needs Attention", async () => {
+    const user = userEvent.setup()
+    const { client } = renderSidebar()
+    await openDraftTab(user)
+    await user.click(screen.getByRole("button", { name: "Approve draft" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: "Confirm approve draft" }))
+    await waitFor(() => {
+      expect(approveMock).toHaveBeenCalled()
+    })
+    expect(client.getQueryState(["dashboard", "overview"])?.isInvalidated).toBe(true)
+    expect(
+      client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated,
+    ).toBe(true)
+  })
+
   it("reject with other reason calls reject", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderSidebar()
@@ -351,5 +447,36 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(screen.getByRole("tab", { name: "Classification" })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Audit (0)" })).toBeInTheDocument()
+  })
+})
+
+describe("ThreadTriageSidebar internal tag", () => {
+  it("shows Internal on same-company triage", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <ThreadTriageSidebar
+          threadId="thread-1"
+          thread={thread}
+          classification={null}
+          draft={null}
+          triage={{
+            is_spam: false,
+            has_action_items: true,
+            needs_context: false,
+            spam_reason: null,
+            context_reason: null,
+            action_items_summary: "Review policy",
+            outcome: "triage.action_needed",
+            is_internal: true,
+          }}
+          auditLog={[]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.getByText("Internal")).toBeInTheDocument()
+    expect(screen.getByText("Not spam")).toBeInTheDocument()
   })
 })

@@ -15,7 +15,7 @@ from app.core.dependencies import get_db
 from app.core.dependencies_auth import get_current_user
 from app.main import create_app
 from app.models.schemas.auth import UserMe
-from app.models.schemas.search import SearchHit, SearchResponse
+from app.models.schemas.search import SearchHit
 
 SALES = "sales@example.com"
 THREAD_A = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
@@ -94,18 +94,61 @@ async def test_stream_chat_answer_yields_token_chunks_in_order() -> None:
 
 
 @pytest.mark.asyncio
-async def test_iter_ask_events_sends_meta_then_deltas_then_done() -> None:
+async def test_stream_chat_answer_puts_history_before_retrieved_context() -> None:
+    from app.llm.chat import stream_chat_answer
+    from app.models.schemas.chat import ChatHistoryTurn
+
+    client = MagicMock()
+    client.messages.stream.return_value = _FakeStream([CHUNK_ONE, CHUNK_TWO])
+    history = [
+        ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
+        ChatHistoryTurn(
+            role="assistant",
+            content="The overdue billing dispute is waiting on review.",
+        ),
+    ]
+    chunks = [
+        piece
+        async for piece in stream_chat_answer(
+            client=client,
+            settings=_settings(),
+            question="tell me more",
+            hits=[_hit()],
+            history=history,
+        )
+    ]
+    assert chunks == [CHUNK_ONE, CHUNK_TWO]
+    messages = client.messages.stream.call_args.kwargs["messages"]
+    assert messages[0] == {
+        "role": "user",
+        "content": "billing disputes waiting on review",
+    }
+    assert messages[1] == {
+        "role": "assistant",
+        "content": "The overdue billing dispute is waiting on review.",
+    }
+    assert messages[2]["role"] == "user"
+    assert "tell me more" in messages[2]["content"]
+    assert "Invoice dispute" in messages[2]["content"]
+
+
+async def _agent_events(*events: dict):
+    for event in events:
+        yield event
+
+
+@pytest.mark.asyncio
+async def test_iter_ask_events_sends_status_then_meta_then_answer_then_done() -> None:
     from app.services import chat_service
 
-    search = SearchResponse(query="billing", mailbox=SALES, hits=[_hit()])
-    with (
-        patch(
-            "app.services.chat_service.search_service.search_threads",
-            AsyncMock(return_value=search),
-        ),
-        patch(
-            "app.services.chat_service.stream_chat_answer",
-            new=lambda **_kwargs: _async_chunks(CHUNK_ONE, CHUNK_TWO),
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {"type": "status", "text": "Searching mail"},
+            {"type": "retrieved", "hits": [_hit()]},
+            {"type": "delta", "text": CHUNK_ONE},
+            {"type": "delta", "text": CHUNK_TWO},
+            {"type": "result", "answer": FULL_ANSWER, "hits": [_hit()]},
         ),
     ):
         events = [
@@ -120,36 +163,32 @@ async def test_iter_ask_events_sends_meta_then_deltas_then_done() -> None:
             )
         ]
 
-    assert events[0]["type"] == "meta"
-    assert events[0]["refused_write"] is False
-    assert events[0]["retrieval_count"] == 1
-    assert events[0]["mailbox"] == SALES
-    assert events[0]["citations"][0]["thread_id"] == str(THREAD_A)
-    assert events[0]["citations"][0]["url_path"] == f"/threads/{THREAD_A}"
+    assert events[0] == {"type": "status", "text": "Searching mail"}
+    assert events[1]["type"] == "meta"
+    assert events[1]["refused_write"] is False
+    assert events[1]["retrieval_count"] == 1
+    assert events[1]["mailbox"] == SALES
+    assert events[1]["citations"][0]["thread_id"] == str(THREAD_A)
+    assert events[1]["citations"][0]["url_path"] == f"/threads/{THREAD_A}"
     deltas = [event["text"] for event in events if event["type"] == "delta"]
-    assert "".join(deltas) == FULL_ANSWER
+    assert deltas == [CHUNK_ONE, CHUNK_TWO]
     assert events[-1] == {"type": "done"}
-    assert FULL_ANSWER == CHUNK_ONE + CHUNK_TWO
 
 
 @pytest.mark.asyncio
-async def test_iter_ask_events_strips_thread_ids_split_across_chunks() -> None:
-    """Haiku streamed a mangled UUID; the reviewer must not see it."""
+async def test_iter_ask_events_strips_thread_ids_from_the_agent_answer() -> None:
+    """Haiku printed a mangled UUID; the reviewer must not see it."""
     from app.services import chat_service
 
     mangled = "bbbbbbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-    search = SearchResponse(query="ashley", mailbox=SALES, hits=[_hit()])
-    with (
-        patch(
-            "app.services.chat_service.search_service.search_threads",
-            AsyncMock(return_value=search),
-        ),
-        patch(
-            "app.services.chat_service.stream_chat_answer",
-            new=lambda **_kwargs: _async_chunks(
-                'Ashley Cantrell is in "Background check inquiry" (ID: bbbbbbbb',
-                "bbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb).",
-            ),
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {
+                "type": "result",
+                "answer": (f'Ashley Cantrell is in "Background check inquiry" (ID: {mangled}).'),
+                "hits": [_hit()],
+            },
         ),
     ):
         events = [
@@ -171,19 +210,18 @@ async def test_iter_ask_events_strips_thread_ids_split_across_chunks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_iter_ask_events_no_hits_streams_canned_answer_without_llm() -> None:
+async def test_iter_ask_events_no_hits_streams_canned_answer_not_invented_text() -> None:
     from app.llm.chat_prompts import NO_MATCH_ANSWER
     from app.services import chat_service
 
-    empty = SearchResponse(query="zzz", mailbox=None, hits=[])
-    with (
-        patch(
-            "app.services.chat_service.search_service.search_threads",
-            AsyncMock(return_value=empty),
-        ),
-        patch(
-            "app.services.chat_service.stream_chat_answer",
-            side_effect=AssertionError("LLM must not run on zero hits"),
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {
+                "type": "result",
+                "answer": "I invented a thread that is not in the inbox.",
+                "hits": [],
+            },
         ),
     ):
         events = [
@@ -275,17 +313,10 @@ async def test_chat_ask_stream_sends_sse_deltas(app) -> None:
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert resp.headers.get("x-accel-buffering") == "no"
     parsed = [
-        json.loads(line[5:].strip())
-        for line in resp.text.split("\n")
-        if line.startswith("data:")
+        json.loads(line[5:].strip()) for line in resp.text.split("\n") if line.startswith("data:")
     ]
     assert parsed[0]["type"] == "meta"
     assert parsed[0]["citations"][0]["thread_id"] == str(THREAD_A)
     assert parsed[1] == {"type": "delta", "text": CHUNK_ONE}
     assert parsed[2] == {"type": "delta", "text": CHUNK_TWO}
     assert parsed[-1] == {"type": "done"}
-
-
-async def _async_chunks(*chunks: str):
-    for chunk in chunks:
-        yield chunk

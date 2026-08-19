@@ -64,6 +64,7 @@ const deliverStream = (
     }) => void
     onDelta?: (text: string) => void
     onDone?: () => void
+    onStatus?: (text: string) => void
   },
   answer = groundedResponse.answer,
   extra: Partial<typeof groundedResponse> = {},
@@ -140,6 +141,41 @@ describe("InboxAssistant", () => {
     ).toHaveAttribute("href", `/threads/${THREAD_ID}`)
     expect(screen.getByRole("log")).toBeInTheDocument()
     expect(screen.queryByText("Ask about the inbox")).not.toBeInTheDocument()
+  })
+
+  it("sends prior turns as history on a follow-up", async () => {
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "tell me more",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(askChat.mock.calls[1]?.[0]).toEqual({
+      message: "tell me more",
+      history: [
+        { role: "user", content: "billing disputes waiting on review" },
+        {
+          role: "assistant",
+          content: "The overdue billing dispute is waiting on review.",
+          citations: [
+            {
+              thread_id: THREAD_ID,
+              subject: "Invoice dispute — overdue billing",
+            },
+          ],
+        },
+      ],
+    })
   })
 
   it("reset restores the empty chat without calling the API again", async () => {
@@ -287,6 +323,34 @@ describe("InboxAssistant", () => {
       await screen.findByText("The overdue billing dispute is waiting on review."),
     ).toBeInTheDocument()
     expect(screen.queryByRole("status")).not.toBeInTheDocument()
+  })
+
+  it("replaces Thinking with the tool status from the stream", async () => {
+    let handlers: Parameters<typeof deliverStream>[0] | null = null
+    askChat.mockImplementation(
+      (_body: unknown, nextHandlers: Parameters<typeof deliverStream>[0]) => {
+        handlers = nextHandlers
+        return new Promise(() => {})
+      },
+    )
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(screen.getByRole("status")).toHaveTextContent("Thinking")
+    await act(async () => {
+      handlers?.onStatus?.("Searching mail")
+    })
+    expect(screen.getByRole("status")).toHaveTextContent("Searching mail")
+    expect(screen.queryByText("Thinking")).not.toBeInTheDocument()
+    await act(async () => {
+      handlers?.onStatus?.("Opening thread")
+    })
+    expect(screen.getByRole("status")).toHaveTextContent("Opening thread")
   })
 
   it("reveals the answer in token chunks as they arrive", async () => {

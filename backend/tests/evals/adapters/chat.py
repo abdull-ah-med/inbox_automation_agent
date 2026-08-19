@@ -7,6 +7,7 @@ Search is stubbed from curated gold hits so generator evals stay synthetic.
 from __future__ import annotations
 
 import uuid
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -14,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.config import Settings
 from app.core.dependencies import anthropic_client_from_settings
-from app.llm.chat import _hit_block
+from app.llm.chat import ChatAgentResult, _hit_block, generate_chat_answer
 from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
 from app.models.schemas.search import SearchHit, SearchResponse
 from app.services import chat_service
@@ -150,11 +151,40 @@ async def run_chat_case(
     search = SearchResponse(query=question, mailbox=mailbox, hits=hits)
     settings = Settings() if anthropic_client is not None else _settings_from_env()
     client = anthropic_client or anthropic_client_from_settings(settings)
+    refused = bool(case.get("expect_write_refusal")) or detect_write_intent(question)
 
-    with patch(
-        "app.services.chat_service.search_service.search_threads",
-        AsyncMock(return_value=search),
-    ):
+    async def gold_agent(
+        *,
+        client: Any,
+        settings: Settings,
+        question: str,
+        execute_tool: Any,
+        history: Any = None,
+    ) -> ChatAgentResult:
+        _ = execute_tool
+        if not hits:
+            return ChatAgentResult(answer="", hits=[])
+        answer = await generate_chat_answer(
+            client=client,
+            settings=settings,
+            question=question,
+            hits=hits,
+            history=history,
+        )
+        return ChatAgentResult(answer=answer, hits=hits)
+
+    patches = [
+        patch(
+            "app.services.chat_service.search_service.search_threads",
+            AsyncMock(return_value=search),
+        ),
+    ]
+    if not refused:
+        patches.append(patch("app.services.chat_service.run_chat_agent", gold_agent))
+
+    with ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
         result = await chat_service.ask(
             session=AsyncMock(),
             settings=settings,

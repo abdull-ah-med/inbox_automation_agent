@@ -5,6 +5,7 @@ import { useState } from "react"
 import { EmailBody } from "@/components/email-body"
 import { StatusBadge } from "@/components/status-badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { formatReviewerDateTime } from "@/lib/dates"
 import type { MessageDetail } from "@/lib/types"
 import { cn, textActionClass, textLinkClass } from "@/lib/utils"
 
@@ -41,7 +42,7 @@ const MessageBlock = ({
             ) : null}
           </div>
           <p className="text-xs text-gray-400">
-            {new Date(message.received_at).toLocaleString()} · {message.direction}
+            {formatReviewerDateTime(message.received_at)} · {message.direction}
           </p>
           {message.to.length > 0 ? (
             <p className="truncate text-xs text-gray-400">

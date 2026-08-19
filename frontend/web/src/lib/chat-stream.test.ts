@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 
-import { parseChatStreamEvent } from "@/lib/chat-stream"
+import { dispatchChatStreamBlock, parseChatStreamEvent } from "@/lib/chat-stream"
 
 describe("parseChatStreamEvent", () => {
   it("reads a delta token from an SSE data line", () => {
@@ -29,5 +29,23 @@ describe("parseChatStreamEvent", () => {
     })
     expect(parseChatStreamEvent(":")).toBeNull()
     expect(parseChatStreamEvent("data: not-json")).toBeNull()
+  })
+
+  it("reads a tool status line", () => {
+    expect(parseChatStreamEvent('data: {"type":"status","text":"Searching mail"}')).toEqual(
+      { type: "status", text: "Searching mail" },
+    )
+  })
+
+  it("keeps the stream open when a tool status line arrives", () => {
+    const onDone = vi.fn()
+    const onStatus = vi.fn()
+    const result = dispatchChatStreamBlock(
+      'data: {"type":"status","text":"Searching mail"}',
+      { onDone, onStatus },
+    )
+    expect(result).toBe("continue")
+    expect(onStatus).toHaveBeenCalledWith("Searching mail")
+    expect(onDone).not.toHaveBeenCalled()
   })
 })
