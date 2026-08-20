@@ -99,16 +99,34 @@ function MessageScrollerContent({
   ...props
 }: React.ComponentProps<"div">) {
   const { viewportRef, pinnedToEnd } = useMessageScroller()
+  const contentRef = React.useRef<HTMLDivElement | null>(null)
+  const pinnedRef = React.useRef(pinnedToEnd)
+  pinnedRef.current = pinnedToEnd
 
-  React.useEffect(() => {
-    if (!pinnedToEnd) return
+  const stickToEnd = React.useCallback(() => {
+    if (!pinnedRef.current) return
     const node = viewportRef.current
     if (!node) return
     node.scrollTop = node.scrollHeight
+  }, [viewportRef])
+
+  React.useLayoutEffect(() => {
+    stickToEnd()
   })
+
+  React.useEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver(() => {
+      stickToEnd()
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [stickToEnd])
 
   return (
     <div
+      ref={contentRef}
       data-slot="message-scroller-content"
       role="log"
       aria-relevant="additions"
@@ -128,9 +146,10 @@ function MessageScrollerItem({
 }: React.ComponentProps<"div"> & { scrollAnchor?: boolean }) {
   const itemRef = React.useRef<HTMLDivElement | null>(null)
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     if (!scrollAnchor) return
-    itemRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })
+    // Instant only — smooth scroll fights stick-to-bottom during streaming.
+    itemRef.current?.scrollIntoView?.({ block: "nearest", behavior: "auto" })
   }, [scrollAnchor])
 
   return (

@@ -1,0 +1,23 @@
+{
+  "id": "long-thread-summary-query",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "question": "what was decided",
+  "mailbox": "sales@example.com",
+  "hits": [
+    {
+      "thread_id": "20202020-2020-2020-2020-202020202020",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-long-20",
+      "subject": "Walkthrough plan",
+      "state": "DRAFTED",
+      "urgency": "NORMAL",
+      "snippet": "Thread summary: Alice and Bob agreed to send invoice 42 on Friday.",
+      "score": 0.02,
+      "last_message_at": "2026-08-19T16:00:00Z"
+    }
+  ],
+  "expected_output": "Alice and Bob agreed to send invoice 42 on Friday.",
+  "expected_facts": ["Alice", "Bob", "invoice 42", "Friday"],
+  "geval_criteria": "The answer must cite the summary decision, naming Alice and Bob."
+}

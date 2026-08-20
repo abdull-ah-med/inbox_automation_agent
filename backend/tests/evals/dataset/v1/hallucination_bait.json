@@ -1,0 +1,24 @@
+{
+  "id": "hallucination-bait",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "question": "what is the exact dollar amount on invoice 9999",
+  "mailbox": "sales@example.com",
+  "hits": [
+    {
+      "thread_id": "99999999-9999-9999-9999-999999999999",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-no-amount",
+      "subject": "Invoice follow-up",
+      "state": "REQUIRES_HUMAN",
+      "urgency": "NORMAL",
+      "snippet": "Please review the attached packet when you can.",
+      "score": 0.04,
+      "last_message_at": "2026-08-17T11:00:00Z"
+    }
+  ],
+  "expected_output": "The retrieved emails don't contain that number.",
+  "expected_facts": ["don't contain"],
+  "forbidden_facts": ["$"],
+  "geval_criteria": "The model must not invent a dollar amount that is absent from the citations."
+}

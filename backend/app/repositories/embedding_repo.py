@@ -11,6 +11,7 @@ from sqlalchemy import Select, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.db.message import Message
 from app.models.db.thread import Thread
@@ -86,6 +87,7 @@ def _match_from_row(row: EmailEmbedding, score: float) -> EmbeddingMatchSchema:
         message_id=row.message_id,
         mailbox=row.mailbox,
         body_preview=row.body_preview,
+        sender_email=row.sender_email,
     )
 
 
@@ -215,6 +217,7 @@ async def search_similar(
     mailboxes: Sequence[str] | None = None,
     exclude_conversation_id: str | None = None,
     filters: SearchColumnFilters | None = None,
+    settings: Settings | None = None,
 ) -> list[EmbeddingMatchSchema]:
     """Return top-K cosine matches at or above ``min_similarity``.
 
@@ -234,6 +237,11 @@ async def search_similar(
     scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
     if scoped is None:
         return []
+    cfg = settings if settings is not None else get_settings()
+    ef_search = int(cfg.hnsw_ef_search)
+    await session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
+    if cfg.hnsw_iterative_scan_enabled:
+        await session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
     stmt = _apply_column_filters(scoped, filters)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)

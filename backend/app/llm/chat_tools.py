@@ -20,6 +20,7 @@ class ChatToolExecution:
     hits: list[SearchHit]
     status: str
     error: str | None = None
+    overview: str | None = None
 
 
 CHAT_TOOLS: list[dict[str, Any]] = [
@@ -32,6 +33,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
             "Read-only; cannot send or change mail."
         ),
         "strict": True,
+        "eager_input_streaming": True,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -56,6 +58,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
             "Read-only; cannot send or change mail."
         ),
         "strict": True,
+        "eager_input_streaming": True,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -77,6 +80,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
             "or previously cited threads. Read-only; cannot send or change mail."
         ),
         "strict": True,
+        "eager_input_streaming": True,
         "input_schema": {
             "type": "object",
             "properties": {
@@ -84,8 +88,37 @@ CHAT_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "UUID of the thread to open.",
                 },
+                "page": {
+                    "type": "integer",
+                    "description": (
+                        "0 = most recent messages plus summary; "
+                        "1+ = older windows with no overlap."
+                    ),
+                },
             },
             "required": ["thread_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "get_overview",
+        "description": (
+            "Mailbox-level counts: how many threads, how many awaiting "
+            "review, urgency mix, and stale volume. Call this for "
+            "'how many threads are waiting' or 'what's the queue like'. "
+            "Does not return individual threads. Read-only."
+        ),
+        "strict": True,
+        "eager_input_streaming": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mailbox": {
+                    "type": "string",
+                    "description": "Optional mailbox email or local-part to scope the counts.",
+                },
+            },
+            "required": [],
             "additionalProperties": False,
         },
         "cache_control": {"type": "ephemeral"},
@@ -106,18 +139,29 @@ def search_results_from_hits(hits: list[SearchHit]) -> list[dict[str, Any]]:
             "citations": {"enabled": True},
         }
         blocks.append(packed)
-    if blocks:
-        blocks[-1]["cache_control"] = {"type": "ephemeral"}
     return blocks
+
+
+def search_results_from_overview(overview: str) -> list[dict[str, Any]]:
+    """Pack mailbox counts as a citable search_result (no thread id)."""
+    text = (overview or "").strip() or "No mailbox data."
+    return [
+        {
+            "type": "search_result",
+            "source": "/dashboard",
+            "title": "Mailbox overview",
+            "content": [{"type": "text", "text": text}],
+            "citations": {"enabled": True},
+        }
+    ]
 
 
 def _content_blocks(hit: SearchHit, *, title: str) -> list[dict[str, str]]:
     """Split snippet vs recency so Claude can cite a passage, not the whole hit."""
     snippet = scrub_text(hit.snippet or "")
     parts = [part.strip() for part in snippet.split("\n\n") if part.strip()]
-    content: list[dict[str, str]] = [
-        {"type": "text", "text": part} for part in parts[:GET_THREAD_CONTENT_BLOCKS]
-    ]
+    content: list[dict[str, str]] = [{"type": "text", "text": "source_kind: mail_snippet"}]
+    content.extend({"type": "text", "text": part} for part in parts[:GET_THREAD_CONTENT_BLOCKS])
     if not content:
         content.append({"type": "text", "text": title})
     when = hit.last_message_at.isoformat() if hit.last_message_at else "(none)"
@@ -128,6 +172,7 @@ def _content_blocks(hit: SearchHit, *, title: str) -> list[dict[str, str]]:
             "text": (
                 f"state: {hit.state}\n"
                 f"urgency: {urgency}\n"
+                f"sender: {hit.sender or '(none)'}\n"
                 f"mailbox: {hit.mailbox}\n"
                 f"last_message_at: {when}"
             ),

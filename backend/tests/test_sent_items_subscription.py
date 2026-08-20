@@ -359,6 +359,17 @@ async def test_outbound_notification_persists_and_resolves() -> None:
 
     with (
         patch(
+            "app.services.ingestion_service.get_settings",
+            return_value=Settings(
+                environment="local",
+                target_mailboxes=mailbox,
+            ),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.find_thread_by_conversation_id",
+            AsyncMock(return_value=None),
+        ),
+        patch(
             "app.services.ingestion_service.thread_repo.upsert_thread",
             AsyncMock(return_value=thread),
         ),

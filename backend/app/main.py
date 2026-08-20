@@ -10,7 +10,6 @@ from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import text
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -66,6 +65,7 @@ from app.core.exceptions import (
 )
 from app.core.logging import configure_logging
 from app.core.middleware.security_headers import SecurityHeadersMiddleware
+from app.core.middleware.slowapi_asgi import SlowAPIStreamingMiddleware
 from app.core.rate_limit import limiter
 from app.db.session import dispose_engine, get_session_factory
 from app.workers.graph_subscription_worker import (
@@ -220,7 +220,7 @@ def create_app() -> FastAPI:
 
     # Middleware order: last added = outermost. CORS outermost for preflight.
     app.add_middleware(SecurityHeadersMiddleware, settings=settings)
-    app.add_middleware(SlowAPIMiddleware)
+    app.add_middleware(SlowAPIStreamingMiddleware)
     if not is_local:
         # Host must match the public hostname nginx forwards (Host $host).
         # Include localhost for in-container /health checks.

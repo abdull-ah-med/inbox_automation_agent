@@ -6,13 +6,16 @@ export type ChatStreamMeta = {
   retrieval_count: number
   mailbox: string | null
   refused_write: boolean
+  cached?: boolean
+  cache_similarity?: number | null
+  grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
 }
 
 export type ChatStreamEvent =
   | ChatStreamMeta
   | { type: "delta"; text: string }
   | { type: "done" }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; partial?: boolean }
   | { type: "status"; text: string }
 
 export type ChatStreamHandlers = {
@@ -43,7 +46,12 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
     if (parsed.type === "error") {
       const message = (parsed as { message?: unknown }).message
       if (typeof message !== "string") return null
-      return { type: "error", message }
+      const partial = (parsed as { partial?: unknown }).partial
+      return {
+        type: "error",
+        message,
+        partial: partial === true,
+      }
     }
     if (parsed.type === "status") {
       const text = (parsed as { text?: unknown }).text
@@ -59,6 +67,15 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
           typeof meta.retrieval_count === "number" ? meta.retrieval_count : 0,
         mailbox: meta.mailbox ?? null,
         refused_write: Boolean(meta.refused_write),
+        cached: Boolean(meta.cached),
+        cache_similarity:
+          typeof meta.cache_similarity === "number" ? meta.cache_similarity : null,
+        grounded_verifier:
+          meta.grounded_verifier === "SUPPORTED" ||
+          meta.grounded_verifier === "UNSUPPORTED" ||
+          meta.grounded_verifier === "SKIPPED"
+            ? meta.grounded_verifier
+            : undefined,
       }
     }
     return null

@@ -49,6 +49,8 @@ class Message(Base):
     )
     # Graph ``hasAttachments`` — flag only; attachment bytes are never stored.
     has_attachments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Well-known Graph folder at ingest (inbox / junkemail / sentitems). Hint only.
+    graph_folder: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # Structured Haiku summaries (Phase 2); null until summarized.
     summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     summary_one_line: Mapped[str | None] = mapped_column(Text, nullable=True)

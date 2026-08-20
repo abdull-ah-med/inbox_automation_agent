@@ -10,12 +10,14 @@ import {
   MessageCircleDashedIcon,
   Minimize2Icon,
   RotateCwIcon,
+  CircleAlert,
   ShieldAlert,
+  SquareIcon,
   X,
 } from "lucide-react"
 
 import { AskCitationCard } from "@/components/ask-citation-card"
-import { EmailBody } from "@/components/email-body"
+import { StreamingEmailBody } from "@/components/streaming-email-body"
 import {
   Alert,
   AlertDescription,
@@ -59,6 +61,8 @@ import { api } from "@/lib/api-client"
 import { getErrorMessage } from "@/lib/error-messages"
 import { sanitizeUserText } from "@/lib/sanitize"
 import type { ChatAskRequest, ChatCitation, ChatHistoryTurn, MailboxOverview } from "@/lib/types"
+import { toChatHistoryPayload } from "@/lib/chat-history"
+import { createRafDeltaBatcher } from "@/lib/stream-delta-batcher"
 import { cn } from "@/lib/utils"
 
 const ALL_MAILBOXES = ""
@@ -89,11 +93,16 @@ type ChatTurn = {
   refusedWrite?: boolean
   streaming?: boolean
   error?: boolean
+  cached?: boolean
+  groundedVerifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+  lastQuestion?: string
 }
 
 type PendingAskMeta = {
   citations: ChatCitation[]
   refusedWrite: boolean
+  cached: boolean
+  groundedVerifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
 }
 
 const EXAMPLE_ASKS = [
@@ -101,6 +110,27 @@ const EXAMPLE_ASKS = [
   "Billing disputes waiting on review",
   "Threads about SampleLab",
 ] as const
+
+const CitationList = ({
+  citations,
+  mailboxes,
+}: {
+  citations: ChatCitation[]
+  mailboxes: MailboxOverview[]
+}) => {
+  return (
+    <div className="space-y-2">
+      {citations.map((citation, index) => (
+        <AskCitationCard
+          key={citation.thread_id}
+          citation={citation}
+          index={index + 1}
+          mailboxes={mailboxes}
+        />
+      ))}
+    </div>
+  )
+}
 
 export const InboxAssistant = () => {
   const [open, setOpen] = useState(false)
@@ -113,6 +143,10 @@ export const InboxAssistant = () => {
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
   const pendingMetaRef = useRef<PendingAskMeta | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+  const deltaBatcherRef = useRef<ReturnType<typeof createRafDeltaBatcher> | null>(
+    null,
+  )
   const sizeIndex = PANEL_SIZES.indexOf(panelSize)
   const canShrink = sizeIndex > 0
   const canGrow = sizeIndex < PANEL_SIZES.length - 1
@@ -137,15 +171,20 @@ export const InboxAssistant = () => {
   }
 
   const handleClose = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
     setOpen(false)
   }
 
   const handleReset = () => {
+    abortRef.current?.abort()
+    abortRef.current = null
     pendingMetaRef.current = null
     setToolStatus(null)
     setTurns([])
     setMessage("")
     setValidation(null)
+    setIsAsking(false)
   }
 
   const handleShrink = () => {
@@ -156,6 +195,15 @@ export const InboxAssistant = () => {
   const handleGrow = () => {
     if (!canGrow) return
     setPanelSize(PANEL_SIZES[sizeIndex + 1])
+  }
+
+  const handleReask = (turn: ChatTurn) => {
+    if (!turn.lastQuestion) return
+    void handleAsk(turn.lastQuestion, { bypassCache: true })
+  }
+
+  const handleStop = () => {
+    abortRef.current?.abort()
   }
 
   const handleMailboxChange = (value: string | null) => {
@@ -174,7 +222,10 @@ export const InboxAssistant = () => {
     setMessage(event.target.value)
   }
 
-  const handleAsk = async (nextMessage = message) => {
+  const handleAsk = async (
+    nextMessage = message,
+    options?: { bypassCache?: boolean },
+  ) => {
     const trimmed = sanitizeUserText(nextMessage)
     if (!trimmed) {
       setValidation("Enter a question")
@@ -182,6 +233,9 @@ export const InboxAssistant = () => {
     }
     setValidation(null)
     setMessage("")
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
     const history: ChatHistoryTurn[] = turns
       .filter((turn) => !turn.error && turn.text.trim())
       .map((turn) => {
@@ -206,10 +260,35 @@ export const InboxAssistant = () => {
     const assistantId = `assistant-${Date.now()}`
     setToolStatus(null)
     setIsAsking(true)
+    let receivedAnswer = false
+    deltaBatcherRef.current?.flushNow()
+    const deltaBatcher = createRafDeltaBatcher((chunk) => {
+      setTurns((current) => {
+        const existing = current.find((turn) => turn.id === assistantId)
+        if (existing) {
+          return current.map((turn) =>
+            turn.id === assistantId
+              ? { ...turn, text: `${turn.text}${chunk}`, streaming: true }
+              : turn,
+          )
+        }
+        return [
+          ...current,
+          {
+            id: assistantId,
+            role: "assistant",
+            text: chunk,
+            streaming: true,
+          },
+        ]
+      })
+    })
+    deltaBatcherRef.current = deltaBatcher
     try {
       const payload: ChatAskRequest = { message: trimmed }
       if (mailbox) payload.mailbox = mailbox
-      if (history.length > 0) payload.history = history
+      if (history.length > 0) payload.history = toChatHistoryPayload(history)
+      if (options?.bypassCache) payload.bypass_cache = true
       await api.chat.askStream(payload, {
         onStatus: (text) => {
           setToolStatus(text)
@@ -218,64 +297,81 @@ export const InboxAssistant = () => {
           pendingMetaRef.current = {
             citations: meta.citations,
             refusedWrite: meta.refused_write,
+            cached: Boolean(meta.cached),
+            groundedVerifier: meta.grounded_verifier,
           }
         },
         onDelta: (text) => {
-          setTurns((current) => {
-            const existing = current.find((turn) => turn.id === assistantId)
-            if (existing) {
-              return current.map((turn) =>
-                turn.id === assistantId
-                  ? { ...turn, text: `${turn.text}${text}`, streaming: true }
-                  : turn,
-              )
-            }
-            return [
-              ...current,
-              {
-                id: assistantId,
-                role: "assistant",
-                text,
-                streaming: true,
-              },
-            ]
-          })
+          if (text) receivedAnswer = true
+          deltaBatcher.push(text)
         },
         onDone: () => {
+          const trailing = deltaBatcher.drain()
           const pending = pendingMetaRef.current
           pendingMetaRef.current = null
           setToolStatus(null)
+          const citations = pending?.citations ?? []
+          const refusedWrite = pending?.refusedWrite ?? false
+          const cached = pending?.cached ?? false
+          const groundedVerifier = pending?.groundedVerifier
           setTurns((current) => {
             const existing = current.find((turn) => turn.id === assistantId)
-            const citations = pending?.citations ?? []
-            const refusedWrite = pending?.refusedWrite ?? false
             if (existing) {
               return current.map((turn) =>
                 turn.id === assistantId
                   ? {
                       ...turn,
+                      text: trailing ? `${turn.text}${trailing}` : turn.text,
                       citations,
                       refusedWrite,
+                      cached,
+                      groundedVerifier,
+                      lastQuestion: trimmed,
                       streaming: false,
                     }
                   : turn,
               )
+            }
+            if (!trailing && citations.length === 0) {
+              return current
             }
             return [
               ...current,
               {
                 id: assistantId,
                 role: "assistant",
-                text: "",
+                text: trailing,
                 citations,
                 refusedWrite,
+                cached,
+                groundedVerifier,
+                lastQuestion: trimmed,
                 streaming: false,
               },
             ]
           })
         },
-      })
+      }, controller.signal)
+      deltaBatcher.flushNow()
+      if (!receivedAnswer) {
+        throw new Error("InboxAssistant did not return an answer. Please try again.")
+      }
     } catch (error) {
+      deltaBatcher.flushNow()
+      if (
+        controller.signal.aborted ||
+        (error instanceof DOMException && error.name === "AbortError") ||
+        (error instanceof Error && error.name === "AbortError")
+      ) {
+        pendingMetaRef.current = null
+        setToolStatus(null)
+        setTurns((current) =>
+          current.map((turn) =>
+            turn.id === assistantId ? { ...turn, streaming: false } : turn,
+          ),
+        )
+        return
+      }
       pendingMetaRef.current = null
       setToolStatus(null)
       setTurns((current) => [
@@ -290,8 +386,13 @@ export const InboxAssistant = () => {
         },
       ])
     } finally {
-      pendingMetaRef.current = null
-      setIsAsking(false)
+      if (deltaBatcherRef.current === deltaBatcher) {
+        deltaBatcherRef.current = null
+      }
+      if (abortRef.current === controller) {
+        pendingMetaRef.current = null
+        setIsAsking(false)
+      }
     }
   }
 
@@ -302,14 +403,15 @@ export const InboxAssistant = () => {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
+    if (isAsking && !sanitizeUserText(message)) return
     void handleAsk()
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-      event.preventDefault()
-      void handleAsk()
-    }
+    if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return
+    event.preventDefault()
+    if (isAsking && !sanitizeUserText(message)) return
+    void handleAsk()
   }
 
   const composerRows = composerRowCount(message)
@@ -481,7 +583,6 @@ export const InboxAssistant = () => {
                       {turns.map((turn) => (
                         <MessageScrollerItem
                           key={turn.id}
-                          scrollAnchor={turn.role === "user"}
                           className={cn(
                             "flex",
                             turn.role === "user"
@@ -491,10 +592,10 @@ export const InboxAssistant = () => {
                         >
                           <div
                             className={cn(
-                              "max-w-[88%] space-y-2",
+                              "max-w-[88%] min-w-0 space-y-2",
                               turn.role === "user"
                                 ? "items-end"
-                                : "min-w-0 flex-1",
+                                : "flex-1",
                             )}
                           >
                             {turn.role === "assistant" && turn.refusedWrite ? (
@@ -508,38 +609,65 @@ export const InboxAssistant = () => {
                             ) : null}
                             {turn.error ? (
                               <Alert variant="destructive" className="mb-0">
+                                <CircleAlert aria-hidden="true" />
                                 <AlertTitle>Could not ask InboxAssistant</AlertTitle>
                                 <AlertDescription>{turn.text}</AlertDescription>
                               </Alert>
                             ) : turn.role === "user" ? (
-                              <p className="whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+                              <p className="wrap-anywhere whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
                                 {turn.text}
                               </p>
                             ) : turn.text ? (
-                              <div className="rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 ring-1 ring-foreground/10">
-                                {turn.streaming ? (
-                                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">
-                                    {turn.text}
-                                  </p>
-                                ) : (
-                                  <EmailBody
-                                    text={turn.text}
-                                    className="text-foreground dark:text-foreground"
-                                  />
+                              <div
+                                className={cn(
+                                  "wrap-anywhere rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 ring-1 ring-foreground/10",
+                                  turn.groundedVerifier === "UNSUPPORTED" &&
+                                    "opacity-70",
                                 )}
+                                aria-describedby={
+                                  turn.groundedVerifier === "UNSUPPORTED"
+                                    ? `${turn.id}-groundedness`
+                                    : undefined
+                                }
+                              >
+                                {turn.cached ? (
+                                  <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                                    <span>Cached · Re-ask to refresh</span>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-7 px-2"
+                                      aria-label="Re-ask now"
+                                      onClick={() => handleReask(turn)}
+                                    >
+                                      Re-ask
+                                    </Button>
+                                  </div>
+                                ) : null}
+                                {turn.groundedVerifier === "UNSUPPORTED" ? (
+                                  <p
+                                    id={`${turn.id}-groundedness`}
+                                    className="mb-2 text-xs text-muted-foreground"
+                                    tabIndex={0}
+                                    aria-label="Some claims in this answer could not be confirmed from the cited threads. Review the source threads to verify."
+                                  >
+                                    Some claims in this answer could not be
+                                    confirmed from the cited threads. Review the
+                                    source threads to verify.
+                                  </p>
+                                ) : null}
+                                <StreamingEmailBody
+                                  text={turn.text}
+                                  streaming={Boolean(turn.streaming)}
+                                />
                               </div>
                             ) : null}
                             {turn.citations && turn.citations.length > 0 ? (
-                              <div className="space-y-2">
-                                {turn.citations.map((citation, index) => (
-                                  <AskCitationCard
-                                    key={citation.thread_id}
-                                    citation={citation}
-                                    index={index + 1}
-                                    mailboxes={mailboxes}
-                                  />
-                                ))}
-                              </div>
+                              <CitationList
+                                citations={turn.citations}
+                                mailboxes={mailboxes}
+                              />
                             ) : null}
                           </div>
                         </MessageScrollerItem>
@@ -597,10 +725,8 @@ export const InboxAssistant = () => {
               <form onSubmit={handleSubmit}>
                 <div
                   className={cn(
-                    "flex items-end gap-1.5 border border-border bg-muted/60",
-                    composerRows === 1
-                      ? "rounded-full py-1 pl-3.5 pr-1"
-                      : "rounded-[1.5rem] py-1.5 pl-3.5 pr-1.5",
+                    "flex min-w-0 items-end gap-2 rounded-2xl border border-border bg-muted/60 px-3 py-2",
+                    "transition-[box-shadow,border-color] focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/20",
                   )}
                 >
                   <Textarea
@@ -613,19 +739,29 @@ export const InboxAssistant = () => {
                     placeholder="Ask about a thread…"
                     aria-label="Message InboxAssistant"
                     aria-invalid={validation ? true : undefined}
-                    disabled={isAsking}
                     rows={composerRows}
-                    className="field-sizing-content max-h-40 min-h-8 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-0 py-1.5 leading-5 shadow-none focus-visible:ring-0 dark:bg-transparent"
+                    className="field-sizing-content max-h-40 min-h-8 flex-1 resize-none overflow-y-auto wrap-anywhere border-0 bg-transparent px-0 py-1.5 leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
                   />
-                  <Button
-                    type="submit"
-                    size="icon-sm"
-                    aria-label="Send"
-                    disabled={isAsking}
-                    className="size-8 shrink-0 rounded-full"
-                  >
-                    <ArrowUpIcon className="size-4" aria-hidden="true" />
-                  </Button>
+                  {isAsking ? (
+                    <Button
+                      type="button"
+                      size="icon-sm"
+                      aria-label="Stop generating"
+                      onClick={handleStop}
+                      className="mb-0.5 size-8 shrink-0 rounded-full"
+                    >
+                      <SquareIcon className="size-3.5 fill-current" aria-hidden="true" />
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      size="icon-sm"
+                      aria-label="Send"
+                      className="mb-0.5 size-8 shrink-0 rounded-full"
+                    >
+                      <ArrowUpIcon className="size-4" aria-hidden="true" />
+                    </Button>
+                  )}
                 </div>
               </form>
 

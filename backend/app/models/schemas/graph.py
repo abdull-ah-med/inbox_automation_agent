@@ -108,6 +108,8 @@ class GraphMessageSchema(BaseModel):
     is_read: bool | None = Field(default=None, alias="isRead")
     has_attachments: bool | None = Field(default=None, alias="hasAttachments")
     importance: str | None = None
+    # Set by the poller; not a Graph JSON field.
+    source_folder: str | None = None
 
 
 class GraphMessageListSchema(BaseModel):

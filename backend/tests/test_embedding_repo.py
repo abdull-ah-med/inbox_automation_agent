@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.config import Settings
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.repositories import embedding_repo
@@ -29,6 +30,7 @@ def _row(
     row.message_id = message_id
     row.mailbox = "elise@example.com"
     row.body_preview = "hi"
+    row.sender_email = "vendor@example.com"
     return row
 
 
@@ -138,8 +140,13 @@ async def test_search_similar_applies_threshold_in_sql_and_excludes_conversation
     assert matches[0].similarity_score == pytest.approx(0.90)
     assert matches[0].message_id == keep.message_id
 
-    session.execute.assert_awaited_once()
-    stmt = session.execute.await_args.args[0]
+    select_calls = [
+        call.args[0]
+        for call in session.execute.await_args_list
+        if hasattr(call.args[0], "compile")
+    ]
+    assert select_calls, "vector search must still execute a SELECT"
+    stmt = select_calls[-1]
     compiled = str(stmt.compile(compile_kwargs={"literal_binds": False}))
     assert "email_embeddings" in compiled.lower() or "EmailEmbedding" in repr(stmt)
     # Distance threshold must be in the WHERE clause (not post-filtered in Python).
@@ -147,6 +154,79 @@ async def test_search_similar_applies_threshold_in_sql_and_excludes_conversation
         "cosine_distance" in compiled.lower() or "<=>" in compiled or "distance" in compiled.lower()
     )
     assert "mailbox" in compiled.lower()
+
+
+@pytest.mark.asyncio
+async def test_search_similar_sets_local_ef_search_from_settings() -> None:
+    """Query-time recall knob must be SET LOCAL so pooled connections do not leak it."""
+    session = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+    settings = Settings(environment="local", hnsw_ef_search=160, _env_file=None)
+
+    await embedding_repo.search_similar(
+        session,
+        embedding=_vector(),
+        min_similarity=0.78,
+        top_k=3,
+        mailbox="elise@example.com",
+        settings=settings,
+    )
+
+    first = session.execute.await_args_list[0].args[0]
+    sql = str(getattr(first, "text", first)).lower()
+    assert "set local hnsw.ef_search = 160" in sql
+
+
+@pytest.mark.asyncio
+async def test_search_similar_enables_iterative_scan_when_configured() -> None:
+    session = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+    settings = Settings(
+        environment="local",
+        hnsw_iterative_scan_enabled=True,
+        _env_file=None,
+    )
+
+    await embedding_repo.search_similar(
+        session,
+        embedding=_vector(),
+        min_similarity=0.78,
+        top_k=3,
+        mailbox="elise@example.com",
+        settings=settings,
+    )
+
+    sqls = [str(getattr(call.args[0], "text", call.args[0])).lower() for call in session.execute.await_args_list]
+    assert any("set local hnsw.iterative_scan = strict_order" in sql for sql in sqls)
+
+
+@pytest.mark.asyncio
+async def test_search_similar_skips_iterative_scan_when_disabled() -> None:
+    session = AsyncMock()
+    result = MagicMock()
+    result.all.return_value = []
+    session.execute = AsyncMock(return_value=result)
+    settings = Settings(
+        environment="local",
+        hnsw_iterative_scan_enabled=False,
+        _env_file=None,
+    )
+
+    await embedding_repo.search_similar(
+        session,
+        embedding=_vector(),
+        min_similarity=0.78,
+        top_k=3,
+        mailbox="elise@example.com",
+        settings=settings,
+    )
+
+    sqls = [str(getattr(call.args[0], "text", call.args[0])).lower() for call in session.execute.await_args_list]
+    assert not any("iterative_scan" in sql for sql in sqls)
 
 
 @pytest.mark.asyncio

@@ -9,11 +9,11 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
+from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, RedisDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
-from app.models.schemas.feedback import RegenerateDraftSchema
+from app.models.schemas.spam import NotSpamResponseSchema
 from app.models.schemas.related import (
     ApplyTreatmentResponse,
     ApplyTreatmentSchema,
@@ -24,6 +24,7 @@ from app.models.schemas.related import (
 )
 from app.services import (
     draft_regeneration_service,
+    not_spam_service,
     related_thread_service,
     thread_view_service,
 )
@@ -208,3 +209,33 @@ async def review_related_thread(
     )
     await session.commit()
     return result
+
+
+@router.post(
+    "/{thread_id}/not-spam",
+    response_model=NotSpamResponseSchema,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("20/minute")
+async def mark_thread_not_spam(
+    thread_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    redis: RedisDep,
+    client: AnthropicClientDep,
+    openai_client: OpenAIClientDep,
+    user: CurrentUser,
+) -> NotSpamResponseSchema:
+    """Clear a spam false positive and allowlist the sender. Does not move Outlook mail."""
+    _ = request, response
+    return await not_spam_service.mark_not_spam(
+        session,
+        settings=settings,
+        thread_id=thread_id,
+        actor=user.email,
+        redis=redis,
+        client=client,
+        openai_client=openai_client,
+    )

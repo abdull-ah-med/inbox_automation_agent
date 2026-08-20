@@ -236,6 +236,37 @@ async def test_chat_ask_forwards_cited_thread_ids_on_history(app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_chat_ask_follow_up_with_long_assistant_history_is_not_422(app) -> None:
+    mock_session = AsyncMock()
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    answer = "Latest on O'Mason Lumber is the users thread. " + ("x" * 520)
+    with patch(
+        "app.api.web.chat.chat_service.ask",
+        AsyncMock(return_value=_ask_response()),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/api/chat/ask",
+                json={
+                    "message": "what s happening here?",
+                    "history": [
+                        {
+                            "role": "user",
+                            "content": "give me the latest on omason",
+                        },
+                        {"role": "assistant", "content": answer},
+                    ],
+                },
+            )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_chat_ask_blank_message_422(app) -> None:
     mock_session = AsyncMock()
 

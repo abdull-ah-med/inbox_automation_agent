@@ -21,7 +21,7 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
     DEDUP_PROCESSING_TTL_SECONDS,
@@ -64,6 +64,10 @@ _SENT_ITEMS_FOLDER = re.compile(
     r"mailfolders\('sentitems'\)",
     re.IGNORECASE,
 )
+_WELL_KNOWN_FOLDER = re.compile(
+    r"mailfolders\('(?P<folder>inbox|junkemail|sentitems)'\)",
+    re.IGNORECASE,
+)
 
 
 def extract_message_id_from_resource(resource: str) -> str | None:
@@ -84,6 +88,15 @@ def is_sent_items_resource(resource: str) -> bool:
     """True when the Graph resource path targets the Sent Items well-known folder."""
     normalized = resource.strip().lower().replace(" ", "")
     return _SENT_ITEMS_FOLDER.search(normalized) is not None
+
+
+def extract_well_known_folder(resource: str) -> str | None:
+    """Return inbox / junkemail / sentitems when the Graph resource names that folder."""
+    normalized = resource.strip().lower().replace(" ", "")
+    match = _WELL_KNOWN_FOLDER.search(normalized)
+    if match is None:
+        return None
+    return match.group("folder").lower()
 
 
 def _sender_address(message: GraphMessageSchema) -> str:
@@ -109,8 +122,16 @@ def _body_text(message: GraphMessageSchema) -> str:
     return message.body_preview or ""
 
 
-def _direction_for_sender(mailbox: str, sender: str) -> EmailDirectionEnum:
+def _direction_for_sender(
+    mailbox: str,
+    sender: str,
+    *,
+    settings: Settings | None = None,
+) -> EmailDirectionEnum:
     if sender.lower() == mailbox.lower():
+        return EmailDirectionEnum.OUTBOUND
+    resolved = settings if settings is not None else get_settings()
+    if resolved.is_reviewer_address(sender):
         return EmailDirectionEnum.OUTBOUND
     return EmailDirectionEnum.INBOUND
 
@@ -166,6 +187,7 @@ def _to_email_message_schema(
         to_recipients=_recipient_addresses(message.to_recipients),
         cc_recipients=_recipient_addresses(message.cc_recipients),
         has_attachments=bool(message.has_attachments),
+        graph_folder=message.source_folder,
     )
     return _apply_body_clean(email)
 
@@ -293,6 +315,7 @@ async def _thread_context_from_db(
                 to_recipients=list(row.to_recipients or []),
                 cc_recipients=list(row.cc_recipients or []),
                 has_attachments=bool(row.has_attachments),
+                graph_folder=row.graph_folder,
                 summary_one_line=row.summary_one_line,
                 summary_json=row.summary_json,
             )
@@ -319,6 +342,7 @@ async def ingest_graph_message(
     graph_client: GraphClient,
     mailbox: str,
     message_id: str,
+    source_folder: str | None = None,
 ) -> IngestResultSchema:
     """Fetch a Graph message, resolve its thread, and persist thread + messages.
 
@@ -343,6 +367,8 @@ async def ingest_graph_message(
 
     try:
         message = await graph_client.get_message(mailbox, message_id)
+        if source_folder:
+            message = message.model_copy(update={"source_folder": source_folder})
         conversation_id = message.conversation_id
         if not conversation_id:
             raise GraphClientError(f"Message {message_id} is missing conversationId")
@@ -365,6 +391,7 @@ async def ingest_graph_message(
         thread_messages = list(by_id.values())
 
         context_messages: list[EmailMessageSchema] = []
+        trigger_persisted = None
         for thread_msg in thread_messages:
             email_msg = _to_email_message_schema(
                 mailbox=mailbox,
@@ -372,7 +399,7 @@ async def ingest_graph_message(
                 message=thread_msg,
             )
             context_messages.append(email_msg)
-            await message_repo.create_message(
+            persisted = await message_repo.create_message(
                 session,
                 thread_id=thread.id,
                 graph_message_id=thread_msg.id,
@@ -384,10 +411,39 @@ async def ingest_graph_message(
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
                 has_attachments=email_msg.has_attachments,
+                graph_folder=email_msg.graph_folder,
                 body_content_type=email_msg.body_content_type,
                 body_clean=email_msg.body_clean,
                 body_clean_version=email_clean.CLEAN_VERSION,
                 body_clean_computed_at=datetime.now(UTC),
+            )
+            if thread_msg.id == message.id:
+                trigger_persisted = persisted
+
+        if trigger_persisted is not None and get_settings().is_reviewer_address(
+            _sender_address(message)
+        ):
+            from app.services import sent_reply_service
+
+            await sent_reply_service.resolve_thread_from_outbound(
+                session,
+                thread_id=thread.id,
+                message=trigger_persisted,
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+            )
+            logger.info(
+                "ingestion_reviewer_copy_resolved",
+                mailbox=mailbox,
+                message_id=message_id,
+                thread_id=str(thread.id),
+                conversation_id=conversation_id,
+            )
+            return IngestResultSchema(
+                message_id=message_id,
+                status="outbound",
+                thread_id=str(thread.id),
+                conversation_id=conversation_id,
             )
 
         thread_context = ThreadContextSchema(
@@ -449,15 +505,14 @@ async def ingest_notification(
         )
         return IngestResultSchema(message_id=message_id, status="skipped")
 
-    if not settings.mailbox_allowed(mailbox):
-        logger.warning(
-            "ingestion_notification_mailbox_not_allowed",
-            mailbox=mailbox,
-            subscription_id=notification.subscription_id,
-        )
-        return IngestResultSchema(message_id=message_id, status="skipped")
-
     if is_sent_items_resource(notification.resource):
+        if not settings.outbound_mailbox_allowed(mailbox):
+            logger.warning(
+                "ingestion_notification_mailbox_not_allowed",
+                mailbox=mailbox,
+                subscription_id=notification.subscription_id,
+            )
+            return IngestResultSchema(message_id=message_id, status="skipped")
         return await handle_outbound_notification(
             session=session,
             redis=redis,
@@ -466,12 +521,21 @@ async def ingest_notification(
             message_id=message_id,
         )
 
+    if not settings.mailbox_allowed(mailbox):
+        logger.warning(
+            "ingestion_notification_mailbox_not_allowed",
+            mailbox=mailbox,
+            subscription_id=notification.subscription_id,
+        )
+        return IngestResultSchema(message_id=message_id, status="skipped")
+
     return await ingest_graph_message(
         session=session,
         redis=redis,
         graph_client=graph_client,
         mailbox=mailbox,
         message_id=message_id,
+        source_folder=extract_well_known_folder(notification.resource),
     )
 
 
@@ -506,10 +570,33 @@ async def handle_outbound_notification(
 
         received_at = message.received_date_time or datetime.now(UTC)
         subject = message.subject or "(no subject)"
-
+        settings = get_settings()
+        shared = await thread_repo.find_thread_by_conversation_id(
+            session,
+            conversation_id,
+            mailboxes=settings.mailbox_list,
+        )
+        if (
+            shared is None
+            and settings.is_reviewer_address(mailbox)
+            and not settings.mailbox_allowed(mailbox)
+        ):
+            await complete_ingest_dedup(redis, mailbox, message_id)
+            logger.info(
+                "outbound_no_matching_shared_thread",
+                mailbox=mailbox,
+                message_id=message_id,
+                conversation_id=conversation_id,
+            )
+            return IngestResultSchema(
+                message_id=message_id,
+                status="skipped",
+                conversation_id=conversation_id,
+            )
+        attach_mailbox = shared.mailbox if shared is not None else mailbox
         thread = await thread_repo.upsert_thread(
             session,
-            mailbox=mailbox,
+            mailbox=attach_mailbox,
             conversation_id=conversation_id,
             subject=subject,
             last_message_at=received_at,
@@ -546,7 +633,7 @@ async def handle_outbound_notification(
             thread_id=thread.id,
             message=persisted,
             conversation_id=conversation_id,
-            mailbox=mailbox,
+            mailbox=attach_mailbox,
         )
 
         await complete_ingest_dedup(redis, mailbox, message_id)

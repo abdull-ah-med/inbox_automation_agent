@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useState } from "react"
+import { Fragment, useState, type ReactNode, type KeyboardEvent } from "react"
 
 import { cn, textLinkClass } from "@/lib/utils"
 
@@ -131,15 +131,20 @@ export const EmailBody = ({
   className = "",
   emptyLabel = "(no content)",
   collapseQuotes = false,
+  trailing = null,
 }: {
   text: string | null | undefined
   className?: string
   emptyLabel?: string
   collapseQuotes?: boolean
+  trailing?: ReactNode
 }) => {
   const [showQuoted, setShowQuoted] = useState(false)
 
   if (!text || !text.trim()) {
+    if (trailing) {
+      return <div className={cn("text-sm leading-relaxed", className)}>{trailing}</div>
+    }
     return <p className={`text-sm text-gray-400 italic ${className}`}>{emptyLabel}</p>
   }
 
@@ -151,7 +156,7 @@ export const EmailBody = ({
     setShowQuoted((value) => !value)
   }
 
-  const handleQuotedKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+  const handleQuotedKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
       handleToggleQuoted()
@@ -165,8 +170,9 @@ export const EmailBody = ({
         className,
       )}
     >
-      <div className="whitespace-pre-wrap break-words">
+      <div className="wrap-anywhere whitespace-pre-wrap break-words">
         <BodyText text={main} />
+        {trailing}
       </div>
       {quoted ? (
         <div className="mt-3">
@@ -182,7 +188,7 @@ export const EmailBody = ({
             {showQuoted ? "Hide earlier" : "Show earlier"}
           </button>
           {showQuoted ? (
-            <div className="mt-3 whitespace-pre-wrap break-words border-t border-border pt-3 text-gray-500 dark:text-gray-400">
+            <div className="mt-3 wrap-anywhere whitespace-pre-wrap break-words border-t border-border pt-3 text-gray-500 dark:text-gray-400">
               <BodyText text={quoted} />
             </div>
           ) : null}

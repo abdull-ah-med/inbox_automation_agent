@@ -18,3 +18,4 @@ class EmbeddingMatchSchema(BaseModel):
     message_id: uuid.UUID | None = None
     mailbox: str | None = None
     body_preview: str | None = None
+    sender_email: str | None = None

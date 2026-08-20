@@ -68,6 +68,18 @@ def test_build_user_content_includes_to_and_cc() -> None:
     assert "Please send the intake packet." in content
 
 
+def test_build_user_content_labels_junk_folder_as_outlook_location() -> None:
+    email = _email().model_copy(update={"graph_folder": "junkemail"})
+    content = triage_llm._build_user_content(email, _context(email))
+    assert "Outlook location: Junk Email" in content
+
+
+def test_build_user_content_omits_junk_label_for_inbox() -> None:
+    email = _email().model_copy(update={"graph_folder": "inbox"})
+    content = triage_llm._build_user_content(email, _context(email))
+    assert "Outlook location: Junk Email" not in content
+
+
 @pytest.mark.asyncio
 async def test_triage_email_happy_path_uses_settings_model_and_prompt() -> None:
     email = _email()

@@ -9,16 +9,25 @@ from app.main import create_app
 
 
 def test_embedding_settings_defaults() -> None:
-    settings = Settings(environment="local")
+    settings = Settings(environment="local", _env_file=None)
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_dimension == 1536
     assert settings.embedding_min_similarity == 0.78
-    assert settings.embedding_candidate_k == 15
+    assert settings.embedding_candidate_k == 50
     assert settings.embedding_final_conversations == 1
     assert settings.embedding_max_input_tokens == 8000
     assert settings.thread_verbatim_tail == 2
     assert settings.thread_full_if_at_most == 5
     assert settings.rrf_k == 60
+    assert settings.hnsw_ef_search == 100
+    assert settings.hnsw_iterative_scan_enabled is True
+    assert settings.chat_groundedness_enabled is False
+    assert settings.chat_semantic_cache_enabled is True
+    assert settings.chat_semantic_cache_threshold == 0.92
+    assert settings.chat_semantic_cache_ttl_overview_sec == 300
+    assert settings.chat_semantic_cache_ttl_search_sec == 1200
+    assert settings.chat_max_input_tokens == 160_000
+    assert settings.chat_rate_limit_per_minute == 60
 
 
 def test_ops_report_settings_defaults() -> None:

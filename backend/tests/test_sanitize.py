@@ -14,3 +14,9 @@ def test_sanitize_user_text_strips_null_and_control_chars() -> None:
 
 def test_sanitize_user_text_collapses_whitespace() -> None:
     assert sanitize_user_text("SampleH\n\n  order") == "SampleH order"
+
+
+def test_sanitize_user_text_folds_apostrophes_without_splitting_names() -> None:
+    """O'Mason must stay one token. Replacing ' with a space makes FTS look for O + Mason."""
+    assert sanitize_user_text("O'Mason") == "OMason"
+    assert sanitize_user_text("O\u2019Mason") == "OMason"

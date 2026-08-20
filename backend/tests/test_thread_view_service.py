@@ -189,6 +189,10 @@ async def test_thread_view_assembles_detail() -> None:
             "app.services.thread_view_service.sent_reply_repo.get_by_thread",
             AsyncMock(return_value=None),
         ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
+        ),
     ):
         detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
     assert detail.thread.subject == "Hello"
@@ -308,6 +312,10 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
         patch(
             "app.services.thread_view_service.sent_reply_repo.get_by_thread",
             AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
         ),
     ):
         detail = await thread_view_service.get_thread_detail(session, settings, thread_id)

@@ -11,6 +11,8 @@ const rejectMock = vi.fn()
 const relatedMock = vi.fn()
 const markWrongMock = vi.fn()
 
+const markNotSpamMock = vi.fn()
+
 vi.mock("@/lib/api-client", () => ({
   api: {
     drafts: {
@@ -20,6 +22,7 @@ vi.mock("@/lib/api-client", () => ({
     },
     threads: {
       related: (...args: unknown[]) => relatedMock(...args),
+      markNotSpam: (...args: unknown[]) => markNotSpamMock(...args),
     },
   },
 }))
@@ -478,5 +481,40 @@ describe("ThreadTriageSidebar internal tag", () => {
     )
     expect(screen.getByText("Internal")).toBeInTheDocument()
     expect(screen.getByText("Not spam")).toBeInTheDocument()
+  })
+})
+
+describe("ThreadTriageSidebar not-spam action", () => {
+  it("shows Mark as not spam on a SPAM thread", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <ThreadTriageSidebar
+          threadId="thread-1"
+          thread={{ ...thread, state: "SPAM", last_sender: "orders@sample-lab.example.com" }}
+          classification={null}
+          draft={null}
+          triage={{
+            is_spam: true,
+            has_action_items: false,
+            needs_context: false,
+            spam_reason: "Marketing blast",
+            context_reason: null,
+            action_items_summary: null,
+            outcome: "triage.spam_discarded",
+            is_internal: false,
+          }}
+          auditLog={[]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.getByRole("button", { name: "Mark as not spam" })).toBeInTheDocument()
+  })
+
+  it("hides Mark as not spam when the thread is not spam", () => {
+    renderSidebar(null)
+    expect(screen.queryByRole("button", { name: "Mark as not spam" })).toBeNull()
   })
 })

@@ -38,6 +38,12 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
                   tone={urgencyTone(thread.urgency)}
                 />
               ) : null}
+              {thread.triage?.is_internal ? (
+                <StatusBadge label="Internal" tone="blue" />
+              ) : null}
+              {thread.triage?.is_automated ? (
+                <StatusBadge label="Automated" tone="neutral" />
+              ) : null}
               {thread.triage?.needs_context ? (
                 <StatusBadge label="Needs context" tone="amber" />
               ) : null}

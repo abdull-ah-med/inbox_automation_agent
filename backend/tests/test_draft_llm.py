@@ -106,6 +106,35 @@ def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     assert "Thanks — sending the packet now." in content
 
 
+def test_build_user_content_packs_confirmed_associations_not_unconfirmed() -> None:
+    email = _email()
+    confirmed = EmailMessageSchema(
+        message_id="assoc-1",
+        conversation_id="sampleclient-8-14",
+        mailbox="cr@example.com",
+        sender="rep@sample-client.example.com",
+        subject="SampleClient follow-up 8/14",
+        body_text="SampleClient packet due Friday the 14th.",
+        received_at=datetime(2026, 8, 14, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+    )
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+        confirmed_associations=[
+            CrossThreadContextSchema(
+                matched_conversation_id="sampleclient-8-14",
+                similarity_score=1.0,
+                thread_messages=[confirmed],
+            )
+        ],
+    )
+    assert "SampleClient packet due Friday the 14th." in content
+    assert "consider emailing cr@example.com" in content
+    assert "January invoice unpaid" not in content
+
+
 def test_build_user_content_includes_urgency_hints() -> None:
     content = draft_llm._build_user_content(
         _email(),

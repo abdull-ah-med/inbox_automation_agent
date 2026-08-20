@@ -144,6 +144,13 @@ async def run_draft(
 
         reference_loader, _ = make_reference_loader(active_skill_ids=set(skill_ids))
 
+    from app.services import related_thread_service
+
+    confirmed_associations = await related_thread_service.load_confirmed_contexts(
+        session,
+        thread_id,
+    )
+
     try:
         result = await draft_llm.generate_draft(
             state.original_email,
@@ -158,6 +165,7 @@ async def run_draft(
             negative_constraints=resolved_constraints,
             urgency_hints=urgency_hints,
             reference_loader=reference_loader,
+            confirmed_associations=confirmed_associations,
         )
     except DraftGenerationError as exc:
         logger.warning(

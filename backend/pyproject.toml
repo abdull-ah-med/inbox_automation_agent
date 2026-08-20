@@ -131,6 +131,7 @@ markers = [
     "live_e2e: opt-in live Graph→Redis→DB→PII→Haiku pipeline (set RUN_LIVE_E2E=1)",
     "live_embedding: opt-in live OpenAI embedding + similarity + tone E2E (set RUN_LIVE_EMBEDDING_E2E=1)",
     "llm_eval: opt-in DeepEval/RAGAS LLM response evals (set RUN_LLM_EVAL=1; needs pip install -e '.[eval]')",
+    "deepeval: CI faithfulness/relevancy gate (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)",
 ]
 
 [tool.coverage.run]

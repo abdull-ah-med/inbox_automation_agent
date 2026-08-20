@@ -188,7 +188,8 @@ async def db_session(migrated_test_database: str) -> AsyncIterator[AsyncSession]
             await session.rollback()
             await session.execute(
                 text(
-                    "TRUNCATE sent_replies, drafts, messages, audit_events, threads "
+                    "TRUNCATE sent_replies, drafts, messages, audit_events, spam_allowlist, "
+                    "thread_summaries, chat_response_cache, threads "
                     "RESTART IDENTITY CASCADE"
                 )
             )
