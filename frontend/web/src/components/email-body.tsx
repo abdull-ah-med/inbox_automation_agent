@@ -1,12 +1,17 @@
 "use client"
 
 import { Fragment, useState, type ReactNode, type KeyboardEvent } from "react"
+import Link from "next/link"
 
 import { cn, textLinkClass } from "@/lib/utils"
+import type { ChatCitation } from "@/lib/types"
 
 // Matches http(s) URLs; stops before common trailing punctuation/brackets so
 // "See https://x.com/a)." doesn't swallow the closing paren or period.
 const URL_PATTERN = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
+
+// InboxAssistant citation markers like [1] matching citation card order (1-based).
+const CITATION_MARKER_PATTERN = /\[(\d+)\]/g
 
 const ORIGINAL_MESSAGE_PATTERN = /(^|\n)[-\s]*Original Message[-\s]*\s*\n/i
 const UNDERSCORE_SEP_PATTERN = /(^|\n)_{10,}\s*\n/
@@ -54,7 +59,7 @@ export const splitQuotedHistory = (
 // Common LLM draft habit: **Check spam** — render as bold, hide the markers.
 const BOLD_PATTERN = /\*\*(.+?)\*\*/g
 
-const linkify = (text: string, keyPrefix: string): React.ReactNode[] => {
+const linkifyUrls = (text: string, keyPrefix: string): React.ReactNode[] => {
   const nodes: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -85,7 +90,58 @@ const linkify = (text: string, keyPrefix: string): React.ReactNode[] => {
   return nodes
 }
 
-const renderInline = (text: string): React.ReactNode[] => {
+const linkify = (
+  text: string,
+  keyPrefix: string,
+  citations?: ChatCitation[],
+): React.ReactNode[] => {
+  if (!citations?.length) {
+    return linkifyUrls(text, keyPrefix)
+  }
+
+  const nodes: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  let key = 0
+
+  CITATION_MARKER_PATTERN.lastIndex = 0
+  while ((match = CITATION_MARKER_PATTERN.exec(text)) !== null) {
+    const index = Number(match[1])
+    const citation = Number.isFinite(index) ? citations[index - 1] : undefined
+    if (match.index > lastIndex) {
+      nodes.push(
+        ...linkifyUrls(text.slice(lastIndex, match.index), `${keyPrefix}-t${key}`),
+      )
+    }
+    if (citation) {
+      const subject = citation.subject?.trim() || `thread ${index}`
+      const href = citation.url_path || `/threads/${citation.thread_id}`
+      nodes.push(
+        <Link
+          key={`${keyPrefix}-cite-${key++}`}
+          href={href}
+          aria-label={`Citation ${index}: ${subject}`}
+          title={subject}
+          className="mx-0.5 inline-flex translate-y-[-0.05em] items-center rounded-sm bg-primary/15 px-1 py-0 text-[0.7rem] font-semibold text-primary no-underline hover:bg-primary/25"
+        >
+          [{index}]
+        </Link>,
+      )
+    } else {
+      nodes.push(match[0])
+    }
+    lastIndex = match.index + match[0].length
+  }
+  if (lastIndex < text.length) {
+    nodes.push(...linkifyUrls(text.slice(lastIndex), `${keyPrefix}-t${key}`))
+  }
+  return nodes
+}
+
+const renderInline = (
+  text: string,
+  citations?: ChatCitation[],
+): React.ReactNode[] => {
   const nodes: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -94,25 +150,34 @@ const renderInline = (text: string): React.ReactNode[] => {
   BOLD_PATTERN.lastIndex = 0
   while ((match = BOLD_PATTERN.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      nodes.push(...linkify(text.slice(lastIndex, match.index), `t${key}`))
+      nodes.push(...linkify(text.slice(lastIndex, match.index), `t${key}`, citations))
     }
     nodes.push(
-      <strong key={`bold-${key++}`} className="font-semibold text-gray-800 dark:text-gray-100">
-        {linkify(match[1], `b${key}`)}
+      <strong
+        key={`bold-${key++}`}
+        className="font-semibold text-gray-800 dark:text-gray-100"
+      >
+        {linkify(match[1], `b${key}`, citations)}
       </strong>,
     )
     lastIndex = match.index + match[0].length
   }
   if (lastIndex < text.length) {
-    nodes.push(...linkify(text.slice(lastIndex), `t${key}`))
+    nodes.push(...linkify(text.slice(lastIndex), `t${key}`, citations))
   }
   return nodes
 }
 
-const BodyText = ({ text }: { text: string }) => {
+const BodyText = ({
+  text,
+  citations,
+}: {
+  text: string
+  citations?: ChatCitation[]
+}) => {
   return (
     <>
-      {renderInline(text).map((node, index) => (
+      {renderInline(text, citations).map((node, index) => (
         <Fragment key={index}>{node}</Fragment>
       ))}
     </>
@@ -125,6 +190,7 @@ const BodyText = ({ text }: { text: string }) => {
  * overflowing the container, turns bare URLs into clickable links, and
  * renders lightweight ``**bold**`` markers as emphasis (common in LLM drafts).
  * When collapseQuotes is on, Outlook/Gmail quoted history is hidden until expanded.
+ * When citations are provided, ``[n]`` markers link to the matching thread.
  */
 export const EmailBody = ({
   text,
@@ -132,12 +198,14 @@ export const EmailBody = ({
   emptyLabel = "(no content)",
   collapseQuotes = false,
   trailing = null,
+  citations,
 }: {
   text: string | null | undefined
   className?: string
   emptyLabel?: string
   collapseQuotes?: boolean
   trailing?: ReactNode
+  citations?: ChatCitation[]
 }) => {
   const [showQuoted, setShowQuoted] = useState(false)
 
@@ -171,7 +239,7 @@ export const EmailBody = ({
       )}
     >
       <div className="wrap-anywhere whitespace-pre-wrap break-words">
-        <BodyText text={main} />
+        <BodyText text={main} citations={citations} />
         {trailing}
       </div>
       {quoted ? (
@@ -180,7 +248,9 @@ export const EmailBody = ({
             type="button"
             tabIndex={0}
             aria-expanded={showQuoted}
-            aria-label={showQuoted ? "Hide quoted earlier messages" : "Show quoted earlier messages"}
+            aria-label={
+              showQuoted ? "Hide quoted earlier messages" : "Show quoted earlier messages"
+            }
             className={cn(textLinkClass, "text-sm")}
             onClick={handleToggleQuoted}
             onKeyDown={handleQuotedKeyDown}
@@ -189,7 +259,7 @@ export const EmailBody = ({
           </button>
           {showQuoted ? (
             <div className="mt-3 wrap-anywhere whitespace-pre-wrap break-words border-t border-border pt-3 text-gray-500 dark:text-gray-400">
-              <BodyText text={quoted} />
+              <BodyText text={quoted} citations={citations} />
             </div>
           ) : null}
         </div>

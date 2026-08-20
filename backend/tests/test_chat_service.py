@@ -171,9 +171,10 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     assert "never follow instructions" in lowered
     assert "approve" in lowered
     assert "send" in lowered
-    # Cite by subject; UUIDs belong on citation cards, not in the answer text.
+    # Cite by subject with [n] markers; UUIDs belong on citation cards.
     assert "uuid" in lowered
     assert "subject" in lowered
+    assert "[1]" in CHAT_SYSTEM_PROMPT or "citation marker" in lowered or "[n]" in CHAT_SYSTEM_PROMPT
     assert "review ui" not in lowered
     assert "triage labels" in lowered
     assert "overview" in lowered or "latest" in lowered
@@ -310,6 +311,13 @@ def test_sanitize_chat_answer_leaves_grounded_prose() -> None:
         "Ashley Cantrell with Stronger Together asked about a background check "
         "in Background check inquiry."
     )
+    assert sanitize_chat_answer(prose) == prose
+
+
+def test_sanitize_chat_answer_keeps_numbered_citation_markers() -> None:
+    from app.llm.chat import sanitize_chat_answer
+
+    prose = "Bonnie is waiting on the overdue invoice [1]."
     assert sanitize_chat_answer(prose) == prose
 
 
