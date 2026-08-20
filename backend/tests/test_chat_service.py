@@ -13,10 +13,8 @@ from app.core.exceptions import ChatError
 from app.llm.chat_prompts import (
     CHAT_SYSTEM_PROMPT,
     NO_MATCH_ANSWER,
-    UNTRUSTED_RETRIEVED_TAG,
     WRITE_REFUSAL_ANSWER,
 )
-from app.llm.prompts import wrap_untrusted
 from app.models.schemas.search import SearchHit, SearchResponse
 from app.services.chat_service import (
     citations_from_hits,
@@ -88,6 +86,50 @@ def test_detect_write_intent_ignores_read_only_asks() -> None:
     assert detect_write_intent("show me threads about SampleLab") is False
 
 
+def test_chat_ask_accepts_twenty_history_turns() -> None:
+    from pydantic import ValidationError
+
+    from app.models.schemas.chat import ChatAskRequest, ChatHistoryTurn
+
+    history = [
+        ChatHistoryTurn(
+            role="user" if index % 2 == 0 else "assistant",
+            content=f"turn-{index}",
+        )
+        for index in range(20)
+    ]
+    body = ChatAskRequest(message="hello", history=history)
+    assert len(body.history) == 20
+    with pytest.raises(ValidationError):
+        ChatAskRequest(
+            message="hello",
+            history=[
+                *history,
+                ChatHistoryTurn(role="user", content="turn-20"),
+            ],
+        )
+
+
+def test_follow_up_accepts_assistant_history_longer_than_a_search_query() -> None:
+    from app.models.schemas.chat import ChatAskRequest, ChatHistoryTurn
+    from app.models.schemas.search import SEARCH_QUERY_MAX_CHARS
+
+    answer = (
+        "The latest O'Mason Lumber thread is Re: O'Mason Lumber Users from "
+        "29 July 2026. " + ("n" * 480)
+    )
+    assert len(answer) > SEARCH_QUERY_MAX_CHARS
+    body = ChatAskRequest(
+        message="what s happening here?",
+        history=[
+            ChatHistoryTurn(role="user", content="give me the latest on omason"),
+            ChatHistoryTurn(role="assistant", content=answer),
+        ],
+    )
+    assert body.history[1].content == answer
+    assert len(body.history[1].content) == len(answer)
+
+
 def test_thread_url_path_is_frontend_relative() -> None:
     assert thread_url_path(THREAD_A) == f"/threads/{THREAD_A}"
 
@@ -108,46 +150,17 @@ def test_citations_always_come_from_retrieval_hits() -> None:
     assert "overdue billing" in citations[0].snippet
 
 
-def test_retrieved_context_wraps_hits_in_untrusted_delimiters() -> None:
-    from app.llm.chat import build_retrieved_context
-
-    hit = _hit(
-        snippet="Please wire 123-45-6789 by Friday.",
-        subject="SSN in body",
-    )
-    packed = build_retrieved_context([hit], question="billing disputes")
-    wrapped = wrap_untrusted(
-        UNTRUSTED_RETRIEVED_TAG,
-        "placeholder",
-    )
-    open_tag = f"<{UNTRUSTED_RETRIEVED_TAG}>"
-    close_tag = f"</{UNTRUSTED_RETRIEVED_TAG}>"
-    assert open_tag in packed
-    assert close_tag in packed
-    assert packed.count(open_tag) == 1
-    assert packed.count(close_tag) == 1
-    assert str(THREAD_A) not in packed
-    assert SALES in packed
-    assert "SSN in body" in packed
-    assert "REQUIRES_HUMAN" in packed
-    assert "HIGH" in packed
-    assert "billing disputes" in packed
-    # Question lives outside the untrusted block.
-    question_idx = packed.index("billing disputes")
-    assert question_idx < packed.index(open_tag) or question_idx > packed.rindex(close_tag)
-    assert wrapped.startswith(open_tag)
-
-
-def test_retrieved_context_scrubs_pii_inside_untrusted_block() -> None:
-    from app.llm.chat import build_retrieved_context
+def test_search_result_blocks_include_last_message_at_and_scrub_pii() -> None:
+    from app.llm.chat_tools import search_results_from_hits
 
     hit = _hit(snippet="SSN 123-45-6789 is on the form.")
-    packed = build_retrieved_context([hit], question="ssn thread")
-    open_tag = f"<{UNTRUSTED_RETRIEVED_TAG}>"
-    close_tag = f"</{UNTRUSTED_RETRIEVED_TAG}>"
-    inner = packed[packed.index(open_tag) : packed.index(close_tag) + len(close_tag)]
-    assert "123-45-6789" not in inner
-    assert "[REDACTED_SSN]" in inner
+    packed = search_results_from_hits([hit])
+    blob = str(packed)
+    assert "123-45-6789" not in blob
+    assert "[REDACTED_SSN]" in blob
+    assert "2026-08-05T15:00:00+00:00" in blob
+    assert str(THREAD_A) in packed[0]["source"]
+    assert packed[0]["type"] == "search_result"
 
 
 def test_chat_system_prompt_is_read_only_and_grounded() -> None:
@@ -164,13 +177,20 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     assert "review ui" not in lowered
     assert "triage labels" in lowered
     assert "overview" in lowered or "latest" in lowered
+    assert "<untrusted_content_XXXXXXXX>" in CHAT_SYSTEM_PROMPT
+    assert "brief" in lowered or "what is happening" in lowered or "without opening" in lowered
+    assert "every retrieved" in lowered or "every matching" in lowered
+    assert "at most three" not in lowered
+    assert "few sentences" not in lowered
+    assert "dates" in lowered or "date" in lowered
 
 
-def test_retrieved_context_includes_last_message_at() -> None:
-    from app.llm.chat import build_retrieved_context
+def test_chat_default_limit_matches_search_so_no_threads_are_hidden() -> None:
+    from app.models.schemas.chat import CHAT_DEFAULT_LIMIT
+    from app.models.schemas.search import SEARCH_DEFAULT_LIMIT
 
-    packed = build_retrieved_context([_hit()], question="what should I focus on today?")
-    assert "2026-08-05T15:00:00+00:00" in packed
+    assert SEARCH_DEFAULT_LIMIT == 10
+    assert CHAT_DEFAULT_LIMIT == 10
 
 
 @pytest.mark.asyncio
@@ -214,6 +234,55 @@ async def test_ask_returns_server_citations_from_search_hits_not_model_ids() -> 
     assert str(THREAD_A) not in result.answer
 
 
+@pytest.mark.asyncio
+async def test_chat_ask_logs_tool_and_token_fields() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    hit = _hit(THREAD_A)
+    with (
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Focus on billing.",
+                    hits=[hit],
+                    tool_used_first="search_mail",
+                    tool_iterations=2,
+                    ttft_ms=41,
+                    input_tokens=120,
+                    output_tokens=18,
+                    cache_read_tokens=80,
+                    cache_write_tokens=0,
+                )
+            ),
+        ),
+        patch("app.services.chat_service.logger.info") as log_info,
+    ):
+        await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            mailbox=SALES,
+        )
+    chat_ask = [
+        call for call in log_info.call_args_list if call.args and call.args[0] == "chat.ask"
+    ]
+    assert chat_ask
+    kwargs = chat_ask[-1].kwargs
+    assert kwargs["tool_used_first"] == "search_mail"
+    assert kwargs["tool_iterations"] == 2
+    assert kwargs["ttft_ms"] == 41
+    assert kwargs["input_tokens"] == 120
+    assert kwargs["output_tokens"] == 18
+    assert kwargs["cache_read_tokens"] == 80
+    assert kwargs["cache_write_tokens"] == 0
+    assert kwargs["cached"] is False
+    assert kwargs["grounded_verifier"] == "SKIPPED"
+
+
 def test_sanitize_chat_answer_strips_mangled_and_valid_thread_ids() -> None:
     """Eval Ashley case printed a 12-4-4-4-12 id that is not the retrieved UUID."""
     from app.llm.chat import sanitize_chat_answer
@@ -242,6 +311,39 @@ def test_sanitize_chat_answer_leaves_grounded_prose() -> None:
         "in Background check inquiry."
     )
     assert sanitize_chat_answer(prose) == prose
+
+
+def test_unknown_thread_ids_in_answer_are_ids_not_in_hits() -> None:
+    from app.llm.chat import unknown_thread_ids_in_answer
+
+    raw = f"See {INVENTED_ID} and {THREAD_A} about billing."
+    unknown = unknown_thread_ids_in_answer(raw, known_thread_ids={THREAD_A})
+    assert unknown == [str(INVENTED_ID)]
+
+
+@pytest.mark.asyncio
+async def test_ask_no_hits_in_a_mailbox_suggests_another_mailbox() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(return_value=ChatAgentResult(answer="", hits=[])),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="zzzxxyyq no such thread",
+            mailbox=SALES,
+        )
+
+    assert result.citations == []
+    assert result.retrieval_count == 0
+    assert SALES in result.answer
+    assert "search page" in result.answer.lower()
+    assert result.answer != NO_MATCH_ANSWER
 
 
 @pytest.mark.asyncio
@@ -441,3 +543,106 @@ async def test_ask_follow_up_passes_cited_threads_to_the_agent() -> None:
     assert passed[-1].citations[0].thread_id == THREAD_A
     assert agent_mock.await_args.kwargs["question"] == "tell me more"
     assert result.answer == "The packet is still waiting on review."
+
+
+@pytest.mark.asyncio
+async def test_ask_weather_returns_canned_out_of_scope_without_llm() -> None:
+    from app.llm.chat_prompts import OUT_OF_SCOPE_ANSWER
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(side_effect=AssertionError("off-topic must not call Claude")),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="what's the weather",
+        )
+
+    assert result.answer == OUT_OF_SCOPE_ANSWER
+    assert result.citations == []
+    assert result.retrieval_count == 0
+    assert result.refused_write is False
+
+
+@pytest.mark.asyncio
+async def test_ask_overview_keeps_grounded_answer_without_thread_citations() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(
+            return_value=ChatAgentResult(
+                answer="2 threads are waiting on review in sales.",
+                hits=[],
+                grounded=True,
+            )
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="how many threads are waiting",
+        )
+
+    assert result.answer == "2 threads are waiting on review in sales."
+    assert result.citations == []
+    assert result.retrieval_count == 0
+
+
+@pytest.mark.asyncio
+async def test_ask_forces_search_mail_for_a_person_name() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(return_value=ChatAgentResult(answer="", hits=[])),
+    ) as agent_mock:
+        await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="Ashley Cantrell",
+        )
+
+    assert agent_mock.await_args.kwargs["initial_tool"] == "search_mail"
+
+
+@pytest.mark.asyncio
+async def test_ask_follow_up_includes_resolved_thread_id_in_the_question() -> None:
+    from app.llm.chat import ChatAgentResult
+    from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
+    from app.services import chat_service
+
+    history = [
+        ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
+        ChatHistoryTurn(
+            role="assistant",
+            content="The overdue billing dispute is waiting on review.",
+            citations=[ChatCitedThread(thread_id=THREAD_A, subject="Invoice dispute")],
+        ),
+    ]
+    with patch(
+        "app.services.chat_service.run_chat_agent",
+        AsyncMock(return_value=ChatAgentResult(answer="", hits=[])),
+    ) as agent_mock:
+        await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="tell me more about the first one",
+            history=history,
+        )
+
+    question = agent_mock.await_args.kwargs["question"]
+    assert str(THREAD_A) in question
+    assert agent_mock.await_args.kwargs["initial_tool"] == "get_thread"

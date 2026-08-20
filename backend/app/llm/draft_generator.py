@@ -98,6 +98,7 @@ def _build_user_content(
     negative_constraints: list[str] | None = None,
     urgency_hints: list[str] | None = None,
     instruction: str | None = None,
+    confirmed_associations: list[CrossThreadContextSchema] | None = None,
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
 ) -> str:
@@ -120,6 +121,28 @@ def _build_user_content(
     context_reason = triage.context_reason or "(none)"
 
     cross_block = pack_cross_thread(cross_thread_context)
+    if confirmed_associations:
+        extra_blocks: list[str] = []
+        mailboxes: list[str] = []
+        for assoc in confirmed_associations:
+            extra_blocks.append(pack_cross_thread(assoc))
+            for msg in assoc.thread_messages:
+                if msg.mailbox and msg.mailbox not in mailboxes:
+                    mailboxes.append(msg.mailbox)
+        hints = ""
+        if mailboxes:
+            others = ", ".join(mailboxes)
+            hints = (
+                f"\nSuggestion only (do not send mail): reply on this thread; "
+                f"consider emailing {others}."
+            )
+        packed = "\n\n".join(extra_blocks)
+        if cross_block == "(none)":
+            cross_block = f"Confirmed associated threads:\n{packed}{hints}"
+        else:
+            cross_block = (
+                f"{cross_block}\n\nConfirmed associated threads:\n{packed}{hints}"
+            )
     if tone_references:
         tone_block = "\n".join(f"- {ref}" for ref in tone_references if ref.strip())
         if not tone_block:
@@ -379,6 +402,7 @@ async def generate_draft(
     urgency_hints: list[str] | None = None,
     instruction: str | None = None,
     reference_loader: SkillReferenceLoader | None = None,
+    confirmed_associations: list[CrossThreadContextSchema] | None = None,
 ) -> DraftCallResult:
     """Call Sonnet (tool loop when loader provided) and return a structured draft."""
     if not settings.anthropic_api_key.strip():
@@ -387,6 +411,11 @@ async def generate_draft(
     model = settings.draft_model
     max_tokens = DRAFT_MAX_TOKENS
     # Scrub copies only — originals in Postgres stay intact for human review.
+    scrubbed_confirmed: list[CrossThreadContextSchema] = []
+    for item in confirmed_associations or []:
+        scrubbed = _scrub_cross_thread(item)
+        if isinstance(scrubbed, CrossThreadContextSchema):
+            scrubbed_confirmed.append(scrubbed)
     user_content = _build_user_content(
         scrub_email_for_llm(email),
         scrub_thread_for_llm(thread_context),
@@ -398,6 +427,7 @@ async def generate_draft(
         negative_constraints=negative_constraints,
         urgency_hints=urgency_hints,
         instruction=instruction,
+        confirmed_associations=scrubbed_confirmed,
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
     )

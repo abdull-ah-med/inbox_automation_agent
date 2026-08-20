@@ -1,13 +1,16 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { useParams } from "next/navigation"
+import { useParams, useSearchParams } from "next/navigation"
 
+import { CourtesyCloseBanner } from "@/components/courtesy-close-banner"
+import { AssociatedThreadsList } from "@/components/associated-threads-list"
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
 import { SentReplyPanel } from "@/components/sent-reply-panel"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
+import { ThreadOriginBanner } from "@/components/thread-origin-banner"
 import { ThreadTriageSidebar } from "@/components/thread-triage-sidebar"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,11 +21,23 @@ import { cn, textLinkClass } from "@/lib/utils"
 
 export default function ThreadDetailPage() {
   const params = useParams<{ thread_id: string }>()
+  const searchParams = useSearchParams()
   const threadId = params.thread_id
+  const fromId = searchParams.get("from")
+  const originId = fromId && fromId !== threadId ? fromId : null
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => api.threads.detail(threadId),
+  })
+  const associatedQuery = useQuery({
+    queryKey: ["thread", threadId, "associated"],
+    queryFn: () => api.threads.related(threadId, "associated"),
+  })
+  const originQuery = useQuery({
+    queryKey: ["thread", originId],
+    queryFn: () => api.threads.detail(originId ?? ""),
+    enabled: originId != null,
   })
 
   if (isLoading) {
@@ -62,8 +77,9 @@ export default function ThreadDetailPage() {
     )
   }
 
-  const { thread, classification, draft, triage, messages, audit_log, sent_reply, draft_vs_sent_diff } =
+  const { thread, classification, draft, triage, messages, audit_log, sent_reply, draft_vs_sent_diff, associated_threads } =
     data
+  const associatedItems = associatedQuery.data?.items ?? associated_threads ?? []
   const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
   const urgency = classification?.urgency || draft?.urgency || thread.urgency
@@ -71,18 +87,27 @@ export default function ThreadDetailPage() {
   const showSentReply =
     thread.state === "RESOLVED" && sent_reply != null
 
+  const lastInbound = [...messages].reverse().find((row) => row.direction === "inbound")
+  const originSubject =
+    originQuery.data?.thread.subject?.trim() || "the thread you were reviewing"
+  const crumbItems = [
+    { label: "Overview", href: "/dashboard" },
+    {
+      label,
+      href: `/mailboxes/${encodeURIComponent(thread.mailbox_key)}`,
+    },
+    ...(originId
+      ? [{ label: originSubject, href: `/threads/${originId}` }]
+      : []),
+    { label: subject },
+  ]
+
   return (
     <>
-      <Breadcrumbs
-        items={[
-          { label: "Overview", href: "/dashboard" },
-          {
-            label,
-            href: `/mailboxes/${encodeURIComponent(thread.mailbox_key)}`,
-          },
-          { label: subject },
-        ]}
-      />
+      <Breadcrumbs items={crumbItems} />
+      {originId ? (
+        <ThreadOriginBanner originId={originId} originSubject={originSubject} />
+      ) : null}
 
       <Card className="mb-5">
         <CardHeader className="gap-3">
@@ -100,6 +125,8 @@ export default function ThreadDetailPage() {
             {thread.category ? (
               <StatusBadge label={thread.category} tone="purple" />
             ) : null}
+            {triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
+            {triage?.is_automated ? <StatusBadge label="Automated" tone="neutral" /> : null}
             {triage?.is_spam ? <StatusBadge label="Spam" tone="red" /> : null}
             {triage?.needs_context ? (
               <StatusBadge label="Needs context" tone="amber" />
@@ -136,6 +163,16 @@ export default function ThreadDetailPage() {
           </div>
         </CardContent>
       </Card>
+
+      <CourtesyCloseBanner
+        state={thread.state}
+        lastInboundBody={lastInbound?.body_text ?? null}
+      />
+      <AssociatedThreadsList
+        sourceThreadId={threadId}
+        sourceSubject={subject}
+        items={associatedItems}
+      />
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
         <aside className="lg:col-span-2">

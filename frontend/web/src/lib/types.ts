@@ -298,14 +298,6 @@ export interface ChatCitation {
   url_path: string
 }
 
-export interface ChatAskResponse {
-  answer: string
-  citations: ChatCitation[]
-  retrieval_count: number
-  mailbox: string | null
-  refused_write: boolean
-}
-
 export interface ChatCitedThread {
   thread_id: string
   subject?: string | null
@@ -322,6 +314,18 @@ export interface ChatAskRequest {
   mailbox?: string
   limit?: number
   history?: ChatHistoryTurn[]
+  bypass_cache?: boolean
+}
+
+export interface ChatAskResponse {
+  answer: string
+  citations: ChatCitation[]
+  retrieval_count: number
+  mailbox: string | null
+  refused_write: boolean
+  cached?: boolean
+  cache_similarity?: number | null
+  grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
 }
 
 export interface SearchHit {

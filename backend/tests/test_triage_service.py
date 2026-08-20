@@ -58,12 +58,16 @@ def test_decide_action_needed_preserves_needs_context() -> None:
     assert triage.needs_context is True
 
 
-def _state() -> EmailTriageState:
+def _state(
+    *,
+    mailbox: str = "elise@example.com",
+    sender: str = "vendor@example.com",
+) -> EmailTriageState:
     email = EmailMessageSchema(
         message_id="m1",
         conversation_id="c1",
-        mailbox="elise@example.com",
-        sender="vendor@example.com",
+        mailbox=mailbox,
+        sender=sender,
         subject="Hi",
         body_text="Please reply",
         received_at=datetime(2026, 7, 10, tzinfo=UTC),
@@ -118,3 +122,69 @@ async def test_run_triage_failure_sets_requires_human() -> None:
     assert state.draft_status == "REQUIRES_HUMAN"
     assert state.triage is None
     assert any(e.startswith("triage_failed:") for e in state.error_logs)
+
+
+@pytest.mark.asyncio
+async def test_run_triage_never_discards_internal_mail_as_spam() -> None:
+    """Haiku calling same-domain mail spam must not skip the thread."""
+    call = TriageCallResult(
+        triage=_triage(
+            is_spam=True,
+            spam_reason="Looks automated",
+            has_action_items=True,
+            action_items_summary="Review the attached policy",
+            routing_category="general",
+        ),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(mailbox="elise@sample-site.example.com", sender="hr@sample-site.example.com"),
+            client=AsyncMock(),
+            settings=Settings(),
+        )
+    assert state.triage is not None
+    assert state.triage.is_spam is False
+    assert state.triage.spam_reason is None
+    assert state.draft_status == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_run_triage_never_discards_allowlisted_sender_as_spam() -> None:
+    """A reviewer-corrected sender must not be discarded even if Haiku says spam."""
+    call = TriageCallResult(
+        triage=_triage(
+            is_spam=True,
+            spam_reason="Automated vendor mail",
+            has_action_items=True,
+            action_items_summary="Confirm SampleLab rebilling",
+            routing_category="vendor",
+        ),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(mailbox="elise@sample-site.example.com", sender="orders@sample-lab.example.com"),
+            client=AsyncMock(),
+            settings=Settings(),
+            allowlisted_senders=frozenset({"orders@sample-lab.example.com"}),
+        )
+    assert state.triage is not None
+    assert state.triage.is_spam is False
+    assert state.triage.spam_reason is None
+    assert state.draft_status == "PENDING"
+    assert state.triage.has_action_items is True

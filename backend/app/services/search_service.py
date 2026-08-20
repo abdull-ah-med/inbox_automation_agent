@@ -256,13 +256,7 @@ _FTS_FILLER = _NAME_FILLER | frozenset(
 )
 
 
-def build_prefix_tsquery(query: str) -> str:
-    """Outlook-style prefix match: SampleH hits SampleHelpdesk.
-
-    Chatty asks AND every token unless filler is dropped — ``give me the latest
-    on info`` must not require the document to contain give/latest/happening.
-    Tokens are ``\\w+`` only so operators cannot break the query.
-    """
+def _content_tokens(query: str) -> list[str]:
     tokens: list[str] = []
     seen: set[str] = set()
     for token in _FTS_WORD_RE.findall(query or ""):
@@ -273,6 +267,38 @@ def build_prefix_tsquery(query: str) -> str:
             continue
         seen.add(lowered)
         tokens.append(token)
+    return tokens
+
+
+def _required_search_tokens(query: str) -> list[str]:
+    """Title-case tokens are the named entity; lowercase extras are paraphrases.
+
+    ``Omason timber products`` must not AND timber against a lumber thread.
+    Two Title Case tokens stay AND (Ashley Cantrell). Three or more is a
+    company name — only the first token is required.
+    All-lowercase keyword asks keep every token.
+    """
+    tokens = _content_tokens(query)
+    entity = [token for token in tokens if any(char.isupper() for char in token)]
+    if len(entity) >= 3:
+        return entity[:1]
+    return entity or tokens
+
+
+def content_embed_text(query: str) -> str:
+    """Filler-stripped text for the embedding query, not the chatty sentence."""
+    return " ".join(_content_tokens(query))
+
+
+def build_prefix_tsquery(query: str) -> str:
+    """Outlook-style prefix match: SampleH hits SampleHelpdesk.
+
+    Chatty asks AND every token unless filler is dropped — ``give me the latest
+    on info`` must not require the document to contain give/latest/happening.
+    Named-entity tokens (any uppercase) are required; lowercase extras are not.
+    Tokens are ``\\w+`` only so operators cannot break the query.
+    """
+    tokens = _required_search_tokens(query)
     if not tokens:
         return ""
     return " & ".join(f"{token}:*" for token in tokens)
@@ -457,10 +483,12 @@ async def search_threads(
 
     vector_matches: list[EmbeddingMatchSchema] = []
     fts_matches: list[EmbeddingMatchSchema] = []
+    keyword_matches: list[EmbeddingMatchSchema] = []
     vector_failed = False
     fts_failed = False
     top_k = max(settings.embedding_candidate_k, limit)
-    use_vector = mode == SEARCH_MODE_HYBRID and bool(parsed.free_text)
+    embed_source = content_embed_text(parsed.free_text) if parsed.free_text else ""
+    use_vector = mode == SEARCH_MODE_HYBRID and bool(embed_source)
 
     vector: list[float] | None = None
     if use_vector:
@@ -469,7 +497,7 @@ async def search_threads(
         else:
             try:
                 vector = await embedding_service.embed_text(
-                    parsed.free_text,
+                    embed_source,
                     client=openai_client,
                     settings=settings,
                 )
@@ -492,15 +520,11 @@ async def search_threads(
 
     try:
         prefix_query = (
-            build_prefix_tsquery(build_fts_query(parsed.free_text))
-            if parsed.free_text
-            else ""
+            build_prefix_tsquery(build_fts_query(parsed.free_text)) if parsed.free_text else ""
         )
         # mailbox: or a filler-only chat overview: empty FTS + recency listing.
         recency_listing = (
-            not parsed.free_text
-            and filters is None
-            and (bool(parsed.mailboxes) or allow_empty)
+            not parsed.free_text and filters is None and (bool(parsed.mailboxes) or allow_empty)
         )
         fts_matches = await embedding_repo.search_fts(
             session,
@@ -515,7 +539,34 @@ async def search_threads(
         fts_failed = True
         logger.exception("search_fts_failed", query_length=len(cleaned))
 
-    if not vector_matches and not fts_matches:
+    required_tokens = (
+        _required_search_tokens(build_fts_query(parsed.free_text))
+        if parsed.free_text and filters is None
+        else []
+    )
+    if required_tokens:
+        try:
+            keyword_threads = await thread_repo.search_keyword_threads(
+                session,
+                tokens=required_tokens,
+                mailboxes=mailboxes,
+                top_k=top_k,
+            )
+            keyword_matches = [
+                EmbeddingMatchSchema(
+                    id=row.id,
+                    conversation_id=row.conversation_id,
+                    similarity_score=1.0,
+                    mailbox=row.mailbox,
+                    body_preview=row.subject,
+                    sender_email=None,
+                )
+                for row in keyword_threads
+            ]
+        except Exception:
+            logger.exception("search_keyword_failed", query_length=len(cleaned))
+
+    if not vector_matches and not fts_matches and not keyword_matches:
         if vector_failed or fts_failed:
             raise SearchError("Search is temporarily unavailable")
         return SearchResponse(query=cleaned, mailbox=resolved, hits=[])
@@ -523,6 +574,7 @@ async def search_threads(
     fused = rrf_fuse(
         _fuse_tuples(vector_matches),
         _fuse_tuples(fts_matches),
+        _fuse_tuples(keyword_matches),
         k=settings.rrf_k,
     )
     conv_scores = aggregate_conversation_scores(
@@ -533,7 +585,7 @@ async def search_threads(
     ranked = sorted(conv_scores.items(), key=lambda kv: kv[1], reverse=True)
     pairs = [_split_scope_key(key) for key, _score in ranked]
     threads = await thread_repo.list_by_mailbox_conversations(session, pairs)
-    by_embedding = {match.id: match for match in [*vector_matches, *fts_matches]}
+    by_embedding = {match.id: match for match in [*vector_matches, *fts_matches, *keyword_matches]}
     vector_ids = {match.id for match in vector_matches}
 
     hits: list[SearchHit] = []
@@ -545,6 +597,7 @@ async def search_threads(
         top_hit = best_hit_for_conversation(fused, key)
         preview = None
         cosine: float | None = None
+        match = None
         if top_hit is not None:
             match = by_embedding.get(top_hit.embedding_id)
             if match is not None:
@@ -569,6 +622,7 @@ async def search_threads(
                 score=score,
                 last_message_at=thread.last_message_at,
                 similarity_score=cosine,
+                sender=match.sender_email if match is not None else None,
             )
         )
         if len(hits) >= limit:

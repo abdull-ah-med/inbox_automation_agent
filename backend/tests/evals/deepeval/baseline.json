@@ -1,0 +1,6 @@
+{
+  "FaithfulnessMetric": 0.90,
+  "AnswerRelevancyMetric": 0.85,
+  "ContextualPrecisionMetric": 0.80,
+  "ContextualRecallMetric": 0.80
+}

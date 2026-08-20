@@ -47,6 +47,8 @@ class EmailMessageSchema(BaseModel):
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
+    # Well-known Graph folder (inbox / junkemail / sentitems). Hint only.
+    graph_folder: str | None = None
     # Optional packed-prompt fields (populated when summaries exist).
     summary_one_line: str | None = None
     summary_json: dict[str, object] | None = None

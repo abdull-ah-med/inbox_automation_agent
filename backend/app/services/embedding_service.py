@@ -23,11 +23,12 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.llm.email_clean import CLEAN_VERSION, effective_body_text
+from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_text
 from app.models.schemas.email import EmailMessageSchema
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.repositories import embedding_repo
+from app.utils.email_quotes import EMBED_CLEAN_VERSION, strip_quoted_reply
 
 logger = structlog.get_logger(__name__)
 
@@ -50,13 +51,18 @@ def _truncate_to_token_budget(text: str, *, max_tokens: int) -> str:
     return encoding.decode(tokens[:max_tokens])
 
 
-def build_search_document(email: EmailMessageSchema) -> str:
-    """Metadata-prefixed cleaned body used for embed + FTS (unsrubbed for FTS store)."""
+def _document_body(email: EmailMessageSchema) -> str:
     body = effective_body_text(
         body_clean=email.body_clean,
         body_text=email.body_text,
         body_content_type=email.body_content_type,
     )
+    return strip_quoted_reply(body).text
+
+
+def build_search_document(email: EmailMessageSchema) -> str:
+    """Metadata-prefixed cleaned body used for embed + FTS (unsrubbed for FTS store)."""
+    body = _document_body(email)
     to_list = ", ".join(email.to_recipients) if email.to_recipients else ""
     cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else ""
     subject = (email.subject or "").strip()
@@ -72,11 +78,13 @@ def _build_embed_text(email: EmailMessageSchema, *, max_tokens: int) -> str:
     sender/recipient/subject always survive.
     """
     scrubbed = scrub_email_for_llm(email)
-    body = effective_body_text(
-        body_clean=scrubbed.body_clean,
-        body_text=scrubbed.body_text,
-        body_content_type=scrubbed.body_content_type,
-    )
+    body = strip_quoted_reply(
+        effective_body_text(
+            body_clean=scrubbed.body_clean,
+            body_text=scrubbed.body_text,
+            body_content_type=scrubbed.body_content_type,
+        )
+    ).text
     to_list = ", ".join(scrubbed.to_recipients) if scrubbed.to_recipients else ""
     cc_list = ", ".join(scrubbed.cc_recipients) if scrubbed.cc_recipients else ""
     subject = (scrubbed.subject or "").strip()
@@ -155,7 +163,7 @@ async def store_email_embedding(
         graph_message_id=email.message_id,
         search_document=doc,
         embed_clean_version=(
-            embed_clean_version if embed_clean_version is not None else CLEAN_VERSION
+            embed_clean_version if embed_clean_version is not None else EMBED_CLEAN_VERSION
         ),
     )
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import jwt
 from fastapi import Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -50,6 +51,26 @@ def resolve_client_ip(request: Request, settings: Settings) -> str:
 def client_ip_key(request: Request) -> str:
     """SlowAPI key func: resolve IP using process settings."""
     return resolve_client_ip(request, get_settings())
+
+
+def chat_rate_limit_key(request: Request) -> str:
+    """Per-user chat budget: Bearer ``sub`` when present, otherwise client IP."""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        try:
+            from app.core.security.tokens import decode_access_token
+
+            claims = decode_access_token(token, get_settings())
+            return f"user:{claims.sub}"
+        except jwt.PyJWTError:
+            pass
+    return client_ip_key(request)
+
+
+def chat_limit_value(request: Request | None = None) -> str:
+    _ = request
+    return f"{get_settings().chat_rate_limit_per_minute}/minute"
 
 
 def limiter_storage_uri(settings: Settings) -> str:

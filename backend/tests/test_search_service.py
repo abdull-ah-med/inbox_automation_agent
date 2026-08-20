@@ -62,6 +62,7 @@ def _match(
     body_preview: str,
     message_id: uuid.UUID | None = None,
     score: float = 0.9,
+    sender_email: str | None = "vendor@example.com",
 ) -> EmbeddingMatchSchema:
     return EmbeddingMatchSchema(
         id=embedding_id,
@@ -70,6 +71,7 @@ def _match(
         message_id=message_id or uuid.uuid4(),
         mailbox=mailbox,
         body_preview=body_preview,
+        sender_email=sender_email,
     )
 
 
@@ -195,6 +197,10 @@ def _patch_retrieval():
             "app.services.search_service.thread_repo.list_by_mailbox_conversations",
             new=AsyncMock(side_effect=_fake_list_threads),
         ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         yield
 
@@ -285,6 +291,10 @@ async def test_keyword_mode_returns_fts_hits_not_vector_only_matches() -> None:
             "app.services.search_service.thread_repo.list_by_mailbox_conversations",
             new=AsyncMock(side_effect=_fake_list_threads),
         ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         result = await search_service.search_threads(
             session,
@@ -296,6 +306,7 @@ async def test_keyword_mode_returns_fts_hits_not_vector_only_matches() -> None:
 
     assert [hit.thread_id for hit in result.hits] == [SALES_THREAD_ID]
     assert result.hits[0].subject == "Drug screen packet"
+    assert result.hits[0].sender == "vendor@example.com"
     assert embed.await_count == 0
     assert similar.await_count == 0
 
@@ -464,6 +475,10 @@ async def test_ranked_hits_follow_rrf_worked_example() -> None:
             "app.services.search_service.thread_repo.list_by_mailbox_conversations",
             new=AsyncMock(side_effect=fake_threads),
         ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         result = await search_service.search_threads(
             session,
@@ -500,6 +515,10 @@ async def test_embed_failure_falls_back_to_fts() -> None:
             "app.services.search_service.thread_repo.list_by_mailbox_conversations",
             new=AsyncMock(side_effect=_fake_list_threads),
         ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
+        ),
     ):
         result = await search_service.search_threads(
             session,
@@ -530,6 +549,10 @@ async def test_missing_openai_client_uses_fts_only() -> None:
         patch(
             "app.services.search_service.thread_repo.list_by_mailbox_conversations",
             new=AsyncMock(side_effect=_fake_list_threads),
+        ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
         ),
     ):
         result = await search_service.search_threads(
@@ -582,7 +605,6 @@ def test_snippet_centers_on_highlight_term() -> None:
     assert "unpaid invoice 9921" in snippet
     assert not snippet.startswith("Opening pleasantries")
     assert len(snippet) <= SEARCH_SNIPPET_MAX_CHARS + 6  # optional leading/trailing ...
-
 
 
 def test_snippet_truncates_to_240_chars() -> None:
@@ -777,9 +799,7 @@ async def test_fts_search_does_not_leak_across_mailboxes(db_session) -> None:
 def test_fts_query_quotes_proper_names_and_drops_chat_filler() -> None:
     from app.services.search_service import build_fts_query
 
-    rewritten = build_fts_query(
-        "What's happening on Ashley Cantrell, give me the latest"
-    )
+    rewritten = build_fts_query("What's happening on Ashley Cantrell, give me the latest")
     assert rewritten == '"Ashley Cantrell"'
 
 
@@ -804,8 +824,7 @@ def test_prefix_tsquery_drops_chat_filler_and_keeps_the_entity() -> None:
     from app.services.search_service import build_prefix_tsquery
 
     q = build_prefix_tsquery(
-        "give me the latest on info what s happening there "
-        "what do i need to focus on first"
+        "give me the latest on info what s happening there what do i need to focus on first"
     )
     assert q == "info:*"
     assert "give" not in q
@@ -819,6 +838,32 @@ def test_prefix_tsquery_drops_thread_meta_nouns() -> None:
 
     assert build_prefix_tsquery("Threads about SampleLab") == "SampleLab:*"
     assert build_prefix_tsquery("emails from invoices") == "invoices:*"
+
+
+def test_content_embed_text_strips_chat_filler() -> None:
+    """Vector search must embed the company/topic, not 'give me the latest'."""
+    from app.services.search_service import content_embed_text
+
+    assert (
+        content_embed_text(
+            "can you give me the latest on Omason timber products? what s happening with them?"
+        )
+        == "Omason timber products"
+    )
+
+
+def test_prefix_tsquery_does_not_require_lowercase_paraphrase_tokens() -> None:
+    """Named entity is required; 'timber products' must not AND-fail a lumber thread."""
+    from app.services.search_service import build_fts_query, build_prefix_tsquery
+
+    assert build_prefix_tsquery(build_fts_query("Omason timber products")) == "Omason:*"
+
+
+def test_prefix_tsquery_title_case_company_keeps_the_name_only() -> None:
+    """A 3-word Title Case company is not First Last; AND-ing Timber misses lumber mail."""
+    from app.services.search_service import build_fts_query, build_prefix_tsquery
+
+    assert build_prefix_tsquery(build_fts_query("Omason Timber Products")) == "Omason:*"
 
 
 @pytest.mark.db
@@ -948,8 +993,7 @@ async def test_chatty_overview_ask_finds_info_thread(db_session) -> None:
         _settings(),
         openai_client=None,
         query=(
-            "give me the latest on info. what s happening there? "
-            "what do i need to focus on first?"
+            "give me the latest on info. what s happening there? what do i need to focus on first?"
         ),
         mode="keyword",
     )
@@ -1168,8 +1212,7 @@ async def _seed_filter_search_rows(session: object) -> dict[str, uuid.UUID]:
                 sent_at=now,
                 body_preview="We sent the packet",
                 search_document=(
-                    f"From: {SALES} | Subject: Drug screen packet\n\n"
-                    "We sent the packet"
+                    f"From: {SALES} | Subject: Drug screen packet\n\nWe sent the packet"
                 ),
                 message_id=sales_out_msg.id,
             ),
@@ -1509,3 +1552,158 @@ async def test_filler_only_with_allow_empty_lists_recent_allowlist_threads(
     )
     hit_ids = {hit.thread_id for hit in result.hits}
     assert hit_ids == {ids["info"], ids["sales"]}
+
+
+@pytest.mark.asyncio
+async def test_hybrid_embeds_content_tokens_not_chat_filler() -> None:
+    """Chatty asks must not be embedded whole — filler pulls the vector off the mail."""
+    captured: dict[str, str] = {}
+
+    async def embed(text: str, **_kwargs: object) -> list[float]:
+        captured["text"] = text
+        return [0.1] * 8
+
+    session = AsyncMock()
+    with (
+        patch("app.services.search_service.embedding_service.embed_text", new=embed),
+        patch(
+            "app.services.search_service.embedding_repo.search_similar",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.search_service.embedding_repo.search_fts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.search_service.thread_repo.list_by_mailbox_conversations",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "app.services.search_service.thread_repo.search_keyword_threads",
+            new=AsyncMock(return_value=[]),
+        ),
+    ):
+        await search_service.search_threads(
+            session,
+            _settings(),
+            openai_client=AsyncMock(),
+            query=(
+                "can you give me the latest on Omason timber products? what s happening with them?"
+            ),
+        )
+    assert captured["text"] == "Omason timber products"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_unapostrophized_query_finds_apostrophe_name_in_index(db_session) -> None:
+    """Postgres splits O'Mason into o + mason, so Omason:* misses unless FTS folds '."""
+    from app.models.db.email_embedding import EmailEmbedding
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    thread = Thread(
+        id=thread_id,
+        mailbox=SALES,
+        conversation_id="conv-apostrophe-vendor",
+        subject="Background check inquiry",
+        state="DRAFTED",
+        urgency="NORMAL",
+        last_message_at=now,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    message = Message(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="vendor@example.com",
+        body_text="Please set up O'Mason Timber Products for screening.",
+        body_preview="Please set up O'Mason Timber Products for screening.",
+        received_at=now,
+        to_recipients=[SALES],
+        cc_recipients=[],
+    )
+    db_session.add(message)
+    await db_session.flush()
+    db_session.add(
+        EmailEmbedding(
+            mailbox=SALES,
+            conversation_id="conv-apostrophe-vendor",
+            sender_email="vendor@example.com",
+            recipient_emails=[SALES],
+            cc_emails=[],
+            embedding=[0.0] * _embedding_dim(),
+            sent_at=now,
+            body_preview="Please set up O'Mason Timber Products for screening.",
+            search_document=(
+                "From: vendor@example.com | Subject: Background check inquiry\n\n"
+                "Please set up O'Mason Timber Products for screening."
+            ),
+            message_id=message.id,
+        )
+    )
+    await db_session.commit()
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query="Omason",
+        mode="keyword",
+    )
+    assert [hit.thread_id for hit in result.hits] == [thread_id]
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_unembedded_thread_is_found_by_subject_and_sender(db_session) -> None:
+    """Mail never embedded is still in threads/messages and must be searchable."""
+    from app.models.db.message import Message
+    from app.models.db.thread import Thread
+
+    now = datetime(2026, 8, 5, 15, 0, tzinfo=UTC)
+    thread_id = uuid.uuid4()
+    db_session.add(
+        Thread(
+            id=thread_id,
+            mailbox=SALES,
+            conversation_id="conv-unembedded-lumber",
+            subject="ACH Form - O'Mason Lumber Products",
+            state="DRAFTED",
+            urgency="NORMAL",
+            last_message_at=now,
+        )
+    )
+    await db_session.flush()
+    db_session.add(
+        Message(
+            id=uuid.uuid4(),
+            thread_id=thread_id,
+            graph_message_id=str(uuid.uuid4()),
+            direction="inbound",
+            sender="ashley@sample-materials.example.com",
+            body_text="Attached is the ACH form.",
+            body_preview="Attached is the ACH form.",
+            received_at=now,
+            to_recipients=[SALES],
+            cc_recipients=[],
+        )
+    )
+    await db_session.commit()
+
+    result = await search_service.search_threads(
+        db_session,
+        _settings(),
+        openai_client=None,
+        query=(
+            "can you give me the latest on Omason timber products? what s happening with them?"
+        ),
+    )
+    hit_ids = [hit.thread_id for hit in result.hits]
+    assert thread_id in hit_ids
+    found = next(hit for hit in result.hits if hit.thread_id == thread_id)
+    assert "O'Mason Lumber Products" in (found.subject or "")

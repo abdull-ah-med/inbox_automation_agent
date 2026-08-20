@@ -13,6 +13,7 @@ from app.llm.prompts import (
     DRAFT_SYSTEM_PROMPT,
     MESSAGE_SUMMARY_SYSTEM_PROMPT,
     PROMPT_VERSION,
+    THREAD_SUMMARY_SYSTEM_PROMPT,
     TRIAGE_SYSTEM_PROMPT,
     URGENCY_EXAMPLES,
     URGENCY_LEVELS,
@@ -64,6 +65,21 @@ def test_triage_prompt_documents_output_fields() -> None:
     assert "confidence" not in TRIAGE_SYSTEM_PROMPT.lower()
 
 
+def test_triage_prompt_does_not_treat_vendor_operations_as_spam() -> None:
+    """Operational vendor mail (SampleLab, billing, sample services) is not junk."""
+    lowered = TRIAGE_SYSTEM_PROMPT.lower()
+    assert "samplelab" in lowered
+    assert "background" in lowered
+    assert "billing" in lowered or "invoice" in lowered
+    assert "never" in lowered
+
+
+def test_triage_prompt_treats_outlook_junk_as_hint_not_verdict() -> None:
+    lowered = TRIAGE_SYSTEM_PROMPT.lower()
+    assert "junk" in lowered
+    assert "verdict" in lowered or "weak" in lowered
+
+
 def test_triage_prompt_is_non_empty() -> None:
     assert isinstance(TRIAGE_SYSTEM_PROMPT, str) and TRIAGE_SYSTEM_PROMPT.strip()
 
@@ -99,6 +115,13 @@ def test_message_summary_prompt_documents_fields() -> None:
     ):
         assert field in MESSAGE_SUMMARY_SYSTEM_PROMPT
     assert "json" in MESSAGE_SUMMARY_SYSTEM_PROMPT.lower()
+
+
+def test_thread_summary_prompt_asks_for_participants_and_decisions() -> None:
+    lowered = THREAD_SUMMARY_SYSTEM_PROMPT.lower()
+    assert "participant" in lowered
+    assert "decision" in lowered or "action item" in lowered
+    assert "200" in THREAD_SUMMARY_SYSTEM_PROMPT
 
 
 def test_draft_prompt_requires_teaching_note() -> None:
@@ -137,7 +160,7 @@ def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-11.1"
+    assert PROMPT_VERSION == "2026-08-20.6"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -156,6 +179,18 @@ def test_wrap_untrusted_neutralizes_nested_closers() -> None:
     assert wrapped.endswith("\n</untrusted_email>")
     assert "</ untrusted_email>" in wrapped
     assert wrapped.count("</untrusted_email>") == 1
+
+
+def test_salted_untrusted_tag_is_unique_and_prefixed() -> None:
+    from app.llm.prompts import salted_untrusted_tag
+
+    first = salted_untrusted_tag()
+    second = salted_untrusted_tag()
+    assert first != second
+    assert first.startswith("untrusted_content_")
+    assert second.startswith("untrusted_content_")
+    assert len(first) == len("untrusted_content_") + 8
+    assert len(second) == len("untrusted_content_") + 8
 
 
 def test_draft_prompt_requires_plain_text_reply_body() -> None:

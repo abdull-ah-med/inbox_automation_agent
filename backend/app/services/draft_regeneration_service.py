@@ -215,6 +215,13 @@ async def regenerate_draft(
         limit=3,
     )
 
+    from app.services import related_thread_service
+
+    confirmed_associations = await related_thread_service.load_confirmed_contexts(
+        session,
+        thread_id,
+    )
+
     # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
         await session.commit()
@@ -238,6 +245,7 @@ async def regenerate_draft(
         urgency_hints=urgency_hints,
         instruction=instruction,
         reference_loader=reference_loader,
+        confirmed_associations=confirmed_associations,
     )
 
     regen_message_id = f"{latest_graph_id}:regen:{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.config import Settings
 from app.core.dependencies import anthropic_client_from_settings
-from app.llm.chat import ChatAgentResult, _hit_block, generate_chat_answer
+from app.llm.chat import ChatAgentResult, _hit_block, run_chat_agent
 from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
 from app.models.schemas.search import SearchHit, SearchResponse
 from app.services import chat_service
@@ -160,18 +160,25 @@ async def run_chat_case(
         question: str,
         execute_tool: Any,
         history: Any = None,
+        initial_tool: str | None = None,
     ) -> ChatAgentResult:
+        from app.services.chat_tools import ChatToolExecution
+
+        async def execute(name: str, arguments: dict) -> ChatToolExecution:
+            _ = name, arguments
+            return ChatToolExecution(hits=hits, status="Searching mail")
+
         _ = execute_tool
         if not hits:
             return ChatAgentResult(answer="", hits=[])
-        answer = await generate_chat_answer(
+        return await run_chat_agent(
             client=client,
             settings=settings,
             question=question,
-            hits=hits,
+            execute_tool=execute,
             history=history,
+            initial_tool=initial_tool,
         )
-        return ChatAgentResult(answer=answer, hits=hits)
 
     patches = [
         patch(

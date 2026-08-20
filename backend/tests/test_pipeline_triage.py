@@ -132,6 +132,97 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_after_ingest_clears_spam_for_allowlisted_sender() -> None:
+    """Haiku spam + reviewer allowlist must still draft, not discard."""
+    from app.llm.triage import TriageCallResult
+
+    email = _email()
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=email.mailbox,
+        subject=email.subject,
+        messages=[email],
+    )
+    ingest = IngestResultSchema(
+        message_id="m1",
+        status="ingested",
+        thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        conversation_id="c1",
+        thread_context=context,
+    )
+    llm_spam = TriageCallResult(
+        triage=TriageResultSchema(
+            is_spam=True,
+            spam_reason="Automated vendor mail",
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=False,
+            routing_category="vendor",
+        ),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+
+    async def _run_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="Re: Need docs",
+            reply_body="Here is the packet.",
+            teaching_note="Reply with the docs.",
+            urgency="NORMAL",
+            urgency_reason="Routine",
+        )
+        return state
+
+    with (
+        patch(
+            "app.services.triage_service.triage_llm.triage_email",
+            new=AsyncMock(return_value=llm_spam),
+        ),
+        patch(
+            "app.services.pipeline_service._allowlisted_senders",
+            new=AsyncMock(return_value=frozenset({"vendor@example.com"})),
+        ),
+        patch(
+            "app.services.pipeline_service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_run_draft),
+        ),
+        patch(
+            "app.services.pipeline_service.audit_service.log_event",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline_service._summarize_non_spam",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline_service.reply_memory_service.find_similar_replies",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.pipeline_service.thread_repo.set_thread_outcome",
+            new=AsyncMock(return_value=None),
+        ),
+        _patch_embed(),
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.triage is not None
+    assert state.triage.is_spam is False
+    assert state.draft_status == "DRAFTED"
+
+
+@pytest.mark.asyncio
 async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
     email = _email()
     context = ThreadContextSchema(

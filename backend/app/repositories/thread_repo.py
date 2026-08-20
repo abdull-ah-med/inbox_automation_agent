@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Select, and_, case, func, or_, select, tuple_, update
+from sqlalchemy import Select, and_, case, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,9 +66,7 @@ def _enriched_triage(
     last_sender: str | None,
     subject: str | None = None,
 ) -> TriageFlags | None:
-    return enrich_triage_flags(
-        flags, sender=last_sender, mailbox=mailbox, subject=subject
-    )
+    return enrich_triage_flags(flags, sender=last_sender, mailbox=mailbox, subject=subject)
 
 
 def _display_state(state: str, *, mailbox: str, last_sender: str | None) -> str:
@@ -186,6 +184,57 @@ async def list_by_mailbox_conversations(
     result = await session.execute(stmt)
     threads = result.scalars().all()
     return {(row.mailbox, row.conversation_id): ThreadSchema.model_validate(row) for row in threads}
+
+
+_APOSTROPHE_FROM = "'\u2018\u2019`"
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _folded_text(column: object):
+    return func.translate(column, _APOSTROPHE_FROM, "")
+
+
+async def search_keyword_threads(
+    session: AsyncSession,
+    *,
+    tokens: Sequence[str],
+    mailboxes: Sequence[str],
+    top_k: int,
+) -> list[ThreadSchema]:
+    """Find threads by folded subject/sender/preview. No embeddings required."""
+    cleaned = [token.strip() for token in tokens if token.strip()]
+    if not cleaned or not mailboxes or top_k < 1:
+        return []
+    token_filters = []
+    for token in cleaned:
+        pattern = f"%{_escape_like(token)}%"
+        token_filters.append(
+            or_(
+                _folded_text(Thread.subject).ilike(pattern, escape="\\"),
+                exists(
+                    select(1).where(
+                        Message.thread_id == Thread.id,
+                        or_(
+                            _folded_text(Message.sender).ilike(pattern, escape="\\"),
+                            _folded_text(func.coalesce(Message.body_preview, "")).ilike(
+                                pattern, escape="\\"
+                            ),
+                        ),
+                    )
+                ),
+            )
+        )
+    stmt = (
+        select(Thread)
+        .where(Thread.mailbox.in_(list(mailboxes)), and_(*token_filters))
+        .order_by(Thread.last_message_at.desc().nullslast())
+        .limit(top_k)
+    )
+    result = await session.execute(stmt)
+    return [ThreadSchema.model_validate(row) for row in result.scalars().all()]
 
 
 async def upsert_thread(
@@ -313,7 +362,9 @@ async def list_by_mailbox(
     msg_count = func.count(Message.id).label("message_count")
     latest_msg = _latest_message_ranked()
 
-    stmt: Select[tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]] = (
+    stmt: Select[
+        tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]
+    ] = (
         select(
             Thread,
             msg_count,
@@ -381,9 +432,7 @@ async def list_by_mailbox(
                 mailbox=thread.mailbox,
                 mailbox_key=infer_mailbox_key(thread.mailbox),
                 subject=thread.subject,
-                state=_display_state(
-                    thread.state, mailbox=thread.mailbox, last_sender=party
-                ),
+                state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
                 urgency=thread.urgency,
                 urgency_reason=thread.urgency_reason,
                 category=thread.category,
@@ -486,9 +535,7 @@ async def list_recent_for_mailboxes(
             mailbox=thread.mailbox,
             mailbox_key=infer_mailbox_key(thread.mailbox),
             subject=thread.subject,
-            state=_display_state(
-                thread.state, mailbox=thread.mailbox, last_sender=party
-            ),
+            state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
             urgency=thread.urgency,
             urgency_reason=thread.urgency_reason,
             category=thread.category,
@@ -664,9 +711,7 @@ async def list_needs_attention(
                 mailbox=thread.mailbox,
                 mailbox_key=infer_mailbox_key(thread.mailbox),
                 subject=thread.subject,
-                state=_display_state(
-                    thread.state, mailbox=thread.mailbox, last_sender=party
-                ),
+                state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
                 urgency=thread.urgency,
                 urgency_reason=thread.urgency_reason,
                 category=thread.category,
@@ -792,9 +837,7 @@ async def build_thread_summary(
         mailbox=thread.mailbox,
         mailbox_key=infer_mailbox_key(thread.mailbox),
         subject=thread.subject,
-        state=_display_state(
-            thread.state, mailbox=thread.mailbox, last_sender=party
-        ),
+        state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
         urgency=thread.urgency,
         urgency_reason=thread.urgency_reason,
         category=thread.category,

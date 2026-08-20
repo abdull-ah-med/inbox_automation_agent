@@ -14,7 +14,9 @@ Prompt-management policy:
 
 from __future__ import annotations
 
-PROMPT_VERSION = "2026-08-11.1"
+import secrets
+
+PROMPT_VERSION = "2026-08-20.6"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -38,6 +40,11 @@ def wrap_untrusted(tag: str, content: str) -> str:
     """Wrap content in an untrusted delimiter tag; neutralize nested closers."""
     safe = content.replace(f"</{tag}>", f"</ {tag}>")
     return f"<{tag}>\n{safe}\n</{tag}>"
+
+
+def salted_untrusted_tag() -> str:
+    """Per-request delimiter so retrieved mail cannot close a static XML tag."""
+    return f"untrusted_content_{secrets.token_hex(4)}"
 
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
@@ -100,7 +107,19 @@ placeholders for removed identifiers and never invent the underlying values.
 Output JSON with exactly these fields (boolean flags + short reasons only —
 do not invent or return any numeric score):
   is_spam:              bool — true if the email is spam, marketing, automated junk,
-                        or completely irrelevant to operations
+                        or completely irrelevant to operations. NEVER true when the
+                        Sender is on the same email domain as the Mailbox (internal
+                        company mail is never spam). NEVER true for operational vendor
+                        mail that belongs in this inbox: background-check / drug-screen
+                        traffic (including SampleLab), invoices and billing from a real
+                        vendor, DOT/FMCSA or compliance notices, or scheduling from a
+                        counterparty. Automated does not mean spam.
+                        is_spam IS true for phishing, unsolicited marketing blasts,
+                        newsletters with no operational ask, and mail completely
+                        unrelated to transportation-compliance operations.
+                        If the user turn lists Outlook location as Junk Email, treat
+                        that as a weak prior from Outlook's filter — not a verdict.
+                        Legitimate vendor mail is often filed there.
   spam_reason:          string or null — if is_spam is true, explain why
   has_action_items:     bool — true if the email contains tasks, requests, questions,
                         or anything requiring a response from the PoI
@@ -112,12 +131,19 @@ do not invent or return any numeric score):
   routing_category:     one of billing | scheduling | escalation | vendor | internal | general
                         — the primary situation bucket for skill/tone/feedback routing.
                         Choose the single best fit; use general when none clearly apply.
+                        Same-domain internal mail uses internal unless a more specific
+                        bucket (billing, scheduling, escalation) clearly applies.
                         Spam may still use general.
 
 Determine has_action_items based on the sender, recipients, and CC list:
 - If the PoI mailbox is in To or CC, consider whether the email asks something of them.
 - If the PoI mailbox is the sender, this is outbound — has_action_items is false.
 - Automated confirmations, newsletters, and FYI forwards typically have no action items.
+- Acknowledgment or courtesy close is not an action item: “sounds good”, “thanks”,
+  or “let me know if you’re unable” with no new ask. Conditional courtesy
+  (“if you can’t, tell me”) is not a task for the PoI unless they were asked to
+  do something now.
+- If the ball is already in the other party’s court, has_action_items is false.
 
 For needs_context: look for references to prior conversations, "as discussed",
 "following up on", "per our earlier email", or any indication the email is part of
@@ -211,4 +237,22 @@ Tokens like [REDACTED_SSN], [REDACTED_DOB], [REDACTED_DL], [REDACTED_BANK],
 [REDACTED_CARD], and [REDACTED_ID] are intentional privacy masks — treat them as
 placeholders and never invent the underlying values.
 Do not invent facts that are not present in the email.
+"""
+
+THREAD_SUMMARY_SYSTEM_PROMPT = """\
+You summarize an email thread for a read-only inbox assistant.
+Write a neutral summary of at most 200 tokens listing participants, decisions,
+and open action items. Answer only with the summary text — no preamble, no
+markdown fences, no thread ids.
+Do not invent facts. Tokens like [REDACTED_SSN] are intentional privacy masks.
+"""
+
+GROUNDEDNESS_SYSTEM_PROMPT = """\
+You check whether an assistant answer is fully supported by citation text.
+Return JSON only matching:
+  {"verdict": "SUPPORTED" | "UNSUPPORTED", "unsupported_spans": [string]}
+unsupported_spans lists short claim fragments that are not in the citations.
+Use UNSUPPORTED only when a concrete fact, date, name, or number is absent.
+Paraphrases of citation content are SUPPORTED. Empty unsupported_spans when
+SUPPORTED. No preamble, no markdown fences.
 """

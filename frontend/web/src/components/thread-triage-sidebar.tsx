@@ -6,6 +6,7 @@ import { Check, X } from "lucide-react"
 
 import { ApplySiblingsDialog } from "@/components/apply-siblings-dialog"
 import { EmailBody } from "@/components/email-body"
+import { NotSpamButton } from "@/components/not-spam-button"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
 import { Button } from "@/components/ui/button"
@@ -423,6 +424,13 @@ export const ThreadTriageSidebar = ({
                 ) : null}
                 {triage.spam_reason ? (
                   <Field label="Spam reason" value={triage.spam_reason} />
+                ) : null}
+                {thread.state === "SPAM" || triage.is_spam ? (
+                  <NotSpamButton
+                    threadId={threadId}
+                    sender={thread.last_sender}
+                    size="sm"
+                  />
                 ) : null}
                 {triage.context_reason ? (
                   <Field label="Context reason" value={triage.context_reason} />

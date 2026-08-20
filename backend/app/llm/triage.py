@@ -59,6 +59,9 @@ def _build_user_content(
         body_text=email.body_text,
         body_content_type=email.body_content_type,
     )
+    outlook_location = ""
+    if (email.graph_folder or "").strip().lower() == "junkemail":
+        outlook_location = "Outlook location: Junk Email\n"
 
     email_block = (
         f"Mailbox: {email.mailbox}\n"
@@ -68,6 +71,7 @@ def _build_user_content(
         f"Sender: {email.sender}\n"
         f"To: {to_list}\n"
         f"CC: {cc_list}\n"
+        f"{outlook_location}"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
         f"Body:\n{body}\n\n"

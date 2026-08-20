@@ -6,8 +6,10 @@ tool hits, never from model-invented thread ids.
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from anthropic import AsyncAnthropic
@@ -15,9 +17,16 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
+from app.core.exceptions import ChatError
 from app.core.sanitize import sanitize_user_text
 from app.llm.chat import iter_chat_agent, run_chat_agent, sanitize_chat_answer
-from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
+from app.llm.chat_prompts import (
+    NO_MATCH_ANSWER,
+    OUT_OF_SCOPE_ANSWER,
+    WRITE_REFUSAL_ANSWER,
+    no_match_answer,
+)
+from app.llm.groundedness import verify_grounded
 from app.models.schemas.chat import (
     CHAT_DEFAULT_LIMIT,
     ChatAskResponse,
@@ -25,7 +34,9 @@ from app.models.schemas.chat import (
     ChatHistoryTurn,
 )
 from app.models.schemas.search import SearchHit
-from app.services import search_service
+from app.repositories import chat_cache_repo
+from app.services import embedding_service, search_service
+from app.services.chat_intent import ChatIntent, classify_chat_intent
 from app.services.chat_query import retrieval_message
 from app.services.chat_tools import execute_chat_tool
 
@@ -101,12 +112,218 @@ def _cleaned_history(
     return cleaned
 
 
+def _agent_question(message: str, thread_id: uuid.UUID | None) -> str:
+    if thread_id is None:
+        return message
+    return f"{message}\nResolved thread_id: {thread_id}"
+
+
+def _out_of_scope_response(*, mailbox: str | None) -> ChatAskResponse:
+    return ChatAskResponse(
+        answer=OUT_OF_SCOPE_ANSWER,
+        citations=[],
+        retrieval_count=0,
+        mailbox=mailbox,
+        refused_write=False,
+        grounded_verifier="SKIPPED",
+    )
+
+
+async def _groundedness_verdict(
+    *,
+    settings: Settings,
+    client: AsyncAnthropic,
+    answer: str,
+    hits: list[SearchHit],
+    grounded: bool,
+) -> str:
+    if not settings.chat_groundedness_enabled or not grounded:
+        return "SKIPPED"
+    result = await verify_grounded(
+        answer,
+        [{"text": hit.snippet or ""} for hit in hits],
+        client=client,
+        settings=settings,
+    )
+    if result.verdict == "UNSUPPORTED":
+        logger.warning(
+            "chat.groundedness_unsupported",
+            unsupported_spans=result.unsupported_spans,
+        )
+    return result.verdict
+
+
+def _mailbox_cache_key(mailbox: str | None) -> str:
+    return (mailbox or "").strip().lower()
+
+
+def _elapsed_ms(started: float) -> int:
+    return int((time.perf_counter() - started) * 1000)
+
+
+def _log_chat_ask(
+    *,
+    hit_count: int,
+    mailbox: str | None,
+    refused_write: bool,
+    query_length: int,
+    intent: object = None,
+    tool_used_first: str | None = None,
+    tool_iterations: int | None = None,
+    grounded_verifier: str | None = None,
+    retrieval_count: int | None = None,
+    cached: bool = False,
+    cache_similarity: float | None = None,
+    ttft_ms: int | None = None,
+    total_ms: int | None = None,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
+) -> None:
+    logger.info(
+        "chat.ask",
+        hit_count=hit_count,
+        mailbox=mailbox,
+        refused_write=refused_write,
+        query_length=query_length,
+        intent=intent,
+        tool_used_first=tool_used_first,
+        tool_iterations=tool_iterations,
+        retrieval_count=retrieval_count,
+        cached=cached,
+        cache_similarity=cache_similarity,
+        grounded_verifier=grounded_verifier,
+        ttft_ms=ttft_ms,
+        total_ms=total_ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
+
+
+def _is_uncacheable_answer(answer: str) -> bool:
+    text = (answer or "").strip()
+    if not text:
+        return True
+    if text in {NO_MATCH_ANSWER, OUT_OF_SCOPE_ANSWER, WRITE_REFUSAL_ANSWER}:
+        return True
+    if text.startswith(WRITE_REFUSAL_ANSWER) or text.startswith(OUT_OF_SCOPE_ANSWER):
+        return True
+    return "no matching threads" in text.lower()
+
+
+def _ttl_seconds(settings: Settings, intent: ChatIntent | None) -> int:
+    if intent in {ChatIntent.OVERVIEW, ChatIntent.AGGREGATION}:
+        return settings.chat_semantic_cache_ttl_overview_sec
+    return settings.chat_semantic_cache_ttl_search_sec
+
+
+def _response_from_cache(hit: chat_cache_repo.ChatCacheHit) -> ChatAskResponse:
+    payload = dict(hit.response_json)
+    payload["cached"] = True
+    payload["cache_similarity"] = hit.similarity
+    return ChatAskResponse.model_validate(payload)
+
+
+async def _lookup_semantic_cache(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    openai_client: AsyncOpenAI | None,
+    message: str,
+    mailbox: str | None,
+    user_key: str | None,
+    bypass_cache: bool,
+) -> tuple[ChatAskResponse | None, list[float] | None]:
+    if (
+        bypass_cache
+        or not settings.chat_semantic_cache_enabled
+        or openai_client is None
+        or not settings.openai_api_key.strip()
+        or not (user_key or "").strip()
+    ):
+        return None, None
+    try:
+        embedding = await embedding_service.embed_text(
+            chat_cache_repo.normalize_chat_query(message),
+            client=openai_client,
+            settings=settings,
+        )
+    except Exception:
+        logger.warning("chat_cache_lookup_failed", mailbox=mailbox)
+        return None, None
+    try:
+        hit = await chat_cache_repo.find_semantic_hit(
+            session,
+            mailbox_key=_mailbox_cache_key(mailbox),
+            user_key=user_key or "",
+            query_embedding=embedding,
+            similarity_threshold=settings.chat_semantic_cache_threshold,
+        )
+    except Exception:
+        logger.warning("chat_cache_lookup_failed", mailbox=mailbox)
+        await _rollback_session(session)
+        return None, embedding
+    if hit is None:
+        return None, embedding
+    return _response_from_cache(hit), embedding
+
+
+async def _rollback_session(session: AsyncSession) -> None:
+    try:
+        await session.rollback()
+    except Exception:
+        return
+
+
+async def _store_semantic_cache(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    message: str,
+    mailbox: str | None,
+    user_key: str | None,
+    embedding: list[float] | None,
+    response: ChatAskResponse,
+    intent: ChatIntent | None,
+    bypass_cache: bool,
+) -> None:
+    if (
+        bypass_cache
+        or embedding is None
+        or not settings.chat_semantic_cache_enabled
+        or not (user_key or "").strip()
+        or response.refused_write
+        or _is_uncacheable_answer(response.answer)
+    ):
+        return
+    try:
+        await chat_cache_repo.store(
+            session,
+            mailbox_key=_mailbox_cache_key(mailbox),
+            user_key=user_key or "",
+            query_normalized=chat_cache_repo.normalize_chat_query(message),
+            query_embedding=embedding,
+            response_json=response.model_dump(mode="json"),
+            citation_thread_ids=[citation.thread_id for citation in response.citations],
+            expires_at=datetime.now(UTC) + timedelta(seconds=_ttl_seconds(settings, intent)),
+        )
+    except Exception:
+        logger.warning("chat_cache_store_failed", mailbox=mailbox)
+        await _rollback_session(session)
+
+
 def _meta_event(
     *,
     citations: list[ChatCitation],
     retrieval_count: int,
     mailbox: str | None,
     refused_write: bool,
+    cached: bool = False,
+    cache_similarity: float | None = None,
+    grounded_verifier: str = "SKIPPED",
 ) -> dict:
     return {
         "type": "meta",
@@ -114,6 +331,9 @@ def _meta_event(
         "retrieval_count": retrieval_count,
         "mailbox": mailbox,
         "refused_write": refused_write,
+        "cached": cached,
+        "cache_similarity": cache_similarity,
+        "grounded_verifier": grounded_verifier,
     }
 
 
@@ -151,11 +371,14 @@ async def ask(
     mailbox: str | None = None,
     limit: int | None = None,
     history: list[ChatHistoryTurn] | None = None,
+    user_key: str | None = None,
+    bypass_cache: bool = False,
 ) -> ChatAskResponse:
     cleaned = sanitize_user_text(message)
     refused_write = detect_write_intent(cleaned)
     retrieval_limit = CHAT_DEFAULT_LIMIT if limit is None else limit
     prior = _cleaned_history(history)
+    started = time.perf_counter()
 
     if refused_write:
         hits, resolved = await _retrieve_for_write(
@@ -176,6 +399,48 @@ async def ask(
             refused_write=True,
         )
 
+    cached, embedding = await _lookup_semantic_cache(
+        session,
+        settings,
+        openai_client=openai_client,
+        message=cleaned,
+        mailbox=mailbox,
+        user_key=user_key,
+        bypass_cache=bypass_cache,
+    )
+    if cached is not None:
+        _log_chat_ask(
+            hit_count=cached.retrieval_count,
+            mailbox=mailbox,
+            refused_write=False,
+            query_length=len(cleaned),
+            cached=True,
+            cache_similarity=cached.cache_similarity,
+            retrieval_count=cached.retrieval_count,
+            grounded_verifier=cached.grounded_verifier,
+            intent=None,
+            tool_used_first=None,
+            tool_iterations=0,
+            ttft_ms=_elapsed_ms(started),
+            total_ms=_elapsed_ms(started),
+            input_tokens=0,
+            output_tokens=0,
+            cache_read_tokens=None,
+            cache_write_tokens=None,
+        )
+        return cached
+
+    plan = classify_chat_intent(
+        cleaned,
+        history=prior,
+        mailbox_emails=list(settings.mailbox_list),
+    )
+    if plan.intent == ChatIntent.OUT_OF_SCOPE:
+        return _out_of_scope_response(mailbox=mailbox)
+
+    tool_mailbox = mailbox or plan.mailbox
+    question = _agent_question(cleaned, plan.thread_id)
+
     async def execute(name: str, arguments: dict):
         return await execute_chat_tool(
             session,
@@ -183,39 +448,86 @@ async def ask(
             openai_client=openai_client,
             name=name,
             arguments=arguments,
-            mailbox=mailbox,
+            mailbox=tool_mailbox,
             limit=retrieval_limit,
         )
 
     result = await run_chat_agent(
         client=anthropic_client,
         settings=settings,
-        question=cleaned,
+        question=question,
         execute_tool=execute,
         history=prior,
+        initial_tool=plan.tool_name,
     )
-    logger.info(
-        "chat.ask",
-        hit_count=len(result.hits),
+    if result.hits:
+        answer = (
+            sanitize_chat_answer(
+                result.answer,
+                known_thread_ids={hit.thread_id for hit in result.hits},
+            )
+            if result.answer
+            else NO_MATCH_ANSWER
+        )
+        citations = citations_from_hits(result.hits)
+        count = len(result.hits)
+        grounded = bool(result.answer)
+    elif result.grounded and result.answer:
+        answer = sanitize_chat_answer(result.answer)
+        citations = []
+        count = 0
+        grounded = True
+    else:
+        answer = no_match_answer(mailbox=mailbox)
+        citations = []
+        count = 0
+        grounded = False
+    verdict = await _groundedness_verdict(
+        settings=settings,
+        client=anthropic_client,
+        answer=answer,
+        hits=result.hits,
+        grounded=grounded,
+    )
+    response = ChatAskResponse(
+        answer=answer,
+        citations=citations,
+        retrieval_count=count,
+        mailbox=mailbox,
+        refused_write=False,
+        grounded_verifier=verdict,  # type: ignore[arg-type]
+    )
+    await _store_semantic_cache(
+        session,
+        settings,
+        message=cleaned,
+        mailbox=mailbox,
+        user_key=user_key,
+        embedding=embedding,
+        response=response,
+        intent=plan.intent,
+        bypass_cache=bypass_cache,
+    )
+    _log_chat_ask(
+        hit_count=count,
         mailbox=mailbox,
         refused_write=False,
         query_length=len(cleaned),
+        intent=plan.intent,
+        tool_used_first=result.tool_used_first or plan.tool_name,
+        tool_iterations=result.tool_iterations,
+        grounded_verifier=verdict,
+        retrieval_count=count,
+        cached=False,
+        cache_similarity=None,
+        ttft_ms=result.ttft_ms,
+        total_ms=_elapsed_ms(started),
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cache_read_tokens=result.cache_read_tokens,
+        cache_write_tokens=result.cache_write_tokens,
     )
-    if not result.hits:
-        return ChatAskResponse(
-            answer=NO_MATCH_ANSWER,
-            citations=[],
-            retrieval_count=0,
-            mailbox=mailbox,
-            refused_write=False,
-        )
-    return ChatAskResponse(
-        answer=sanitize_chat_answer(result.answer) if result.answer else NO_MATCH_ANSWER,
-        citations=citations_from_hits(result.hits),
-        retrieval_count=len(result.hits),
-        mailbox=mailbox,
-        refused_write=False,
-    )
+    return response
 
 
 async def iter_ask_events(
@@ -228,12 +540,15 @@ async def iter_ask_events(
     mailbox: str | None = None,
     limit: int | None = None,
     history: list[ChatHistoryTurn] | None = None,
+    user_key: str | None = None,
+    bypass_cache: bool = False,
 ) -> AsyncIterator[dict]:
     """SSE payload dicts: status, meta, zero or more deltas, then done."""
     cleaned = sanitize_user_text(message)
     refused_write = detect_write_intent(cleaned)
     retrieval_limit = CHAT_DEFAULT_LIMIT if limit is None else limit
     prior = _cleaned_history(history)
+    started = time.perf_counter()
 
     if refused_write:
         hits, resolved = await _retrieve_for_write(
@@ -256,6 +571,63 @@ async def iter_ask_events(
         yield {"type": "done"}
         return
 
+    cached, embedding = await _lookup_semantic_cache(
+        session,
+        settings,
+        openai_client=openai_client,
+        message=cleaned,
+        mailbox=mailbox,
+        user_key=user_key,
+        bypass_cache=bypass_cache,
+    )
+    if cached is not None:
+        _log_chat_ask(
+            hit_count=cached.retrieval_count,
+            mailbox=mailbox,
+            refused_write=False,
+            query_length=len(cleaned),
+            cached=True,
+            cache_similarity=cached.cache_similarity,
+            retrieval_count=cached.retrieval_count,
+            grounded_verifier=cached.grounded_verifier,
+            tool_iterations=0,
+            ttft_ms=_elapsed_ms(started),
+            total_ms=_elapsed_ms(started),
+            input_tokens=0,
+            output_tokens=0,
+        )
+        yield _meta_event(
+            citations=list(cached.citations),
+            retrieval_count=cached.retrieval_count,
+            mailbox=cached.mailbox,
+            refused_write=False,
+            cached=True,
+            cache_similarity=cached.cache_similarity,
+            grounded_verifier=cached.grounded_verifier,
+        )
+        yield {"type": "delta", "text": cached.answer}
+        yield {"type": "done", "grounded_verifier": cached.grounded_verifier}
+        return
+
+    plan = classify_chat_intent(
+        cleaned,
+        history=prior,
+        mailbox_emails=list(settings.mailbox_list),
+    )
+    if plan.intent == ChatIntent.OUT_OF_SCOPE:
+        yield _meta_event(
+            citations=[],
+            retrieval_count=0,
+            mailbox=mailbox,
+            refused_write=False,
+        )
+        yield {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
+        yield {"type": "done"}
+        return
+
+    tool_mailbox = mailbox or plan.mailbox
+    question = _agent_question(cleaned, plan.thread_id)
+
     async def execute(name: str, arguments: dict):
         return await execute_chat_tool(
             session,
@@ -263,66 +635,168 @@ async def iter_ask_events(
             openai_client=openai_client,
             name=name,
             arguments=arguments,
-            mailbox=mailbox,
+            mailbox=tool_mailbox,
             limit=retrieval_limit,
         )
 
     answer = ""
     hits: list[SearchHit] = []
+    grounded = False
     forwarded_delta = False
     meta_sent = False
-    async for event in iter_chat_agent(
-        client=anthropic_client,
-        settings=settings,
-        question=cleaned,
-        execute_tool=execute,
-        history=prior,
-    ):
-        if event.get("type") == "status":
-            yield {"type": "status", "text": event.get("text") or ""}
-        elif event.get("type") == "retrieved":
-            hits = list(event.get("hits") or [])
-            if not meta_sent:
-                yield _meta_event(
-                    citations=citations_from_hits(hits),
-                    retrieval_count=len(hits),
-                    mailbox=mailbox,
-                    refused_write=False,
-                )
-                meta_sent = True
-        elif event.get("type") == "delta":
-            piece = str(event.get("text") or "")
-            if not piece:
-                continue
-            if not meta_sent:
-                yield _meta_event(
-                    citations=citations_from_hits(hits),
-                    retrieval_count=len(hits),
-                    mailbox=mailbox,
-                    refused_write=False,
-                )
-                meta_sent = True
-            forwarded_delta = True
-            yield {"type": "delta", "text": piece}
-        elif event.get("type") == "result":
-            answer = str(event.get("answer") or "")
-            hits = list(event.get("hits") or [])
+    tool_used_first: str | None = None
+    tool_iterations = 0
+    ttft_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    try:
+        async for event in iter_chat_agent(
+            client=anthropic_client,
+            settings=settings,
+            question=question,
+            execute_tool=execute,
+            history=prior,
+            initial_tool=plan.tool_name,
+        ):
+            if event.get("type") == "status":
+                yield {"type": "status", "text": event.get("text") or ""}
+            elif event.get("type") == "retrieved":
+                hits = list(event.get("hits") or [])
+                if not meta_sent:
+                    yield _meta_event(
+                        citations=citations_from_hits(hits),
+                        retrieval_count=len(hits),
+                        mailbox=mailbox,
+                        refused_write=False,
+                    )
+                    meta_sent = True
+            elif event.get("type") == "delta":
+                piece = str(event.get("text") or "")
+                if not piece:
+                    continue
+                if not meta_sent:
+                    yield _meta_event(
+                        citations=citations_from_hits(hits),
+                        retrieval_count=len(hits),
+                        mailbox=mailbox,
+                        refused_write=False,
+                    )
+                    meta_sent = True
+                if ttft_ms is None:
+                    ttft_ms = _elapsed_ms(started)
+                forwarded_delta = True
+                yield {"type": "delta", "text": piece}
+            elif event.get("type") == "result":
+                answer = str(event.get("answer") or "")
+                hits = list(event.get("hits") or [])
+                grounded = bool(event.get("grounded"))
+                tool_used_first = event.get("tool_used_first") or plan.tool_name
+                tool_iterations = int(event.get("tool_iterations") or 0)
+                if event.get("ttft_ms") is not None:
+                    ttft_ms = int(event["ttft_ms"])
+                input_tokens = event.get("input_tokens")
+                output_tokens = event.get("output_tokens")
+                cache_read_tokens = event.get("cache_read_tokens")
+                cache_write_tokens = event.get("cache_write_tokens")
+    except ChatError:
+        if forwarded_delta:
+            yield {
+                "type": "error",
+                "message": "Claude chat failed",
+                "partial": True,
+            }
+            return
+        raise
+    except Exception:
+        logger.exception("chat_ask_events_failed")
+        if forwarded_delta:
+            yield {
+                "type": "error",
+                "message": "Claude chat failed",
+                "partial": True,
+            }
+            return
+        raise ChatError("Claude chat failed")
 
-    if not hits:
-        citations: list[ChatCitation] = []
-        text = NO_MATCH_ANSWER
-        count = 0
-    else:
+    if hits:
         citations = citations_from_hits(hits)
-        text = sanitize_chat_answer(answer) if answer else NO_MATCH_ANSWER
+        text = sanitize_chat_answer(
+            answer,
+            known_thread_ids={hit.thread_id for hit in hits},
+        ) if answer else NO_MATCH_ANSWER
         count = len(hits)
+        grounded_for_verify = bool(answer)
+    elif grounded and answer:
+        citations = []
+        text = sanitize_chat_answer(answer)
+        count = 0
+        grounded_for_verify = True
+    else:
+        citations = []
+        text = no_match_answer(mailbox=mailbox)
+        count = 0
+        grounded_for_verify = False
+    verdict = await _groundedness_verdict(
+        settings=settings,
+        client=anthropic_client,
+        answer=text,
+        hits=hits,
+        grounded=grounded_for_verify,
+    )
     if not meta_sent:
         yield _meta_event(
             citations=citations,
             retrieval_count=count,
             mailbox=mailbox,
             refused_write=False,
+            grounded_verifier=verdict,
         )
+    else:
+        yield _meta_event(
+            citations=citations,
+            retrieval_count=count,
+            mailbox=mailbox,
+            refused_write=False,
+            grounded_verifier=verdict,
+        )
+    await _store_semantic_cache(
+        session,
+        settings,
+        message=cleaned,
+        mailbox=mailbox,
+        user_key=user_key,
+        embedding=embedding,
+        response=ChatAskResponse(
+            answer=text,
+            citations=citations,
+            retrieval_count=count,
+            mailbox=mailbox,
+            refused_write=False,
+            grounded_verifier=verdict,  # type: ignore[arg-type]
+        ),
+        intent=plan.intent,
+        bypass_cache=bypass_cache,
+    )
+    _log_chat_ask(
+        hit_count=count,
+        mailbox=mailbox,
+        refused_write=False,
+        query_length=len(cleaned),
+        intent=plan.intent,
+        tool_used_first=tool_used_first or plan.tool_name,
+        tool_iterations=tool_iterations,
+        grounded_verifier=verdict,
+        retrieval_count=count,
+        cached=False,
+        ttft_ms=ttft_ms,
+        total_ms=_elapsed_ms(started),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
     if not forwarded_delta:
         yield {"type": "delta", "text": text}
-    yield {"type": "done"}
+    yield {"type": "done", "grounded_verifier": verdict}

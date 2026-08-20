@@ -3,6 +3,7 @@
 import Link from "next/link"
 
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
+import { NotSpamButton } from "@/components/not-spam-button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import {
@@ -49,6 +50,8 @@ export const ThreadCard = ({
               <StatusBadge label={thread.urgency} tone={urgencyTone(thread.urgency)} />
             ) : null}
             {thread.category ? <StatusBadge label={thread.category} tone="purple" /> : null}
+            {triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
+            {triage?.is_automated ? <StatusBadge label="Automated" tone="neutral" /> : null}
             {triage?.is_spam ? <StatusBadge label="Spam" tone="red" /> : null}
             {triage?.needs_context ? (
               <StatusBadge label="Needs context" tone="amber" />
@@ -71,6 +74,13 @@ export const ThreadCard = ({
           {triage?.has_action_items ? " · action needed" : ""}
         </span>
         <div className="flex items-center gap-3">
+          {thread.state === "SPAM" ? (
+            <NotSpamButton
+              threadId={thread.id}
+              sender={thread.last_sender}
+              size="xs"
+            />
+          ) : null}
           {thread.outlook_url ? (
             <a
               href={thread.outlook_url}

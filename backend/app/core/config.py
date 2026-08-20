@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     graph_notification_url: str = ""
     graph_lifecycle_url: str = ""
     target_mailboxes: str = ""
+    # Personal / user mailboxes whose Sent Items may close shared-inbox threads.
+    # Polled outbound-only (Mail.Read). Not triaged as inboxes.
+    reviewer_mailboxes: str = ""
     # When false, Slack Bolt is not constructed and review cards are skipped
     # (pipeline still completes; slack_delivery=skipped_unconfigured).
     slack_enabled: bool = False
@@ -63,6 +66,13 @@ class Settings(BaseSettings):
     chat_model: str = "claude-haiku-4-5"
     triage_max_tokens: int = Field(default=200, ge=64, le=1024)
     chat_max_tokens: int = Field(default=1024, ge=256, le=4096)
+    chat_groundedness_enabled: bool = False
+    chat_semantic_cache_enabled: bool = True
+    chat_semantic_cache_threshold: float = Field(default=0.92, ge=0.5, le=0.999)
+    chat_semantic_cache_ttl_overview_sec: int = Field(default=300, ge=30, le=86_400)
+    chat_semantic_cache_ttl_search_sec: int = Field(default=1200, ge=30, le=86_400)
+    chat_max_input_tokens: int = Field(default=160_000, ge=4_096, le=200_000)
+    chat_rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
 
     # OpenAI embeddings (official: text-embedding-3-small defaults to 1536 dims).
     # Docs: https://platform.openai.com/docs/guides/embeddings
@@ -73,12 +83,15 @@ class Settings(BaseSettings):
     urgency_feedback_min_similarity: float = Field(default=0.80, ge=0.0, le=1.0)
     skill_similarity_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
     # Hybrid retrieval: over-fetch per leg, then collapse to conversations.
-    embedding_candidate_k: int = Field(default=15, ge=1, le=50)
+    embedding_candidate_k: int = Field(default=50, ge=1, le=100)
     embedding_final_conversations: int = Field(default=1, ge=1, le=5)
     embedding_secondary_margin: float = Field(default=0.85, ge=0.0, le=1.0)
     embedding_corroboration_bonus: float = Field(default=0.15, ge=0.0, le=1.0)
     embedding_corroboration_max_hits: int = Field(default=3, ge=0, le=10)
     rrf_k: int = Field(default=60, ge=1)
+    # pgvector HNSW query-time knobs (no index rebuild). Production: 80–200.
+    hnsw_ef_search: int = Field(default=100, ge=20, le=1000)
+    hnsw_iterative_scan_enabled: bool = True
     # text-embedding-3-* hard cap is 8191 tokens (OpenAI cookbook); stay under.
     embedding_max_input_tokens: int = Field(default=8000, ge=1, le=8191)
     # Same-thread prompt packing.
@@ -131,6 +144,9 @@ class Settings(BaseSettings):
         "trust_x_forwarded_for",
         "slack_enabled",
         "ops_report_email_enabled",
+        "hnsw_iterative_scan_enabled",
+        "chat_groundedness_enabled",
+        "chat_semantic_cache_enabled",
         mode="before",
     )
     @classmethod
@@ -149,6 +165,29 @@ class Settings(BaseSettings):
             return []
         return [m.strip() for m in self.target_mailboxes.split(",") if m.strip()]
 
+    @property
+    def reviewer_mailbox_list(self) -> list[str]:
+        """Reviewer addresses not already in TARGET_MAILBOXES (sent-items poll only)."""
+        targets = {m.lower() for m in self.mailbox_list}
+        return [
+            m.strip()
+            for m in self.reviewer_mailboxes.split(",")
+            if m.strip() and m.strip().lower() not in targets
+        ]
+
+    def is_reviewer_address(self, address: str) -> bool:
+        from app.core.internal_mail import extract_email_address
+
+        needle = extract_email_address(address) or address.strip().lower()
+        if not needle:
+            return False
+        allowed = {
+            m.strip().lower()
+            for m in self.reviewer_mailboxes.split(",")
+            if m.strip()
+        }
+        return needle in allowed
+
     def mailbox_allowed(self, mailbox: str) -> bool:
         """Defense-in-depth allowlist.
 
@@ -160,6 +199,10 @@ class Settings(BaseSettings):
             return self.environment == "local"
         needle = mailbox.strip().lower()
         return any(m.lower() == needle for m in allowed)
+
+    def outbound_mailbox_allowed(self, mailbox: str) -> bool:
+        """Target inboxes plus reviewer mailboxes (Sent Items only)."""
+        return self.mailbox_allowed(mailbox) or self.is_reviewer_address(mailbox)
 
     @property
     def resolved_lifecycle_url(self) -> str:

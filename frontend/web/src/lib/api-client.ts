@@ -431,7 +431,11 @@ export const api = {
         body: JSON.stringify(body),
       })
     },
-    async askStream(body: ChatAskRequest, handlers: ChatStreamHandlers) {
+    async askStream(
+      body: ChatAskRequest,
+      handlers: ChatStreamHandlers,
+      signal?: AbortSignal,
+    ) {
       const headers = new Headers()
       headers.set("Content-Type", "application/json")
       headers.set("Accept", "text/event-stream")
@@ -439,75 +443,111 @@ export const api = {
       if (token) {
         headers.set("Authorization", `Bearer ${token}`)
       }
-      const post = () =>
+      const post = (requestHeaders: Headers) =>
         fetch(`${API_BASE}/api/chat/ask/stream`, {
           method: "POST",
-          headers,
+          headers: requestHeaders,
           credentials: "include",
           body: JSON.stringify(body),
+          signal,
         })
-      let resp = await post()
-      if (resp.status === 401) {
-        const ok = await refreshAccessToken()
-        if (ok) {
-          const retryHeaders = new Headers(headers)
-          const nextToken = getAccessToken()
-          if (nextToken) {
-            retryHeaders.set("Authorization", `Bearer ${nextToken}`)
+      const jitter = (attempt: number) =>
+        80 * 2 ** attempt + Math.floor(Math.random() * 40)
+      let sawDelta = false
+      let lastError: unknown
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        if (attempt > 0 && sawDelta) break
+        let streamFinished = false
+        try {
+          let resp = await post(headers)
+          if (resp.status === 401) {
+            const ok = await refreshAccessToken()
+            if (ok) {
+              const retryHeaders = new Headers(headers)
+              const nextToken = getAccessToken()
+              if (nextToken) {
+                retryHeaders.set("Authorization", `Bearer ${nextToken}`)
+              }
+              resp = await fetch(`${API_BASE}/api/chat/ask/stream`, {
+                method: "POST",
+                headers: retryHeaders,
+                credentials: "include",
+                body: JSON.stringify(body),
+                signal,
+              })
+            }
           }
-          resp = await fetch(`${API_BASE}/api/chat/ask/stream`, {
-            method: "POST",
-            headers: retryHeaders,
-            credentials: "include",
-            body: JSON.stringify(body),
+          if (!resp.ok) {
+            let errorBody: unknown
+            try {
+              errorBody = await resp.json()
+            } catch {
+              errorBody = undefined
+            }
+            throw new ApiError(messageForStatus(resp.status), resp.status, errorBody)
+          }
+          if (!resp.body) {
+            throw new ApiError(messageForStatus(502), 502)
+          }
+          const reader = resp.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ""
+          let sawError = false
+          const wrapped: ChatStreamHandlers = {
+            ...handlers,
+            onDelta: (text) => {
+              if (text) sawDelta = true
+              handlers.onDelta?.(text)
+            },
+            onError: (message) => {
+              sawError = true
+              handlers.onError?.(message)
+            },
+          }
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true })
+            const parts = buffer.split("\n\n")
+            buffer = parts.pop() ?? ""
+            for (const part of parts) {
+              const status = dispatchChatStreamBlock(part, wrapped)
+              if (status === "error") {
+                throw new ApiError("Claude chat failed", 502)
+              }
+            }
+          }
+          if (buffer.trim()) {
+            const status = dispatchChatStreamBlock(buffer, wrapped)
+            if (status === "error") {
+              throw new ApiError("Claude chat failed", 502)
+            }
+          }
+          streamFinished = true
+          if (sawError) {
+            throw new ApiError("Claude chat failed", 502)
+          }
+          if (!sawDelta) {
+            throw new ApiError(messageForStatus(502), 502)
+          }
+          return
+        } catch (error) {
+          lastError = error
+          const aborted =
+            signal?.aborted ||
+            (error instanceof DOMException && error.name === "AbortError") ||
+            (error instanceof Error && error.name === "AbortError")
+          if (aborted || sawDelta || streamFinished || attempt === 2) {
+            throw error
+          }
+          await new Promise((resolve) => {
+            window.setTimeout(resolve, jitter(attempt))
           })
         }
       }
-      if (!resp.ok) {
-        let errorBody: unknown
-        try {
-          errorBody = await resp.json()
-        } catch {
-          errorBody = undefined
-        }
-        throw new ApiError(messageForStatus(resp.status), resp.status, errorBody)
-      }
-      if (!resp.body) {
-        throw new ApiError(messageForStatus(502), 502)
-      }
-      const reader = resp.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
-      let sawError = false
-      const wrapped: ChatStreamHandlers = {
-        ...handlers,
-        onError: (message) => {
-          sawError = true
-          handlers.onError?.(message)
-        },
-      }
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const parts = buffer.split("\n\n")
-        buffer = parts.pop() ?? ""
-        for (const part of parts) {
-          const status = dispatchChatStreamBlock(part, wrapped)
-          if (status === "error") {
-            throw new ApiError("Claude chat failed", 502)
-          }
-        }
-      }
-      if (buffer.trim()) {
-        const status = dispatchChatStreamBlock(buffer, wrapped)
-        if (status === "error") {
-          throw new ApiError("Claude chat failed", 502)
-        }
-      }
-      if (sawError) {
-        throw new ApiError("Claude chat failed", 502)
-      }
+      throw lastError instanceof Error
+        ? lastError
+        : new ApiError(messageForStatus(502), 502)
     },
   },
 
@@ -578,6 +618,17 @@ export const api = {
           body: JSON.stringify(body),
         },
       );
+    },
+    markNotSpam(id: string) {
+      return apiFetch<{
+        thread_id: string;
+        state: string;
+        is_spam: boolean;
+        sender_address: string;
+        outlook_unchanged: boolean;
+      }>(`/api/threads/${id}/not-spam`, {
+        method: "POST",
+      });
     },
   },
 

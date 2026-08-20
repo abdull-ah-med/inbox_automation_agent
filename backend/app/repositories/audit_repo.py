@@ -44,6 +44,8 @@ def triage_flags_from_event(event: AuditEvent) -> TriageFlags:
         context_reason=_payload_str(payload, "context_reason"),
         action_items_summary=_payload_str(payload, "action_items_summary"),
         routing_category=_payload_str(payload, "routing_category"),
+        is_internal=_payload_bool(payload, "is_internal"),
+        is_automated=_payload_bool(payload, "is_automated"),
         outcome=event.event_type,
     )
 

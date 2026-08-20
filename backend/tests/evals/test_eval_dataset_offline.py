@@ -18,6 +18,12 @@ def test_v1_dataset_has_expected_cases() -> None:
     assert "scheduling-decoy-no-samplelab" in ids
     assert "flow-b-prior-thread" in ids
     assert "simple-no-context" in ids
+    assert "courtesy-close-olivia" in ids
+    assert "quoted-reply-new-topic" in ids
+    assert "long-thread-summary-query" in ids
+    assert "injection-payload" in ids
+    assert "cache-paraphrase" in ids
+    assert "hallucination-bait" in ids
 
 
 def test_suite_tags_partition() -> None:

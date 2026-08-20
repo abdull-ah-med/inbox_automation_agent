@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.exceptions import AuditError, DraftGenerationError
+from app.core.automated_mail import is_automated_mail
+from app.core.internal_mail import is_internal_sender
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.llm.prompts import PROMPT_VERSION
@@ -20,7 +22,7 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import draft_repo, skill_repo, thread_repo
+from app.repositories import chat_cache_repo, draft_repo, skill_repo, spam_allowlist_repo, thread_repo
 from app.services import (
     audit_service,
     context_service,
@@ -38,6 +40,37 @@ from app.services import (
 from app.services.triage_service import decide_triage_outcome
 
 logger = structlog.get_logger(__name__)
+
+
+async def _invalidate_chat_cache_mailbox(session: AsyncSession, mailbox: str | None) -> None:
+    if not mailbox:
+        return
+    try:
+        await chat_cache_repo.invalidate_for_mailbox(session, mailbox.strip().lower())
+    except Exception:
+        logger.warning("chat_cache_invalidate_mailbox_failed", mailbox=mailbox)
+
+
+async def _invalidate_chat_cache_threads(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> None:
+    if not thread_ids:
+        return
+    try:
+        await chat_cache_repo.invalidate_for_threads(session, thread_ids)
+    except Exception:
+        logger.warning(
+            "chat_cache_invalidate_threads_failed",
+            thread_ids=[str(item) for item in thread_ids],
+        )
+
+
+async def _allowlisted_senders(session: object, mailbox: str) -> frozenset[str]:
+    """Load reviewer-corrected senders. No-op when ``session`` is not a DB session."""
+    if not isinstance(session, AsyncSession):
+        return frozenset()
+    return await spam_allowlist_repo.addresses_for_mailbox(session, mailbox)
 
 _OUTCOME_EVENT_TYPES = {
     "spam_discarded": "triage.spam_discarded",
@@ -73,6 +106,7 @@ async def _apply_triage_outcome_state(
         return
     try:
         await thread_repo.set_thread_outcome(session, thread_id, state=new_state)
+        await _invalidate_chat_cache_threads(session, [thread_id])
     except Exception:
         logger.exception(
             "thread_state_update_failed",
@@ -113,6 +147,7 @@ async def _apply_draft_outcome_state(
             urgency=urgency,
             urgency_reason=urgency_reason,
         )
+        await _invalidate_chat_cache_threads(session, [thread_id])
     except Exception:
         logger.exception(
             "thread_state_update_failed",
@@ -182,6 +217,14 @@ def _audit_payload(state: EmailTriageState) -> dict[str, object]:
                 "has_action_items": triage.has_action_items,
                 "needs_context": triage.needs_context,
                 "routing_category": triage.routing_category,
+                "is_internal": is_internal_sender(
+                    state.original_email.sender,
+                    state.original_email.mailbox,
+                ),
+                "is_automated": is_automated_mail(
+                    sender=state.original_email.sender,
+                    subject=state.original_email.subject,
+                ),
             }
         )
     if state.error_logs:
@@ -280,6 +323,27 @@ async def _summarize_non_spam(
             conversation_id=state.original_email.conversation_id,
             message_id=state.original_email.message_id,
         )
+
+
+async def _refresh_thread_summary_safe(
+    *,
+    thread_id: uuid.UUID,
+    client: AsyncAnthropic,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from app.services import thread_summary_service
+
+    try:
+        async with session_factory() as session, session.begin():
+            await thread_summary_service.maybe_refresh_safe(
+                session,
+                thread_id=thread_id,
+                client=client,
+                settings=settings,
+            )
+    except Exception:
+        logger.exception("pipeline_thread_summary_failed", thread_id=str(thread_id))
 
 
 async def _safe_audit(
@@ -446,8 +510,15 @@ async def run_after_ingest(
         thread_context=context,
         draft_status="PENDING",
     )
-    state = await triage_service.run_triage(state, client=client, settings=settings)
+    allowlisted = await _allowlisted_senders(session, email.mailbox)
+    state = await triage_service.run_triage(
+        state,
+        client=client,
+        settings=settings,
+        allowlisted_senders=allowlisted,
+    )
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
+    await _invalidate_chat_cache_mailbox(session, email.mailbox)
 
     await _safe_audit(
         session,
@@ -469,6 +540,13 @@ async def run_after_ingest(
             settings=settings,
             session_factory=factory,
         )
+        if parsed_thread_id is not None:
+            await _refresh_thread_summary_safe(
+                thread_id=parsed_thread_id,
+                client=client,
+                settings=settings,
+                session_factory=factory,
+            )
     needs_context = bool(state.triage and state.triage.needs_context)
 
     # Non-spam: always embed. Flow B (needs_context) embeds inside context_service.
@@ -641,11 +719,20 @@ async def _run_phased_post_ingest(
         draft_status="PENDING",
     )
 
+    async with session_factory() as session:
+        allowlisted = await _allowlisted_senders(session, email.mailbox)
+
     # --- LLM: triage (no DB connection held) ---
-    state = await triage_service.run_triage(state, client=client, settings=settings)
+    state = await triage_service.run_triage(
+        state,
+        client=client,
+        settings=settings,
+        allowlisted_senders=allowlisted,
+    )
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     async with session_factory() as session, session.begin():
+        await _invalidate_chat_cache_mailbox(session, email.mailbox)
         await _safe_audit(
             session,
             state=state,
@@ -662,6 +749,13 @@ async def _run_phased_post_ingest(
             settings=settings,
             session_factory=session_factory,
         )
+        if parsed_thread_id is not None:
+            await _refresh_thread_summary_safe(
+                thread_id=parsed_thread_id,
+                client=client,
+                settings=settings,
+                session_factory=session_factory,
+            )
 
     if state.draft_status != "PENDING":
         await _embed_in_fresh_session(
@@ -852,6 +946,13 @@ async def _run_phased_post_ingest(
                     active_skill_ids=set(skill_ids),
                     session_factory=session_factory,
                 )
+            from app.services import related_thread_service
+
+            async with session_factory() as assoc_session:
+                confirmed_associations = await related_thread_service.load_confirmed_contexts(
+                    assoc_session,
+                    thread_id,
+                )
             generated = await draft_llm.generate_draft(
                 current.original_email,
                 current.thread_context,
@@ -865,6 +966,7 @@ async def _run_phased_post_ingest(
                 negative_constraints=negative_constraints,
                 urgency_hints=urgency_hints,
                 reference_loader=reference_loader,
+                confirmed_associations=confirmed_associations,
             )
         except DraftGenerationError as exc:
             logger.warning(

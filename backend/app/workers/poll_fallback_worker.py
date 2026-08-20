@@ -140,7 +140,7 @@ async def _collect_poll_messages(
             if message.id in seen_ids:
                 continue
             seen_ids.add(message.id)
-            messages.append(message)
+            messages.append(message.model_copy(update={"source_folder": folder}))
     if folder_errors == len(poll_folders):
         raise GraphClientError(f"Graph list failed for all poll folders on mailbox {mailbox}")
     messages.sort(key=_message_sort_key)
@@ -242,6 +242,7 @@ async def poll_mailbox(
                         graph_client=graph_client,
                         mailbox=mailbox,
                         message_id=message.id,
+                        source_folder=message.source_folder,
                     )
             if not outbound_only and result.status in _TRIAGE_ELIGIBLE:
                 claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
@@ -393,8 +394,43 @@ async def run_poll_all_mailboxes() -> None:
                     path="outbound",
                 )
 
+    async def _poll_reviewer_sent(mailbox: str) -> None:
+        async with semaphore:
+            try:
+                await poll_mailbox(
+                    mailbox,
+                    redis=redis,
+                    graph_client=graph_client,
+                    folders=_POLL_OUTBOUND_FOLDERS,
+                    outbound_only=True,
+                )
+            except Exception:
+                logger.exception(
+                    "poll_mailbox_failed",
+                    mailbox=mailbox,
+                    path="reviewer_outbound",
+                )
+
     try:
-        await asyncio.gather(*(_poll_one(mailbox) for mailbox in settings.mailbox_list))
+        await asyncio.gather(
+            *(_poll_one(mailbox) for mailbox in settings.mailbox_list),
+            *(
+                _poll_reviewer_sent(mailbox)
+                for mailbox in settings.reviewer_mailbox_list
+            ),
+        )
+        try:
+            if settings.chat_semantic_cache_enabled:
+                from app.repositories import chat_cache_repo
+
+                factory = get_session_factory()
+                async with factory() as session:
+                    purged = await chat_cache_repo.purge_expired(session)
+                    await session.commit()
+                if purged:
+                    logger.info("chat_cache_purged_expired", count=purged)
+        except Exception:
+            logger.warning("chat_cache_purge_expired_failed")
     finally:
         heartbeat_stop.set()
         await heartbeat_task

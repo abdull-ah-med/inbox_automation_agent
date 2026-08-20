@@ -1,0 +1,19 @@
+{
+  "id": "courtesy-close-olivia",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "Re: Friday walkthrough",
+  "body": "Sounds good, thanks! Let me know if you're unable to join Friday. Otherwise we are all set.",
+  "mailbox": "elise@example.com",
+  "sender": "olivia@client.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": false,
+    "needs_context": false,
+    "routing_category": "general",
+    "action_items_summary": null
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "No draft should be needed; this is a courtesy close with no new ask."
+}

@@ -32,6 +32,7 @@ from app.repositories import (
     sent_reply_repo,
     thread_repo,
 )
+from app.services import related_thread_service
 
 
 def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
@@ -219,6 +220,11 @@ async def get_thread_detail(
             sent_row.sent_body_snapshot,
         )
 
+    associated_threads = await related_thread_service.list_stored_associations(
+        session,
+        thread_id,
+    )
+
     return ThreadDetail(
         thread=summary,
         messages=message_details,
@@ -228,6 +234,7 @@ async def get_thread_detail(
         audit_log=audit_log,
         sent_reply=sent_reply,
         draft_vs_sent_diff=draft_vs_sent_diff,
+        associated_threads=associated_threads,
     )
 
 

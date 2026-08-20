@@ -76,3 +76,42 @@ def test_limiter_storage_uri_local_uses_memory() -> None:
 
     settings = Settings(environment="local", redis_url="redis://localhost:6379/0")
     assert limiter_storage_uri(settings) == "memory://"
+
+
+def test_chat_limit_value_uses_settings() -> None:
+    from app.core.rate_limit import chat_limit_value
+
+    settings = Settings(
+        environment="local",
+        jwt_secret="c" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        chat_rate_limit_per_minute=12,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+        _env_file=None,
+    )
+    with patch("app.core.rate_limit.get_settings", return_value=settings):
+        assert chat_limit_value(MagicMock()) == "12/minute"
+
+
+def test_chat_rate_limit_key_uses_access_token_sub() -> None:
+    import uuid
+
+    from app.core.rate_limit import chat_rate_limit_key
+    from app.core.security.tokens import create_access_token
+
+    settings = Settings(environment="local", jwt_secret="c" * 64)
+    user_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    token, _expires = create_access_token(user_id, settings, token_version=0)
+    request = _request(headers={"Authorization": f"Bearer {token}"}, peer="10.0.0.1")
+    with patch("app.core.rate_limit.get_settings", return_value=settings):
+        assert chat_rate_limit_key(request) == f"user:{user_id}"
+
+
+def test_chat_rate_limit_key_falls_back_to_ip_without_bearer() -> None:
+    from app.core.rate_limit import chat_rate_limit_key
+    settings = Settings(environment="local", trust_x_forwarded_for=False)
+    request = _request(headers={}, peer="10.0.0.1")
+    with patch("app.core.rate_limit.get_settings", return_value=settings):
+        assert chat_rate_limit_key(request) == "10.0.0.1"

@@ -20,7 +20,8 @@ from sqlalchemy import or_, select
 from app.core.config import get_settings
 from app.core.dependencies import close_openai_client, openai_client_from_settings
 from app.db.session import dispose_engine, get_session_factory
-from app.llm.email_clean import CLEAN_VERSION, clean_email_body
+from app.llm.email_clean import clean_email_body
+from app.utils.email_quotes import EMBED_CLEAN_VERSION
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.db.message import Message
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
@@ -40,9 +41,7 @@ async def _load_stale_embeddings() -> list[EmailEmbedding]:
                 or_(
                     EmailEmbedding.search_document == "",
                     EmailEmbedding.embed_clean_version.is_(None),
-                    Message.body_clean_version.is_(None),
-                    EmailEmbedding.embed_clean_version != Message.body_clean_version,
-                    EmailEmbedding.embed_clean_version != CLEAN_VERSION,
+                    EmailEmbedding.embed_clean_version != EMBED_CLEAN_VERSION,
                 )
             )
         )
@@ -132,7 +131,7 @@ async def _reembed_one(
                 embedding=vector,
                 search_document=doc,
                 body_preview=preview or "(empty)",
-                embed_clean_version=CLEAN_VERSION,
+                embed_clean_version=EMBED_CLEAN_VERSION,
             )
         return f"done:{row.id}"
     except Exception as exc:  # noqa: BLE001 — CLI surface

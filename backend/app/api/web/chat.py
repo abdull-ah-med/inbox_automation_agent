@@ -6,6 +6,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,9 +15,11 @@ from app.core.config import Settings, get_settings
 from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ChatError
-from app.core.rate_limit import limiter
+from app.core.rate_limit import chat_limit_value, chat_rate_limit_key, limiter
 from app.models.schemas.chat import ChatAskRequest, ChatAskResponse
 from app.services import chat_service
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -29,7 +32,7 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
     response_model=ChatAskResponse,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("60/minute")
+@limiter.limit(chat_limit_value, key_func=chat_rate_limit_key)
 async def ask(
     body: ChatAskRequest,
     request: Request,
@@ -51,6 +54,8 @@ async def ask(
         mailbox=body.mailbox,
         limit=body.limit,
         history=body.history,
+        user_key=str(_user.id),
+        bypass_cache=body.bypass_cache,
     )
 
 
@@ -59,7 +64,7 @@ def _sse_data(payload: dict) -> str:
 
 
 @router.post("/ask/stream")
-@limiter.limit("60/minute")
+@limiter.limit(chat_limit_value, key_func=chat_rate_limit_key)
 async def ask_stream(
     body: ChatAskRequest,
     request: Request,
@@ -84,9 +89,14 @@ async def ask_stream(
                 mailbox=body.mailbox,
                 limit=body.limit,
                 history=body.history,
+                user_key=str(_user.id),
+                bypass_cache=body.bypass_cache,
             ):
                 yield _sse_data(payload)
         except ChatError:
+            yield _sse_data({"type": "error", "message": "Claude chat failed"})
+        except Exception:
+            logger.exception("chat_stream_failed")
             yield _sse_data({"type": "error", "message": "Claude chat failed"})
 
     return StreamingResponse(

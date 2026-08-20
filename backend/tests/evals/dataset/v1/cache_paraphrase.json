@@ -1,0 +1,24 @@
+{
+  "id": "cache-paraphrase",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "question": "what's important right now",
+  "mailbox": "sales@example.com",
+  "hits": [
+    {
+      "thread_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-billing-1",
+      "subject": "Invoice dispute — overdue billing",
+      "state": "REQUIRES_HUMAN",
+      "urgency": "HIGH",
+      "snippet": "Please review the overdue billing packet.",
+      "score": 0.02,
+      "last_message_at": "2026-08-05T15:00:00Z"
+    }
+  ],
+  "expected_output": "Focus on the overdue billing packet.",
+  "expected_facts": ["overdue billing"],
+  "expected_cached": true,
+  "geval_criteria": "A paraphrase of 'what should I focus on today' should be served from cache when enabled."
+}
