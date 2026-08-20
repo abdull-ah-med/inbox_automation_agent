@@ -121,12 +121,13 @@ const CitationList = ({
   return (
     <div className="space-y-2">
       {citations.map((citation, index) => (
-        <AskCitationCard
-          key={citation.thread_id}
-          citation={citation}
-          index={index + 1}
-          mailboxes={mailboxes}
-        />
+        <div key={citation.thread_id} id={`inboxassistant-cite-${index + 1}`}>
+          <AskCitationCard
+            citation={citation}
+            index={index + 1}
+            mailboxes={mailboxes}
+          />
+        </div>
       ))}
     </div>
   )
@@ -265,10 +266,16 @@ export const InboxAssistant = () => {
     const deltaBatcher = createRafDeltaBatcher((chunk) => {
       setTurns((current) => {
         const existing = current.find((turn) => turn.id === assistantId)
+        const pendingCitations = pendingMetaRef.current?.citations
         if (existing) {
           return current.map((turn) =>
             turn.id === assistantId
-              ? { ...turn, text: `${turn.text}${chunk}`, streaming: true }
+              ? {
+                  ...turn,
+                  text: `${turn.text}${chunk}`,
+                  streaming: true,
+                  citations: turn.citations ?? pendingCitations,
+                }
               : turn,
           )
         }
@@ -279,6 +286,7 @@ export const InboxAssistant = () => {
             role: "assistant",
             text: chunk,
             streaming: true,
+            citations: pendingCitations,
           },
         ]
       })
@@ -300,6 +308,19 @@ export const InboxAssistant = () => {
             cached: Boolean(meta.cached),
             groundedVerifier: meta.grounded_verifier,
           }
+          setTurns((current) =>
+            current.map((turn) =>
+              turn.id === assistantId
+                ? {
+                    ...turn,
+                    citations: meta.citations,
+                    refusedWrite: meta.refused_write,
+                    cached: Boolean(meta.cached),
+                    groundedVerifier: meta.grounded_verifier,
+                  }
+                : turn,
+            ),
+          )
         },
         onDelta: (text) => {
           if (text) receivedAnswer = true
@@ -660,10 +681,13 @@ export const InboxAssistant = () => {
                                 <StreamingEmailBody
                                   text={turn.text}
                                   streaming={Boolean(turn.streaming)}
+                                  citations={turn.citations}
                                 />
                               </div>
                             ) : null}
-                            {turn.citations && turn.citations.length > 0 ? (
+                            {turn.citations &&
+                            turn.citations.length > 0 &&
+                            !turn.streaming ? (
                               <CitationList
                                 citations={turn.citations}
                                 mailboxes={mailboxes}

@@ -475,6 +475,35 @@ describe("InboxAssistant", () => {
     ).toHaveAttribute("href", `/threads/${THREAD_ID}`)
   })
 
+  it("links [n] markers in the answer to the matching citation thread", async () => {
+    askChat.mockImplementation(
+      async (
+        _body: unknown,
+        handlers: Parameters<typeof deliverStream>[0],
+      ) => {
+        deliverStream(
+          handlers,
+          "Bonnie is still waiting on the overdue invoice [1].",
+        )
+      },
+    )
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "what is outstanding for Bonnie",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+
+    const inline = await screen.findByRole("link", { name: /citation 1/i })
+    expect(inline).toHaveAttribute(
+      "href",
+      groundedResponse.citations[0].url_path,
+    )
+    expect(inline).toHaveAccessibleName(/invoice dispute/i)
+  })
+
   it("renders complete markdown emphasis while tokens are still streaming", async () => {
     let handlers: Parameters<typeof deliverStream>[0] | null = null
     askChat.mockImplementation(
