@@ -258,10 +258,15 @@ async def get_thread_detail(
             or draft.feedback_action == "wrong"
         )
     )
+    reason_corrected = any(
+        str(ev.get("event_type") or "") == "thread.resolved.wrong_reason"
+        for ev in raw_events
+    )
     summary = thread_repo.with_presentation(
         summary,
         draft_review_finished=draft_finished,
         closing_signal=closing,
+        resolution_reason_corrected=reason_corrected,
     )
 
     return ThreadDetail(

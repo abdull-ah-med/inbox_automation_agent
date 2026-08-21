@@ -88,6 +88,7 @@ def _to_presentation_view(
     category: str | None,
     draft_review_finished: bool = False,
     closing_signal: bool = False,
+    resolution_reason_corrected: bool = False,
 ) -> ThreadPresentationView:
     derived = presentation_from_flags(
         state=state,
@@ -96,6 +97,7 @@ def _to_presentation_view(
         draft_review_finished=draft_review_finished,
         closing_signal=closing_signal,
         category=category,
+        resolution_reason_corrected=resolution_reason_corrected,
     )
     return ThreadPresentationView(
         is_finished=derived.is_finished,
@@ -125,6 +127,7 @@ def with_presentation(
     *,
     draft_review_finished: bool = False,
     closing_signal: bool = False,
+    resolution_reason_corrected: bool = False,
 ) -> ThreadSummary:
     return summary.model_copy(
         update={
@@ -135,6 +138,7 @@ def with_presentation(
                 category=summary.category,
                 draft_review_finished=draft_review_finished,
                 closing_signal=closing_signal,
+                resolution_reason_corrected=resolution_reason_corrected,
             )
         }
     )
