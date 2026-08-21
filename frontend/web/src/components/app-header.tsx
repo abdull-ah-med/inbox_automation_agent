@@ -30,7 +30,7 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-200 bg-white px-4 py-3 sm:px-6 dark:border-gray-800 dark:bg-gray-900">
-      <div className="app-shell mx-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:gap-4">
+      <div className="app-shell mx-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-3 min-[950px]:grid-cols-[auto_minmax(0,1fr)_auto] min-[950px]:gap-4">
         <div className="min-w-0">
           <p className="text-[11px] font-medium tracking-wide text-gray-500 uppercase dark:text-gray-400">
             SampleSite Support
@@ -42,10 +42,10 @@ export function AppHeader() {
             Inbox Triage Automation
           </Link>
         </div>
-        <div className="col-span-2 min-w-0 sm:col-span-1 sm:col-start-2 sm:row-start-1">
+        <div className="col-span-2 min-w-0 min-[950px]:col-span-1 min-[950px]:col-start-2 min-[950px]:row-start-1">
           <InboxSearch />
         </div>
-        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-1.5 sm:col-start-3 sm:gap-2">
+        <div className="col-start-2 row-start-1 flex shrink-0 items-center gap-1.5 min-[950px]:col-start-3 sm:gap-2">
           <span className="hidden rounded bg-green-100 px-2 py-1 text-xs font-medium text-green-700 sm:inline dark:bg-green-900/30 dark:text-green-400">
             Read-Only
           </span>

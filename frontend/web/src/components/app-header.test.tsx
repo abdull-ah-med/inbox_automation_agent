@@ -61,11 +61,13 @@ describe("AppHeader search", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
-  it("puts mail search on a full-width second row so the header cannot stretch the page", () => {
+  it("puts mail search on a full-width second row below 950px so the header cannot stretch", () => {
     renderHeader()
     const search = screen.getByRole("search")
     expect(search.parentElement).toHaveClass("col-span-2")
-    expect(search.parentElement).toHaveClass("sm:col-span-1")
+    expect(search.parentElement).toHaveClass("min-[950px]:col-span-1")
+    expect(search.parentElement).toHaveClass("min-[950px]:col-start-2")
+    expect(search.parentElement).toHaveClass("min-[950px]:row-start-1")
     expect(screen.getByRole("link", { name: /inbox triage automation/i })).toHaveClass(
       "truncate",
     )
