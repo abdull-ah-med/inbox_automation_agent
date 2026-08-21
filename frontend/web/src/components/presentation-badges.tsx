@@ -1,0 +1,38 @@
+import { StatusBadge, urgencyTone } from "@/components/status-badge"
+
+const KIND_TONE: Record<string, "neutral" | "blue" | "green" | "amber" | "red" | "purple"> = {
+  state: "green",
+  urgency: "amber",
+  internal: "blue",
+  automated: "neutral",
+  automated_action: "amber",
+  action_needed: "amber",
+  needs_context: "amber",
+  category: "purple",
+  not_spam: "green",
+}
+
+export const PresentationBadges = ({
+  badges,
+}: {
+  badges: { kind: string; label: string }[]
+}) => {
+  if (badges.length === 0) return null
+  return (
+    <>
+      {badges.map((badge) => {
+        const tone =
+          badge.kind === "urgency"
+            ? urgencyTone(badge.label)
+            : KIND_TONE[badge.kind] ?? "neutral"
+        return (
+          <StatusBadge
+            key={`${badge.kind}-${badge.label}`}
+            label={badge.label}
+            tone={tone}
+          />
+        )
+      })}
+    </>
+  )
+}

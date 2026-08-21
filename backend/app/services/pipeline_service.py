@@ -11,9 +11,9 @@ from openai import AsyncOpenAI
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.automated_mail import is_automated_mail
 from app.core.config import Settings
 from app.core.exceptions import AuditError, DraftGenerationError
-from app.core.automated_mail import is_automated_mail
 from app.core.internal_mail import is_internal_sender
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
@@ -22,7 +22,13 @@ from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
-from app.repositories import chat_cache_repo, draft_repo, skill_repo, spam_allowlist_repo, thread_repo
+from app.repositories import (
+    chat_cache_repo,
+    draft_repo,
+    skill_repo,
+    spam_allowlist_repo,
+    thread_repo,
+)
 from app.services import (
     audit_service,
     context_service,
@@ -107,6 +113,34 @@ async def _apply_triage_outcome_state(
     try:
         await thread_repo.set_thread_outcome(session, thread_id, state=new_state)
         await _invalidate_chat_cache_threads(session, [thread_id])
+        if outcome == "no_action_discarded":
+            from app.core.closing_mail import looks_like_closing_mail
+
+            body = state.original_email.body_clean or state.original_email.body_text
+            if looks_like_closing_mail(body):
+                try:
+                    await audit_service.log_event(
+                        session,
+                        event_type="thread.outcome.closing_inbound",
+                        conversation_id=state.original_email.conversation_id,
+                        mailbox=state.original_email.mailbox,
+                        payload={
+                            "human": {
+                                "title": "Closed — courtesy inbound",
+                                "body": (
+                                    "Detected a closing / courtesy message with no open ask. "
+                                    "Marked no action and removed from Needs Attention."
+                                ),
+                                "actor_kind": "agent",
+                            }
+                        },
+                        actor="system",
+                    )
+                except Exception:
+                    logger.warning(
+                        "closing_inbound_audit_failed",
+                        thread_id=str(thread_id),
+                    )
     except Exception:
         logger.exception(
             "thread_state_update_failed",
@@ -147,6 +181,27 @@ async def _apply_draft_outcome_state(
             urgency=urgency,
             urgency_reason=urgency_reason,
         )
+        if state.draft_status == "DRAFTED":
+            from app.services import recurrence_service
+
+            applied = await recurrence_service.apply_recurrence_escalation(
+                session,
+                thread_id=thread_id,
+                conversation_id=state.original_email.conversation_id,
+                mailbox=state.original_email.mailbox,
+                assessed_urgency=urgency,
+            )
+            if state.draft is not None and applied and applied != urgency:
+                state.draft = state.draft.model_copy(
+                    update={
+                        "urgency": applied,
+                        "urgency_reason": (
+                            f"{urgency_reason}; recurrence floor {applied}"
+                            if urgency_reason
+                            else f"recurrence floor {applied}"
+                        ),
+                    }
+                )
         await _invalidate_chat_cache_threads(session, [thread_id])
     except Exception:
         logger.exception(
@@ -914,6 +969,15 @@ async def _run_phased_post_ingest(
             routing_category=routing_category,
             limit=3,
         )
+        if thread_id is not None:
+            from app.services import recurrence_service
+
+            count = await recurrence_service.count_automated_inbound_48h(
+                session, thread_id
+            )
+            hint = recurrence_service.recurrence_hint(count)
+            if hint:
+                urgency_hints = [hint, *urgency_hints]
         await session.commit()
 
     async def _generate_and_persist_draft(

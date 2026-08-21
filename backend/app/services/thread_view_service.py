@@ -10,9 +10,11 @@ from typing import Literal
 from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.closing_mail import looks_like_closing_mail
 from app.core.config import Settings
 from app.core.outlook_links import outlook_web_link
 from app.models.schemas.dashboard import (
+    ActivityEntryView,
     AppliedSkillView,
     AuditEntry,
     DraftToolCallView,
@@ -33,6 +35,7 @@ from app.repositories import (
     thread_repo,
 )
 from app.services import related_thread_service
+from app.services.thread_narrative import build_activity
 
 
 def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
@@ -169,6 +172,7 @@ async def get_thread_detail(
             sender=m.sender,
             to=list(m.to_recipients),
             cc=list(m.cc_recipients),
+            bcc=list(m.bcc_recipients),
             body_text=m.body_text,
             body_preview=m.body_preview,
             received_at=m.received_at,
@@ -225,6 +229,41 @@ async def get_thread_detail(
         thread_id,
     )
 
+    raw_events = await audit_repo.list_raw_by_conversation(
+        session,
+        thread.conversation_id,
+        mailbox=thread.mailbox,
+    )
+    narrative = build_activity(list(reversed(raw_events)))
+    activity = [
+        ActivityEntryView(
+            title=entry.title,
+            body=entry.body,
+            actor_kind=entry.actor_kind,
+            event_type=entry.event_type,
+            timestamp=entry.timestamp,
+        )
+        for entry in narrative
+    ]
+
+    last_inbound_body = next(
+        (m.body_text for m in reversed(messages) if m.direction == "inbound"),
+        None,
+    )
+    closing = looks_like_closing_mail(last_inbound_body)
+    draft_finished = bool(
+        draft is not None
+        and (
+            draft.approved_at is not None
+            or draft.feedback_action == "wrong"
+        )
+    )
+    summary = thread_repo.with_presentation(
+        summary,
+        draft_review_finished=draft_finished,
+        closing_signal=closing,
+    )
+
     return ThreadDetail(
         thread=summary,
         messages=message_details,
@@ -232,6 +271,7 @@ async def get_thread_detail(
         draft=draft,
         triage=triage,
         audit_log=audit_log,
+        activity=activity,
         sent_reply=sent_reply,
         draft_vs_sent_diff=draft_vs_sent_diff,
         associated_threads=associated_threads,
@@ -255,6 +295,7 @@ async def list_thread_messages(
             sender=m.sender,
             to=list(m.to_recipients),
             cc=list(m.cc_recipients),
+            bcc=list(m.bcc_recipients),
             body_text=m.body_text,
             body_preview=m.body_preview,
             received_at=m.received_at,

@@ -7,8 +7,9 @@ import { CourtesyCloseBanner } from "@/components/courtesy-close-banner"
 import { AssociatedThreadsList } from "@/components/associated-threads-list"
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
+import { PresentationBadges } from "@/components/presentation-badges"
+import { ResolutionBanner } from "@/components/resolution-banner"
 import { SentReplyPanel } from "@/components/sent-reply-panel"
-import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
 import { ThreadOriginBanner } from "@/components/thread-origin-banner"
 import { ThreadTriageSidebar } from "@/components/thread-triage-sidebar"
@@ -77,12 +78,12 @@ export default function ThreadDetailPage() {
     )
   }
 
-  const { thread, classification, draft, triage, messages, audit_log, sent_reply, draft_vs_sent_diff, associated_threads } =
+  const { thread, classification, draft, triage, messages, audit_log, activity, sent_reply, draft_vs_sent_diff, associated_threads } =
     data
   const associatedItems = associatedQuery.data?.items ?? associated_threads ?? []
   const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
-  const urgency = classification?.urgency || draft?.urgency || thread.urgency
+  const presentation = thread.presentation
   const subject = thread.subject || "(no subject)"
   const showSentReply =
     thread.state === "RESOLVED" && sent_reply != null
@@ -118,18 +119,8 @@ export default function ThreadDetailPage() {
             >
               {label}
             </span>
-            <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
-            {urgency ? (
-              <StatusBadge label={urgency} tone={urgencyTone(urgency)} />
-            ) : null}
-            {thread.category ? (
-              <StatusBadge label={thread.category} tone="purple" />
-            ) : null}
-            {triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
-            {triage?.is_automated ? <StatusBadge label="Automated" tone="neutral" /> : null}
-            {triage?.is_spam ? <StatusBadge label="Spam" tone="red" /> : null}
-            {triage?.needs_context ? (
-              <StatusBadge label="Needs context" tone="amber" />
+            {presentation?.badges_now?.length ? (
+              <PresentationBadges badges={presentation.badges_now} />
             ) : null}
           </div>
         </CardHeader>
@@ -147,6 +138,11 @@ export default function ThreadDetailPage() {
                   messages,
                 })}
               </p>
+              {presentation && !presentation.urgency_active && presentation.urgency_assessed ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Assessed urgency {presentation.urgency_assessed} (inactive — finished thread)
+                </p>
+              ) : null}
             </div>
             {thread.outlook_url ? (
               <a
@@ -164,6 +160,11 @@ export default function ThreadDetailPage() {
         </CardContent>
       </Card>
 
+      <ResolutionBanner
+        threadId={threadId}
+        presentation={presentation}
+        urgencyAssessed={presentation?.urgency_assessed ?? thread.urgency}
+      />
       <CourtesyCloseBanner
         state={thread.state}
         lastInboundBody={lastInbound?.body_text ?? null}
@@ -183,6 +184,7 @@ export default function ThreadDetailPage() {
             draft={draft}
             triage={triage}
             auditLog={audit_log}
+            activity={activity ?? []}
           />
         </aside>
         <div className="lg:col-span-3">

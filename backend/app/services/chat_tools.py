@@ -267,16 +267,20 @@ async def _enrich_hits_with_bodies(
     session: AsyncSession,
     hits: list[SearchHit],
 ) -> list[SearchHit]:
+    if not hits:
+        return []
+    thread_ids = [hit.thread_id for hit in hits]
+    try:
+        by_thread = await message_repo.list_by_thread_ids(session, thread_ids)
+    except Exception:
+        with suppress(Exception):
+            await session.rollback()
+        return list(hits)
+
     enriched: list[SearchHit] = []
     for hit in hits:
-        try:
-            messages = await message_repo.list_by_thread(session, hit.thread_id)
-        except Exception:
-            with suppress(Exception):
-                await session.rollback()
-            enriched.append(hit)
-            continue
-        if not isinstance(messages, list):
+        messages = by_thread.get(hit.thread_id)
+        if not isinstance(messages, list) or not messages:
             enriched.append(hit)
             continue
         body = _message_body_snippet(messages)

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Personal / user mailboxes whose Sent Items may close shared-inbox threads.
     # Polled outbound-only (Mail.Read). Not triaged as inboxes.
     reviewer_mailboxes: str = ""
+    # Extra company domains treated as internal (CSV), in addition to the mailbox domain.
+    internal_domains: str = ""
+    # Personal mailbox owners: CSV of email:DisplayName (e.g. sampleagent@…:Elise).
+    mailbox_owners: str = ""
     # When false, Slack Bolt is not constructed and review cards are skipped
     # (pipeline still completes; slack_delivery=skipped_unconfigured).
     slack_enabled: bool = False
@@ -164,6 +168,38 @@ class Settings(BaseSettings):
         if not self.target_mailboxes.strip():
             return []
         return [m.strip() for m in self.target_mailboxes.split(",") if m.strip()]
+
+    @property
+    def internal_domain_list(self) -> list[str]:
+        if not self.internal_domains.strip():
+            return []
+        return [
+            d.strip().lower().lstrip("@")
+            for d in self.internal_domains.split(",")
+            if d.strip()
+        ]
+
+    @property
+    def mailbox_owner_map(self) -> dict[str, str]:
+        """Lowercase mailbox email → owner display name."""
+        if not self.mailbox_owners.strip():
+            return {}
+        owners: dict[str, str] = {}
+        for part in self.mailbox_owners.split(","):
+            entry = part.strip()
+            if not entry or ":" not in entry:
+                continue
+            email, _, name = entry.partition(":")
+            email_key = email.strip().lower()
+            display = name.strip()
+            if email_key and display:
+                owners[email_key] = display
+        return owners
+
+    def owner_for_mailbox(self, email: str) -> str | None:
+        from app.core.mailbox_keys import owner_for_mailbox
+
+        return owner_for_mailbox(email, self.mailbox_owner_map)
 
     @property
     def reviewer_mailbox_list(self) -> list[str]:

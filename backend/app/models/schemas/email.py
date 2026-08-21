@@ -46,6 +46,7 @@ class EmailMessageSchema(BaseModel):
     direction: EmailDirectionEnum = EmailDirectionEnum.INBOUND
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
+    bcc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
     # Well-known Graph folder (inbox / junkemail / sentitems). Hint only.
     graph_folder: str | None = None

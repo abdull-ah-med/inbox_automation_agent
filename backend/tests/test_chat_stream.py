@@ -159,16 +159,63 @@ async def test_iter_ask_events_sends_status_then_meta_then_answer_then_done() ->
             )
         ]
 
-    assert events[0] == {"type": "status", "text": "Searching mail"}
-    assert events[1]["type"] == "meta"
-    assert events[1]["refused_write"] is False
-    assert events[1]["retrieval_count"] == 1
-    assert events[1]["mailbox"] == SALES
-    assert events[1]["citations"][0]["thread_id"] == str(THREAD_A)
-    assert events[1]["citations"][0]["url_path"] == f"/threads/{THREAD_A}"
+    status_texts = [event["text"] for event in events if event["type"] == "status"]
+    assert status_texts[0] == "Searching your inbox…"
+    assert "Searching mail" in status_texts
+    assert "Reading 1 thread…" in status_texts
+    assert "Drafting answer…" in status_texts
+    meta_idx = next(i for i, event in enumerate(events) if event["type"] == "meta")
+    first_delta_idx = next(i for i, event in enumerate(events) if event["type"] == "delta")
+    assert meta_idx < first_delta_idx
+    assert events[meta_idx]["refused_write"] is False
+    assert events[meta_idx]["retrieval_count"] == 1
+    assert events[meta_idx]["mailbox"] == SALES
+    assert events[meta_idx]["citations"][0]["thread_id"] == str(THREAD_A)
+    assert events[meta_idx]["citations"][0]["url_path"] == f"/threads/{THREAD_A}"
     deltas = [event["text"] for event in events if event["type"] == "delta"]
     assert deltas == [CHUNK_ONE, CHUNK_TWO]
     assert events[-1] == {"type": "done", "grounded_verifier": "SKIPPED"}
+
+
+@pytest.mark.asyncio
+async def test_iter_ask_events_emits_status_before_any_delta() -> None:
+    """Reviewer must see progress within the retrieval dead zone, before tokens."""
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {"type": "retrieved", "hits": [_hit(), _hit()]},
+            {"type": "delta", "text": CHUNK_ONE},
+            {"type": "result", "answer": FULL_ANSWER, "hits": [_hit(), _hit()]},
+        ),
+    ):
+        events = [
+            event
+            async for event in chat_service.iter_ask_events(
+                AsyncMock(),
+                _settings(),
+                openai_client=MagicMock(),
+                anthropic_client=MagicMock(),
+                message="billing disputes waiting on review",
+            )
+        ]
+
+    first_delta = next(i for i, event in enumerate(events) if event["type"] == "delta")
+    pre_delta = events[:first_delta]
+    assert any(
+        event.get("type") == "status" and event.get("text") == "Searching your inbox…"
+        for event in pre_delta
+    )
+    assert any(
+        event.get("type") == "status" and event.get("text") == "Reading 2 threads…"
+        for event in pre_delta
+    )
+    assert any(
+        event.get("type") == "status" and event.get("text") == "Drafting answer…"
+        for event in pre_delta
+    )
+    assert any(event.get("type") == "meta" for event in pre_delta)
 
 
 @pytest.mark.asyncio
@@ -231,10 +278,12 @@ async def test_iter_ask_events_no_hits_streams_canned_answer_not_invented_text()
             )
         ]
 
-    assert events[0]["type"] == "meta"
-    assert events[0]["citations"] == []
-    assert events[0]["retrieval_count"] == 0
-    assert events[1] == {"type": "delta", "text": NO_MATCH_ANSWER}
+    assert events[0] == {"type": "status", "text": "Searching your inbox…"}
+    meta = next(event for event in events if event["type"] == "meta")
+    assert meta["citations"] == []
+    assert meta["retrieval_count"] == 0
+    deltas = [event for event in events if event["type"] == "delta"]
+    assert deltas[0] == {"type": "delta", "text": NO_MATCH_ANSWER}
     assert events[-1] == {"type": "done", "grounded_verifier": "SKIPPED"}
 
 
@@ -264,6 +313,28 @@ async def test_iter_ask_events_out_of_scope_streams_canned_answer_without_llm() 
     assert events[0]["citations"] == []
     assert events[1] == {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
     assert events[-1] == {"type": "done"}
+
+
+@pytest.mark.asyncio
+async def test_app_does_not_install_gzip_middleware() -> None:
+    """Gzip buffering would defeat SSE token streaming."""
+    from starlette.middleware.gzip import GZipMiddleware
+
+    local_settings = _settings()
+    get_settings.cache_clear()
+    with (
+        patch("app.main.get_settings", return_value=local_settings),
+        patch("app.main._ping_redis", AsyncMock()),
+        patch("app.main.get_slack_app", return_value=None),
+        patch("app.main.run_subscription_reconcile", AsyncMock()),
+        patch("app.main.AsyncIOScheduler") as sched,
+    ):
+        sched.return_value.start = lambda: None
+        sched.return_value.shutdown = lambda wait=False: None
+        application = create_app()
+    get_settings.cache_clear()
+    classes = [getattr(m, "cls", type(None)) for m in application.user_middleware]
+    assert GZipMiddleware not in classes
 
 
 @pytest.fixture
@@ -335,7 +406,9 @@ async def test_chat_ask_stream_sends_sse_deltas(app) -> None:
 
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
+    assert resp.headers["cache-control"] == "no-cache, no-transform"
     assert resp.headers.get("x-accel-buffering") == "no"
+    assert "gzip" not in resp.headers.get("content-encoding", "").lower()
     parsed = [
         json.loads(line[5:].strip()) for line in resp.text.split("\n") if line.startswith("data:")
     ]

@@ -108,6 +108,10 @@ async def test_run_draft_pending_to_drafted() -> None:
             new=AsyncMock(return_value=[]),
         ),
         patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.draft_service.draft_llm.generate_draft",
             new=AsyncMock(return_value=call),
         ) as generate,
@@ -149,6 +153,10 @@ async def test_run_draft_generation_failure_requires_human() -> None:
         ),
         patch(
             "app.services.draft_service.rejection_memory_service.find_negative_constraints",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -217,6 +225,10 @@ async def test_run_draft_persists_context_match_confidence() -> None:
         ),
         patch(
             "app.services.draft_service.rejection_memory_service.find_negative_constraints",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
             new=AsyncMock(return_value=[]),
         ),
         patch(

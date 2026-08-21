@@ -27,6 +27,40 @@ export interface TriageFlags {
   outcome: string | null
 }
 
+export interface BadgeNow {
+  kind: string
+  label: string
+}
+
+export interface TriageHistory {
+  has_action_items: boolean | null
+  needs_context: boolean | null
+  is_spam: boolean | null
+  action_items_summary?: string | null
+  context_reason?: string | null
+  spam_reason?: string | null
+}
+
+export interface ThreadPresentation {
+  is_finished: boolean
+  open_work: boolean
+  in_needs_attention: boolean
+  urgency_assessed: string | null
+  urgency_active: boolean
+  badges_now: BadgeNow[]
+  triage_history: TriageHistory
+  suggest_resolve_default: boolean
+  show_resolution_banner: boolean
+}
+
+export interface ActivityEntry {
+  title: string
+  body: string
+  actor_kind: string
+  event_type: string
+  timestamp: string
+}
+
 export interface ThreadSummary {
   id: string
   mailbox: string
@@ -45,6 +79,7 @@ export interface ThreadSummary {
   teaching_note: string | null
   triage: TriageFlags | null
   outlook_url: string | null
+  presentation?: ThreadPresentation | null
 }
 
 export interface MailboxOverview {
@@ -88,6 +123,7 @@ export interface MessageDetail {
   sender: string
   to: string[]
   cc: string[]
+  bcc: string[]
   body_text: string
   body_preview: string | null
   received_at: string
@@ -267,6 +303,7 @@ export interface ThreadDetail {
   draft: DraftView | null
   triage: TriageFlags | null
   audit_log: AuditEntry[]
+  activity?: ActivityEntry[]
   sent_reply?: SentReplyView | null
   draft_vs_sent_diff?: DraftVsSentDiff | null
   associated_threads?: RelatedThreadItem[]
@@ -315,6 +352,25 @@ export interface ChatAskRequest {
   limit?: number
   history?: ChatHistoryTurn[]
   bypass_cache?: boolean
+  session_id?: string
+}
+
+export interface ChatSessionCreateResponse {
+  session_id: string
+  mailbox: string | null
+}
+
+export interface ChatSessionMessage {
+  role: "user" | "assistant"
+  content: string
+  citations?: ChatCitedThread[]
+}
+
+export interface ChatSessionResponse {
+  session_id: string
+  mailbox: string | null
+  messages: ChatSessionMessage[]
+  summary: string
 }
 
 export interface ChatAskResponse {

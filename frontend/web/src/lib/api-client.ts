@@ -16,6 +16,8 @@ import {
 import type {
   ChatAskRequest,
   ChatAskResponse,
+  ChatSessionCreateResponse,
+  ChatSessionResponse,
   DashboardOverview,
   DraftView,
   ImportSkillResult,
@@ -425,6 +427,15 @@ export const api = {
   },
 
   chat: {
+    createSession(body: { mailbox?: string | null } = {}) {
+      return apiFetch<ChatSessionCreateResponse>("/api/chat/session", {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    },
+    getSession(sessionId: string) {
+      return apiFetch<ChatSessionResponse>(`/api/chat/session/${sessionId}`)
+    },
     ask(body: ChatAskRequest) {
       return apiFetch<ChatAskResponse>("/api/chat/ask", {
         method: "POST",
@@ -629,6 +640,24 @@ export const api = {
       }>(`/api/threads/${id}/not-spam`, {
         method: "POST",
       });
+    },
+    resolve(id: string, body?: { note?: string }) {
+      return apiFetch<{ state: string }>(`/api/threads/${id}/resolve`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      });
+    },
+    resolutionFeedback(
+      id: string,
+      body: { action: "reopen" | "wrong_reason"; note?: string },
+    ) {
+      return apiFetch<{ state: string; action: string }>(
+        `/api/threads/${id}/resolution-feedback`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
     },
   },
 

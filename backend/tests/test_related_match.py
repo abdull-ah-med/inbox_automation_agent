@@ -141,9 +141,33 @@ def test_select_related_caps_at_five_score_then_recency() -> None:
         UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa7"),
     ]
     candidates = [
-        _cand(top, subject="SampleClient follow-up 8/2", cosine=0.90, score=0.05, last_message_at=older),
-        *[_cand(tid, subject="SampleClient follow-up 8/3", cosine=0.90, score=0.02, last_message_at=newer) for tid in newer_ids],
-        *[_cand(tid, subject="SampleClient follow-up 8/4", cosine=0.90, score=0.02, last_message_at=older) for tid in older_ids],
+        _cand(
+            top,
+            subject="SampleClient follow-up 8/2",
+            cosine=0.90,
+            score=0.05,
+            last_message_at=older,
+        ),
+        *[
+            _cand(
+                tid,
+                subject="SampleClient follow-up 8/3",
+                cosine=0.90,
+                score=0.02,
+                last_message_at=newer,
+            )
+            for tid in newer_ids
+        ],
+        *[
+            _cand(
+                tid,
+                subject="SampleClient follow-up 8/4",
+                cosine=0.90,
+                score=0.02,
+                last_message_at=older,
+            )
+            for tid in older_ids
+        ],
     ]
 
     got = select_related(
@@ -156,3 +180,71 @@ def test_select_related_caps_at_five_score_then_recency() -> None:
     )
 
     assert [row.thread_id for row in got] == [top, *newer_ids]
+
+
+def test_timing_gate_drops_far_apart_low_cosine_unless_confirmed() -> None:
+    """Candidates >90 days apart with weak cosine are out unless confirmed."""
+    source = _cand(
+        SAMPLECLIENT_8_9,
+        subject="SampleClient follow-up 8/9",
+        cosine=0.50,
+        last_message_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    far = _cand(
+        INVOICE,
+        subject="SampleClient follow-up 1/1",
+        cosine=0.50,
+        last_message_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    got = select_related(
+        source,
+        [far],
+        purpose="associated",
+        dismissed_ids=set(),
+        min_similarity=0.78,
+        queue_ids=set(),
+        max_gap_days=90,
+    )
+    assert [row.thread_id for row in got] == []
+
+
+def test_timing_gate_keeps_far_apart_when_confirmed() -> None:
+    source = _cand(
+        SAMPLECLIENT_8_9,
+        subject="SampleClient follow-up 8/9",
+        cosine=0.50,
+        last_message_at=datetime(2026, 8, 14, tzinfo=UTC),
+    )
+    far = _cand(
+        RESOLVED_ASSOC,
+        subject="SampleClient follow-up 1/1",
+        cosine=0.50,
+        last_message_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    got = select_related(
+        source,
+        [far],
+        purpose="associated",
+        dismissed_ids=set(),
+        min_similarity=0.78,
+        queue_ids=set(),
+        max_gap_days=90,
+        confirmed_ids={RESOLVED_ASSOC},
+    )
+    assert [row.thread_id for row in got] == [RESOLVED_ASSOC]
+
+
+def test_dismissed_subject_template_suppresses_similar_drip() -> None:
+    """After dismissing one SampleClient drip, another same-sender drip is suppressed."""
+    source = _cand(SAMPLECLIENT_8_9, subject="SampleClient follow-up 8/9", cosine=0.50)
+    sibling = _cand(SAMPLECLIENT_8_14, subject="SampleClient follow-up 8/14", cosine=0.50)
+    got = select_related(
+        source,
+        [sibling],
+        purpose="siblings",
+        dismissed_ids=set(),
+        min_similarity=0.78,
+        queue_ids={SAMPLECLIENT_8_14},
+        suppressed_drip_keys={("rep@sample-client.example.com", "SampleClient follow-up")},
+    )
+    assert [row.thread_id for row in got] == []

@@ -18,6 +18,10 @@ from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
+from app.core.reply_addressee import (
+    format_reply_addressee_block,
+    resolve_reply_addressee,
+)
 from app.llm.context_pack import pack_cross_thread, pack_same_thread
 from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
@@ -101,6 +105,7 @@ def _build_user_content(
     confirmed_associations: list[CrossThreadContextSchema] | None = None,
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
+    mailbox_owner: str | None = None,
 ) -> str:
     thread_block = pack_same_thread(
         thread_context,
@@ -177,8 +182,33 @@ def _build_user_content(
             f"{wrap_untrusted(UNTRUSTED_INSTRUCTION_TAG, instruction.strip())}\n"
         )
 
+    owner_signoff_block = ""
+    if mailbox_owner and mailbox_owner.strip():
+        name = mailbox_owner.strip()
+        owner_signoff_block = (
+            f"\nPersonal mailbox sign-as (hard constraint):\n"
+            f'Sign the reply as {name}. Closing name must be exactly "{name}" '
+            f"(not the mailbox local-part, not a team name).\n"
+        )
+
+    addressee = resolve_reply_addressee(
+        mailbox=email.mailbox,
+        messages=list(thread_context.messages) or [email],
+    )
+    addressee_block = ""
+    if addressee is not None:
+        addressee_block = f"\n{format_reply_addressee_block(addressee)}"
+
+    owner_line = ""
+    if mailbox_owner and mailbox_owner.strip():
+        name = mailbox_owner.strip()
+        owner_line = (
+            f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
+        )
+
     email_block = (
         f"Mailbox: {email.mailbox}\n"
+        f"{owner_line}"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
         f"Direction: {email.direction.value}\n"
@@ -213,6 +243,8 @@ def _build_user_content(
         f"- needs_context: {triage.needs_context}\n"
         f"- context_reason: {context_reason}\n"
         f"- routing_category: {triage.routing_category}\n"
+        f"{addressee_block}"
+        f"{owner_signoff_block}"
         f"{instruction_block}"
     )
 
@@ -430,6 +462,7 @@ async def generate_draft(
         confirmed_associations=scrubbed_confirmed,
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
+        mailbox_owner=settings.owner_for_mailbox(email.mailbox),
     )
     started = time.perf_counter()
     last_error: Exception | None = None

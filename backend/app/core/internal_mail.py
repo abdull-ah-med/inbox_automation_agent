@@ -35,10 +35,16 @@ def email_domain(raw: str | None) -> str | None:
     return domain or None
 
 
-def is_internal_sender(sender: str | None, mailbox: str | None) -> bool:
-    """True when a *colleague* shares the mailbox domain.
+def is_internal_sender(
+    sender: str | None,
+    mailbox: str | None,
+    *,
+    extra_domains: list[str] | None = None,
+) -> bool:
+    """True when a *colleague* shares the mailbox domain or an allowlisted domain.
 
     The mailbox addressing itself (Sent Items / outbound) is not internal.
+    Body keywords like INTERNAL are never consulted.
     """
     sender_addr = extract_email_address(sender)
     mailbox_addr = extract_email_address(mailbox)
@@ -48,7 +54,14 @@ def is_internal_sender(sender: str | None, mailbox: str | None) -> bool:
         return False
     sender_domain = email_domain(sender)
     mailbox_domain = email_domain(mailbox)
-    return sender_domain is not None and sender_domain == mailbox_domain
+    if sender_domain is None:
+        return False
+    allowed = {mailbox_domain} if mailbox_domain else set()
+    for domain in extra_domains or []:
+        cleaned = domain.strip().lower().lstrip("@")
+        if cleaned:
+            allowed.add(cleaned)
+    return sender_domain in allowed
 
 
 def thread_counterpart(
@@ -88,9 +101,10 @@ def apply_internal_mail_policy(
     *,
     sender: str,
     mailbox: str,
+    extra_domains: list[str] | None = None,
 ) -> TriageResultSchema:
     """Internal senders are never spam; general routing becomes internal."""
-    if not is_internal_sender(sender, mailbox):
+    if not is_internal_sender(sender, mailbox, extra_domains=extra_domains):
         return triage
     updates: dict[str, object] = {}
     if triage.is_spam:
@@ -109,11 +123,21 @@ def enrich_triage_flags(
     sender: str | None,
     mailbox: str | None,
     subject: str | None = None,
+    extra_domains: list[str] | None = None,
 ) -> TriageFlags | None:
     """Attach internal/automated tags and clear a stored spam flag on internal mail."""
     from app.core.automated_mail import is_automated_mail
 
-    internal = is_internal_sender(sender, mailbox)
+    domains = extra_domains
+    if domains is None:
+        try:
+            from app.core.config import get_settings
+
+            domains = get_settings().internal_domain_list
+        except Exception:
+            domains = []
+
+    internal = is_internal_sender(sender, mailbox, extra_domains=domains)
     automated = is_automated_mail(sender=sender, subject=subject)
     if flags is None:
         if not internal and not automated:
@@ -138,8 +162,19 @@ def display_state_for_internal_mail(
     *,
     sender: str | None,
     mailbox: str | None,
+    extra_domains: list[str] | None = None,
 ) -> str:
     """Internal mail stored as SPAM is shown as NO_ACTION, not spam."""
-    if state == ThreadStateEnum.SPAM.value and is_internal_sender(sender, mailbox):
+    domains = extra_domains
+    if domains is None:
+        try:
+            from app.core.config import get_settings
+
+            domains = get_settings().internal_domain_list
+        except Exception:
+            domains = []
+    if state == ThreadStateEnum.SPAM.value and is_internal_sender(
+        sender, mailbox, extra_domains=domains
+    ):
         return ThreadStateEnum.NO_ACTION.value
     return state

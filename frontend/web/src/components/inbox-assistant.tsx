@@ -62,6 +62,11 @@ import { getErrorMessage } from "@/lib/error-messages"
 import { sanitizeUserText } from "@/lib/sanitize"
 import type { ChatAskRequest, ChatCitation, ChatHistoryTurn, MailboxOverview } from "@/lib/types"
 import { toChatHistoryPayload } from "@/lib/chat-history"
+import {
+  clearStoredSessionId,
+  readStoredSessionId,
+  writeStoredSessionId,
+} from "@/lib/chat-session-storage"
 import { createRafDeltaBatcher } from "@/lib/stream-delta-batcher"
 import { cn } from "@/lib/utils"
 
@@ -140,6 +145,7 @@ export const InboxAssistant = () => {
   const [validation, setValidation] = useState<string | null>(null)
   const [isAsking, setIsAsking] = useState(false)
   const [turns, setTurns] = useState<ChatTurn[]>([])
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [panelSize, setPanelSize] = useState<PanelSize>("compact")
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -167,6 +173,51 @@ export const InboxAssistant = () => {
     return () => window.cancelAnimationFrame(frame)
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const resume = async () => {
+      const stored = readStoredSessionId(mailbox)
+      if (!stored) {
+        if (!cancelled) {
+          setSessionId(null)
+          setTurns([])
+        }
+        return
+      }
+      try {
+        const session = await api.chat.getSession(stored)
+        if (cancelled) return
+        setSessionId(session.session_id)
+        const restored: ChatTurn[] = session.messages.map((item, index) => ({
+          id: `restored-${session.session_id}-${index}`,
+          role: item.role,
+          text: item.content,
+        }))
+        setTurns(restored)
+      } catch {
+        if (cancelled) return
+        clearStoredSessionId(mailbox)
+        setSessionId(null)
+        setTurns([])
+      }
+    }
+    void resume()
+    return () => {
+      cancelled = true
+    }
+  }, [open, mailbox])
+
+  const ensureSessionId = async (): Promise<string> => {
+    if (sessionId) return sessionId
+    const created = await api.chat.createSession({
+      mailbox: mailbox || null,
+    })
+    writeStoredSessionId(mailbox, created.session_id)
+    setSessionId(created.session_id)
+    return created.session_id
+  }
+
   const handleOpen = () => {
     setOpen(true)
   }
@@ -181,6 +232,8 @@ export const InboxAssistant = () => {
     abortRef.current?.abort()
     abortRef.current = null
     pendingMetaRef.current = null
+    clearStoredSessionId(mailbox)
+    setSessionId(null)
     setToolStatus(null)
     setTurns([])
     setMessage("")
@@ -293,7 +346,11 @@ export const InboxAssistant = () => {
     })
     deltaBatcherRef.current = deltaBatcher
     try {
-      const payload: ChatAskRequest = { message: trimmed }
+      const activeSessionId = await ensureSessionId()
+      const payload: ChatAskRequest = {
+        message: trimmed,
+        session_id: activeSessionId,
+      }
       if (mailbox) payload.mailbox = mailbox
       if (history.length > 0) payload.history = toChatHistoryPayload(history)
       if (options?.bypassCache) payload.bypass_cache = true

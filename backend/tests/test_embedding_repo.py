@@ -200,7 +200,10 @@ async def test_search_similar_enables_iterative_scan_when_configured() -> None:
         settings=settings,
     )
 
-    sqls = [str(getattr(call.args[0], "text", call.args[0])).lower() for call in session.execute.await_args_list]
+    sqls = [
+        str(getattr(call.args[0], "text", call.args[0])).lower()
+        for call in session.execute.await_args_list
+    ]
     assert any("set local hnsw.iterative_scan = strict_order" in sql for sql in sqls)
 
 
@@ -225,7 +228,10 @@ async def test_search_similar_skips_iterative_scan_when_disabled() -> None:
         settings=settings,
     )
 
-    sqls = [str(getattr(call.args[0], "text", call.args[0])).lower() for call in session.execute.await_args_list]
+    sqls = [
+        str(getattr(call.args[0], "text", call.args[0])).lower()
+        for call in session.execute.await_args_list
+    ]
     assert not any("iterative_scan" in sql for sql in sqls)
 
 

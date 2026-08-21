@@ -13,7 +13,7 @@ from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, RedisDep,
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
-from app.models.schemas.spam import NotSpamResponseSchema
+from app.models.schemas.feedback import RegenerateDraftSchema
 from app.models.schemas.related import (
     ApplyTreatmentResponse,
     ApplyTreatmentSchema,
@@ -22,10 +22,18 @@ from app.models.schemas.related import (
     RelatedReviewSchema,
     RelatedThreadList,
 )
+from app.models.schemas.resolution import (
+    ResolutionFeedbackResponse,
+    ResolutionFeedbackSchema,
+    ResolveThreadResponse,
+    ResolveThreadSchema,
+)
+from app.models.schemas.spam import NotSpamResponseSchema
 from app.services import (
     draft_regeneration_service,
     not_spam_service,
     related_thread_service,
+    resolution_service,
     thread_view_service,
 )
 
@@ -209,6 +217,63 @@ async def review_related_thread(
     )
     await session.commit()
     return result
+
+
+@router.post(
+    "/{thread_id}/resolve",
+    response_model=ResolveThreadResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def resolve_thread(
+    thread_id: uuid.UUID,
+    body: ResolveThreadSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    user: CurrentUser,
+) -> ResolveThreadResponse:
+    """Mark a thread resolved (local DB only). Does not send or edit Outlook mail."""
+    _ = request, response
+    state = await resolution_service.resolve_thread_manual(
+        session,
+        settings,
+        thread_id,
+        actor=user.email,
+        note=body.note,
+    )
+    await session.commit()
+    return ResolveThreadResponse(state=state)
+
+
+@router.post(
+    "/{thread_id}/resolution-feedback",
+    response_model=ResolutionFeedbackResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def resolution_feedback(
+    thread_id: uuid.UUID,
+    body: ResolutionFeedbackSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    user: CurrentUser,
+) -> ResolutionFeedbackResponse:
+    """Reopen a finished thread or record a wrong auto-resolve reason."""
+    _ = request, response
+    state = await resolution_service.apply_resolution_feedback(
+        session,
+        settings,
+        thread_id,
+        action=body.action,
+        actor=user.email,
+        note=body.note,
+    )
+    await session.commit()
+    return ResolutionFeedbackResponse(state=state, action=body.action)
 
 
 @router.post(

@@ -72,4 +72,59 @@ describe("SmoothStreamText", () => {
     expect(stream.tick(0)).toBe("Instant dump")
     expect(stream.isCaughtUp()).toBe(true)
   })
+
+  it("does not reset visible prefix when the target only grows on completion", () => {
+    const stream = new SmoothStreamText()
+    stream.setTarget("The overdue", true)
+    stream.tick(0)
+    const mid = stream.tick(50)
+    expect(mid.length).toBeGreaterThan(0)
+
+    // Normal completion: same prefix, longer string, networkStreaming=false.
+    stream.setTarget("The overdue billing dispute", false)
+    const afterComplete = stream.getVisible()
+    expect(afterComplete).toBe(mid)
+    expect("The overdue billing dispute".startsWith(afterComplete)).toBe(true)
+    expect(stream.isCaughtUp()).toBe(false)
+  })
+
+  it("keeps revealing continuously through a bursty target update", () => {
+    const stream = new SmoothStreamText({
+      baseCharsPerSecond: 240,
+      maxCharsPerSecond: 480,
+      maxLagChars: 80,
+    })
+    const full =
+      "The overdue billing dispute is waiting on review and Ashley still needs the certificate."
+    stream.setTarget(full.slice(0, 20), true)
+    stream.tick(0)
+
+    // Burst arrives all at once (cache-like / proxy-buffered SSE).
+    stream.setTarget(full, true)
+
+    const samples: number[] = []
+    let last = 0
+    for (let t = 16; t <= 800; t += 16) {
+      const visible = stream.tick(t)
+      samples.push(visible.length)
+      expect(visible.length).toBeGreaterThanOrEqual(last)
+      expect(full.startsWith(visible)).toBe(true)
+      last = visible.length
+      if (stream.isCaughtUp()) break
+    }
+    expect(samples.some((n) => n > 0)).toBe(true)
+    expect(samples[samples.length - 1]).toBe(full.length)
+    // No multi-frame stalls once reveal has started (gaps > 4 frames / 64ms of zero growth).
+    let zeroGrowth = 0
+    let maxZero = 0
+    for (let i = 1; i < samples.length; i += 1) {
+      if (samples[i] === samples[i - 1] && samples[i] < full.length) {
+        zeroGrowth += 1
+        maxZero = Math.max(maxZero, zeroGrowth)
+      } else {
+        zeroGrowth = 0
+      }
+    }
+    expect(maxZero).toBeLessThanOrEqual(3)
+  })
 })

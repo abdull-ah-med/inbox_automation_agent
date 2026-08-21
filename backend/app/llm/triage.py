@@ -45,6 +45,7 @@ def _build_user_content(
     *,
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
+    mailbox_owner: str | None = None,
 ) -> str:
     thread_block = pack_same_thread(
         thread_context,
@@ -63,8 +64,16 @@ def _build_user_content(
     if (email.graph_folder or "").strip().lower() == "junkemail":
         outlook_location = "Outlook location: Junk Email\n"
 
+    owner_line = ""
+    if mailbox_owner and mailbox_owner.strip():
+        name = mailbox_owner.strip()
+        owner_line = (
+            f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
+        )
+
     email_block = (
         f"Mailbox: {email.mailbox}\n"
+        f"{owner_line}"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
         f"Direction: {email.direction.value}\n"
@@ -129,6 +138,7 @@ async def triage_email(
         scrub_thread_for_llm(thread_context),
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
+        mailbox_owner=settings.owner_for_mailbox(email.mailbox),
     )
     started = time.perf_counter()
     last_error: Exception | None = None

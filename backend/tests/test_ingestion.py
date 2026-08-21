@@ -58,7 +58,7 @@ def sample_message() -> GraphMessageSchema:
 
 @pytest.mark.asyncio
 async def test_thread_context_from_db_includes_recipients() -> None:
-    """retry_triage rebuild must restore To/CC for Haiku PoI rules."""
+    """retry_triage rebuild must restore To/CC/BCC for Haiku PoI rules and UI."""
     from app.repositories.message_repo import MessageSchema
     from app.services.ingestion_service import _thread_context_from_db
 
@@ -79,6 +79,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
         received_at=datetime.now(UTC),
         to_recipients=["user@example.com"],
         cc_recipients=["cc@example.com"],
+        bcc_recipients=["bcc@example.com"],
     )
     thread = ThreadSchema(
         id=thread_id,
@@ -114,6 +115,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
     rebuilt = result.thread_context.messages[0]
     assert rebuilt.to_recipients == ["user@example.com"]
     assert rebuilt.cc_recipients == ["cc@example.com"]
+    assert rebuilt.bcc_recipients == ["bcc@example.com"]
     assert rebuilt.body_clean == "Body"
 
 

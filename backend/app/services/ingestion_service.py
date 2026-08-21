@@ -186,6 +186,7 @@ def _to_email_message_schema(
         direction=_direction_for_sender(mailbox, sender),
         to_recipients=_recipient_addresses(message.to_recipients),
         cc_recipients=_recipient_addresses(message.cc_recipients),
+        bcc_recipients=_recipient_addresses(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
         graph_folder=message.source_folder,
     )
@@ -314,6 +315,7 @@ async def _thread_context_from_db(
                 ),
                 to_recipients=list(row.to_recipients or []),
                 cc_recipients=list(row.cc_recipients or []),
+                bcc_recipients=list(row.bcc_recipients or []),
                 has_attachments=bool(row.has_attachments),
                 graph_folder=row.graph_folder,
                 summary_one_line=row.summary_one_line,
@@ -410,6 +412,7 @@ async def ingest_graph_message(
                 received_at=email_msg.received_at,
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
+                bcc_recipients=email_msg.bcc_recipients,
                 has_attachments=email_msg.has_attachments,
                 graph_folder=email_msg.graph_folder,
                 body_content_type=email_msg.body_content_type,
@@ -621,6 +624,7 @@ async def handle_outbound_notification(
             received_at=email_msg.received_at,
             to_recipients=email_msg.to_recipients,
             cc_recipients=email_msg.cc_recipients,
+            bcc_recipients=email_msg.bcc_recipients,
             has_attachments=email_msg.has_attachments,
             body_content_type=email_msg.body_content_type,
             body_clean=email_msg.body_clean,
@@ -707,6 +711,7 @@ async def ingest_simulated_message(
                 direction=direction,
                 to_recipients=list(payload.to_recipients),
                 cc_recipients=list(payload.cc_recipients),
+                bcc_recipients=list(payload.bcc_recipients),
                 has_attachments=payload.has_attachments,
             )
         )
@@ -721,6 +726,7 @@ async def ingest_simulated_message(
             received_at=payload.received_at,
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),
+            bcc_recipients=list(payload.bcc_recipients),
             has_attachments=payload.has_attachments,
             body_content_type=email_msg.body_content_type,
             body_clean=email_msg.body_clean,

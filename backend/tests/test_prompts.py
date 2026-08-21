@@ -158,9 +158,15 @@ def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
     assert "suggested_actions" in DraftSchema.model_fields
 
 
+def test_draft_prompt_requires_reply_addressee_salutation() -> None:
+    assert "Reply addressee" in DRAFT_SYSTEM_PROMPT or "addressee" in DRAFT_SYSTEM_PROMPT.lower()
+    assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
+    assert PROMPT_VERSION == "2026-08-21.2"
+
+
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-20.6"
+    assert PROMPT_VERSION == "2026-08-21.2"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 

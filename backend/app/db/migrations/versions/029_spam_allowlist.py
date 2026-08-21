@@ -16,7 +16,11 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     tables = set(inspector.get_table_names())
-    columns = {col["name"] for col in inspector.get_columns("messages")} if "messages" in tables else set()
+    columns = (
+        {col["name"] for col in inspector.get_columns("messages")}
+        if "messages" in tables
+        else set()
+    )
 
     if "graph_folder" not in columns:
         op.add_column(
@@ -56,7 +60,11 @@ def downgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     tables = set(inspector.get_table_names())
-    columns = {col["name"] for col in inspector.get_columns("messages")} if "messages" in tables else set()
+    columns = (
+        {col["name"] for col in inspector.get_columns("messages")}
+        if "messages" in tables
+        else set()
+    )
 
     if "spam_allowlist" in tables:
         op.drop_index("ix_spam_allowlist_mailbox", table_name="spam_allowlist")

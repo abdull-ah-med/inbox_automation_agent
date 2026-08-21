@@ -28,6 +28,14 @@ _AUTOMATED_LOCALS = frozenset(
         "autoresponder",
         "automated",
         "daemon",
+        "alerts",
+        "alert",
+        "monitor",
+        "monitoring",
+        "status",
+        "system",
+        "robot",
+        "bots",
     }
 )
 _AUTOMATED_SUBJECT_PREFIXES = (
@@ -38,6 +46,10 @@ _AUTOMATED_SUBJECT_PREFIXES = (
     "undeliverable",
     "delivery status notification",
     "auto:",
+    "alert:",
+    "[alert]",
+    "[monitoring]",
+    "cron:",
 )
 _AUTOMATED_LOCALS_COMPACT = frozenset(
     item.replace(".", "").replace("-", "").replace("_", "") for item in _AUTOMATED_LOCALS

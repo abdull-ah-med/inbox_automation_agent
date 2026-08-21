@@ -7,6 +7,7 @@ import { Check, X } from "lucide-react"
 import { ApplySiblingsDialog } from "@/components/apply-siblings-dialog"
 import { EmailBody } from "@/components/email-body"
 import { NotSpamButton } from "@/components/not-spam-button"
+import { PresentationBadges } from "@/components/presentation-badges"
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
 import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
 import { Button } from "@/components/ui/button"
@@ -37,6 +38,7 @@ import {
   type RejectReasonCode,
 } from "@/lib/routing"
 import type {
+  ActivityEntry,
   AuditEntry,
   ClassificationView,
   DraftView,
@@ -113,6 +115,7 @@ export const ThreadTriageSidebar = ({
   draft,
   triage,
   auditLog,
+  activity = [],
 }: {
   threadId: string
   thread: ThreadSummary
@@ -120,10 +123,12 @@ export const ThreadTriageSidebar = ({
   draft: DraftView | null
   triage: TriageFlags | null
   auditLog: AuditEntry[]
+  activity?: ActivityEntry[]
 }) => {
   const queryClient = useQueryClient()
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
+  const [resolvePromptOpen, setResolvePromptOpen] = useState(false)
   const [approveBody, setApproveBody] = useState("")
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalScope, setApprovalScope] = useState<"once" | "similar" | "">("")
@@ -139,6 +144,15 @@ export const ThreadTriageSidebar = ({
   const [siblingUrgency, setSiblingUrgency] = useState<
     "CRITICAL" | "HIGH" | "NORMAL" | "LOW" | undefined
   >(undefined)
+
+  const presentation = thread.presentation
+
+  const maybePromptResolve = () => {
+    if (presentation?.is_finished) return
+    if (presentation?.suggest_resolve_default) {
+      setResolvePromptOpen(true)
+    }
+  }
 
   const invalidateReviewQueues = async () => {
     await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
@@ -183,6 +197,7 @@ export const ThreadTriageSidebar = ({
       setApprovalScope("")
       setActionError(null)
       await invalidateReviewQueues()
+      maybePromptResolve()
     },
     onError: (error: Error) => {
       setActionError(error.message)
@@ -213,6 +228,8 @@ export const ThreadTriageSidebar = ({
       await invalidateReviewQueues()
       if (payload.reason_code === "wrong_action") {
         await promptSiblings("no_reply", payload.feedback_note)
+      } else {
+        maybePromptResolve()
       }
     },
     onError: (error: Error) => {
@@ -276,7 +293,12 @@ export const ThreadTriageSidebar = ({
   }
 
   const teachingNote = thread.teaching_note ?? draft?.teaching_note ?? null
-  const urgency = thread.urgency ?? draft?.urgency ?? classification?.urgency ?? null
+  const urgency =
+    presentation?.urgency_assessed ??
+    thread.urgency ??
+    draft?.urgency ??
+    classification?.urgency ??
+    null
   const urgencyReason = draft?.urgency_reason ?? null
   const badge = draft ? feedbackBadge(draft) : null
   const feedbackDone = Boolean(
@@ -284,6 +306,18 @@ export const ThreadTriageSidebar = ({
   )
   const busy = approveMutation.isPending || rejectMutation.isPending
   const suggestedActions = draft?.suggested_actions ?? []
+  const history = presentation?.triage_history
+
+  const resolveMutation = useMutation({
+    mutationFn: () => api.threads.resolve(threadId),
+    onSuccess: async () => {
+      setResolvePromptOpen(false)
+      await invalidateReviewQueues()
+    },
+    onError: (error: Error) => {
+      setActionError(error.message)
+    },
+  })
 
   return (
     <div className="space-y-4">
@@ -307,7 +341,15 @@ export const ThreadTriageSidebar = ({
             <Field
               label="State"
               value={
-                <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
+                presentation?.badges_now?.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    <PresentationBadges
+                      badges={presentation.badges_now.filter((b) => b.kind === "state")}
+                    />
+                  </div>
+                ) : (
+                  <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
+                )
               }
             />
             <Field
@@ -315,9 +357,19 @@ export const ThreadTriageSidebar = ({
               value={
                 urgency ? (
                   <div className="space-y-1">
-                    <div className="flex items-center">
-                      <StatusBadge label={urgency} tone={urgencyTone(urgency)} />
-                      {draftId && !feedbackDone ? (
+                    <div className="flex items-center gap-2">
+                      <StatusBadge
+                        label={urgency}
+                        tone={
+                          presentation && !presentation.urgency_active
+                            ? "neutral"
+                            : urgencyTone(urgency)
+                        }
+                      />
+                      {presentation && !presentation.urgency_active ? (
+                        <span className="text-xs text-muted-foreground">inactive</span>
+                      ) : null}
+                      {draftId && !feedbackDone && presentation?.urgency_active !== false ? (
                         <UrgencyEditPopover
                           draftId={draftId}
                           threadId={threadId}
@@ -343,6 +395,32 @@ export const ThreadTriageSidebar = ({
               }
             />
           </div>
+
+          {activity.length > 0 ? (
+            <div>
+              <p className="text-xs text-gray-400">Activity</p>
+              <ul className="mt-2 space-y-2">
+                {activity
+                  .slice()
+                  .reverse()
+                  .slice(0, 5)
+                  .map((entry) => (
+                    <li
+                      key={`${entry.event_type}-${entry.timestamp}`}
+                      className="rounded-md border border-border/60 px-2.5 py-2"
+                    >
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {entry.title}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">{entry.body}</p>
+                      <p className="mt-1 text-[11px] text-gray-400">
+                        {formatRelativeTime(entry.timestamp)}
+                      </p>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
         </div>
       </Panel>
 
@@ -390,7 +468,10 @@ export const ThreadTriageSidebar = ({
             )}
           </Panel>
 
-          <Panel title="Triage">
+          <Panel title="When we triaged">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Historical classification from triage — not current open-work status.
+            </p>
             {triage ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap gap-1.5">
@@ -406,16 +487,24 @@ export const ThreadTriageSidebar = ({
                       tone={triage.is_spam ? "red" : "green"}
                     />
                   ) : null}
-                  {triage.has_action_items != null ? (
+                  {(history?.has_action_items ?? triage.has_action_items) != null ? (
                     <StatusBadge
-                      label={triage.has_action_items ? "Action needed" : "No action"}
-                      tone={triage.has_action_items ? "amber" : "neutral"}
+                      label={
+                        (history?.has_action_items ?? triage.has_action_items)
+                          ? "Action needed (at triage)"
+                          : "No action (at triage)"
+                      }
+                      tone="neutral"
                     />
                   ) : null}
-                  {triage.needs_context != null ? (
+                  {(history?.needs_context ?? triage.needs_context) != null ? (
                     <StatusBadge
-                      label={triage.needs_context ? "Needs context" : "Context OK"}
-                      tone={triage.needs_context ? "amber" : "green"}
+                      label={
+                        (history?.needs_context ?? triage.needs_context)
+                          ? "Needed context (at triage)"
+                          : "Context OK (at triage)"
+                      }
+                      tone="neutral"
                     />
                   ) : null}
                 </div>
@@ -788,6 +877,37 @@ export const ThreadTriageSidebar = ({
               onClick={handleReject}
             >
               {rejectMutation.isPending ? "Rejecting…" : "Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={resolvePromptOpen} onOpenChange={setResolvePromptOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mark this thread resolved?</DialogTitle>
+            <DialogDescription>
+              Review is done. Mark resolved to leave Needs Attention, or keep it
+              open if you are still waiting on someone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              tabIndex={0}
+              aria-label="Keep thread open"
+              onClick={() => setResolvePromptOpen(false)}
+            >
+              Keep open
+            </Button>
+            <Button
+              type="button"
+              tabIndex={0}
+              aria-label="Mark thread resolved"
+              disabled={resolveMutation.isPending}
+              onClick={() => resolveMutation.mutate()}
+            >
+              {resolveMutation.isPending ? "Resolving…" : "Mark resolved"}
             </Button>
           </DialogFooter>
         </DialogContent>

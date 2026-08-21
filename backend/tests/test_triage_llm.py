@@ -80,6 +80,25 @@ def test_build_user_content_omits_junk_label_for_inbox() -> None:
     assert "Outlook location: Junk Email" not in content
 
 
+def test_build_user_content_includes_mailbox_owner_when_set() -> None:
+    email = _email().model_copy(update={"mailbox": "sampleagent@sample-site.example.com"})
+    content = triage_llm._build_user_content(
+        email,
+        _context(email),
+        mailbox_owner="Elise",
+    )
+    assert "Mailbox: sampleagent@sample-site.example.com" in content
+    assert (
+        "Mailbox owner: Elise (personal inbox — mail here is for Elise specifically)"
+        in content
+    )
+
+
+def test_build_user_content_omits_mailbox_owner_when_unset() -> None:
+    content = triage_llm._build_user_content(_email(), _context(_email()))
+    assert "Mailbox owner:" not in content
+
+
 @pytest.mark.asyncio
 async def test_triage_email_happy_path_uses_settings_model_and_prompt() -> None:
     email = _email()

@@ -61,6 +61,7 @@ def _message_to_email(
         direction=direction,
         to_recipients=list(message.to_recipients),
         cc_recipients=list(message.cc_recipients),
+        bcc_recipients=list(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
     )
 

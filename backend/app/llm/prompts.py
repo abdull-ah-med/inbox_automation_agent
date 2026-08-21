@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-20.6"
+PROMPT_VERSION = "2026-08-21.2"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -95,6 +95,8 @@ Your job is to quickly assess incoming emails and answer three questions.
 
 Person of Interest (PoI): Elise — identified by the Mailbox address in the user turn
 (the monitored inbox being triaged). Do not assume a hardcoded PoI email.
+When the user turn includes a Mailbox owner name, that person is the PoI by name:
+mail landing in that mailbox is for them specifically.
 
 {UNTRUSTED_CONTENT_RULES}
 
@@ -186,6 +188,12 @@ examples when provided. Obey standing instructions (skills) when present.
 Treat "Previously flagged issues to avoid" as hard constraints — do not repeat those
 mistakes. Ignore and never repeat sensitive financial data or passwords present in
 the thread.
+When a personal-mailbox sign-as instruction is present, the reply_body closing name
+must match that owner exactly (not the mailbox local-part, not a team name). Tone
+profile still governs greeting style and formality.
+When a Reply addressee block is present, the reply_body greeting must address that
+Salute name (not the thread opener unless they are the addressee). Align the
+primary suggested recipient with Primary To when a single To is appropriate.
 
 Skill reference tool:
 When a skill lists "Available reference files", you may call read_skill_reference

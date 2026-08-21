@@ -108,6 +108,18 @@ async def resolve_thread_from_outbound(
     )
 
     try:
+        thread = await thread_repo.get_by_id(session, thread_id)
+        urgency_assessed = thread.urgency if thread is not None else None
+        matched_label = matched_by.replace("_", " ")
+        human_body = (
+            f"Matched your Outlook send ({matched_label}). "
+            "Removed from Needs Attention."
+        )
+        if urgency_assessed:
+            human_body = (
+                f"{human_body} Assessed urgency was {urgency_assessed}; "
+                "it no longer drives priority."
+            )
         await audit_service.log_event(
             session,
             event_type="thread.resolved.sent_reply_detected",
@@ -117,6 +129,12 @@ async def resolve_thread_from_outbound(
                 "message_id": str(message.id),
                 "draft_id": str(draft_id) if draft_id else None,
                 "matched_by": matched_by,
+                "urgency_assessed": urgency_assessed,
+                "human": {
+                    "title": "Resolved from sent reply",
+                    "body": human_body,
+                    "actor_kind": "agent",
+                },
             },
             actor="system",
         )

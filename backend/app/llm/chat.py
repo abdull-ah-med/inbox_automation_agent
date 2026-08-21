@@ -30,6 +30,7 @@ from app.llm.chat_tools import (
 )
 from app.llm.pii_redact import scrub_text
 from app.llm.prompts import salted_untrusted_tag, wrap_untrusted
+from app.llm.smooth_deltas import smooth_deltas
 from app.models.schemas.chat import ChatHistoryTurn
 from app.models.schemas.search import SearchHit
 
@@ -180,23 +181,43 @@ def _cited_search_results(history: Sequence[ChatHistoryTurn] | None) -> list[dic
 def _agent_user_content(
     question: str,
     history: Sequence[ChatHistoryTurn] | None,
+    *,
+    delimiter_tag: str | None = None,
 ) -> str | list[dict[str, Any]]:
     text = f"Reviewer question:\n{question.strip()}"
     results = _cited_search_results(history)
-    if not results:
-        return text
-    return [{"type": "text", "text": text}, *results]
+    blocks: list[dict[str, Any]] = []
+    if delimiter_tag:
+        blocks.append(turn_delimiter_block(delimiter_tag))
+    if results:
+        blocks.append({"type": "text", "text": text})
+        blocks.extend(results)
+        return blocks
+    if blocks:
+        blocks.append({"type": "text", "text": text})
+        return blocks
+    return text
 
 
 def _agent_messages(
     *,
     question: str,
     history: Sequence[ChatHistoryTurn] | None,
+    delimiter_tag: str | None = None,
 ) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = [
         {"role": turn.role, "content": turn.content} for turn in history or []
     ]
-    messages.append({"role": "user", "content": _agent_user_content(question, history)})
+    messages.append(
+        {
+            "role": "user",
+            "content": _agent_user_content(
+                question,
+                history,
+                delimiter_tag=delimiter_tag,
+            ),
+        }
+    )
     return messages
 
 
@@ -427,8 +448,8 @@ async def iter_chat_agent(
     if not settings.anthropic_api_key.strip():
         raise ChatError("ANTHROPIC_API_KEY is not set; cannot run chat")
 
-    messages = _agent_messages(question=question, history=history)
     tag = salted_untrusted_tag()
+    messages = _agent_messages(question=question, history=history, delimiter_tag=tag)
     first_choice: dict[str, Any] = (
         {"type": "tool", "name": initial_tool} if initial_tool else {"type": "any"}
     )
@@ -441,10 +462,8 @@ async def iter_chat_agent(
                 "text": CHAT_SYSTEM_PROMPT,
                 "cache_control": {"type": "ephemeral"},
             },
-            turn_delimiter_block(tag),
         ],
         "tools": CHAT_TOOLS,
-        "cache_control": {"type": "ephemeral"},
         "messages": messages,
         "tool_choice": first_choice,
     }
@@ -483,7 +502,7 @@ async def iter_chat_agent(
                 if grounded:
                     yield {"type": "retrieved", "hits": list(hits_by_id.values())}
                     async with client.messages.stream(**request) as stream:
-                        async for text in stream.text_stream:
+                        async for text in smooth_deltas(stream.text_stream):
                             if not text:
                                 continue
                             streamed.append(text)
@@ -498,21 +517,37 @@ async def iter_chat_agent(
                 if getattr(response, "stop_reason", None) != "tool_use":
                     hits = list(hits_by_id.values())
                     raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
-                    answer = (
-                        ""
-                        if not grounded
-                        else sanitize_chat_answer(
+                    # Streamed deltas already reached the client; do not re-sanitize
+                    # the public answer (would diverge from what was displayed).
+                    # Non-stream path and cache writers still sanitize downstream.
+                    if not grounded:
+                        answer = ""
+                    elif streamed_any:
+                        answer = raw
+                    else:
+                        answer = sanitize_chat_answer(
                             raw,
                             known_thread_ids={hit.thread_id for hit in hits},
                         )
-                    )
                     usage = _usage_fields(response)
+                    input_tokens = usage["input_tokens"]
+                    cache_read = usage["cache_read_tokens"]
+                    cache_hit_ratio: float | None = None
+                    if (
+                        isinstance(input_tokens, int)
+                        and input_tokens > 0
+                        and isinstance(cache_read, int)
+                    ):
+                        cache_hit_ratio = round(cache_read / input_tokens, 3)
                     logger.info(
                         "chat_agent_complete",
                         model=settings.chat_model,
                         hit_count=len(hits),
                         latency_ms=int((time.perf_counter() - started) * 1000),
-                        cache_read_input_tokens=usage["cache_read_tokens"],
+                        cache_read_input_tokens=cache_read,
+                        cache_creation_input_tokens=usage["cache_write_tokens"],
+                        input_tokens=input_tokens,
+                        cache_hit_ratio=cache_hit_ratio,
                     )
                     yield {
                         "type": "result",

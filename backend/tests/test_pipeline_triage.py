@@ -421,6 +421,14 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
             new=AsyncMock(side_effect=DraftGenerationError("boom")),
         ),
         patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.recurrence_service.count_automated_inbound_48h",
+            new=AsyncMock(return_value=0),
+        ),
+        patch(
             "app.services.pipeline_service.audit_service.log_event",
             new=AsyncMock(),
         ),

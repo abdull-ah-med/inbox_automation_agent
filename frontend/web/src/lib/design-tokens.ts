@@ -28,6 +28,7 @@ const KNOWN_LABELS: Record<string, string> = {
   sales: "Sales",
   vendor: "Vendor",
   intermediary: "Intermediary",
+  sampleagent: "Elise",
 };
 
 function hashKey(key: string): number {

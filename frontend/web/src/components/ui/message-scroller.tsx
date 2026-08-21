@@ -100,15 +100,13 @@ function MessageScrollerContent({
 }: React.ComponentProps<"div">) {
   const { viewportRef, pinnedToEnd } = useMessageScroller()
   const contentRef = React.useRef<HTMLDivElement | null>(null)
-  const pinnedRef = React.useRef(pinnedToEnd)
-  pinnedRef.current = pinnedToEnd
 
   const stickToEnd = React.useCallback(() => {
-    if (!pinnedRef.current) return
+    if (!pinnedToEnd) return
     const node = viewportRef.current
     if (!node) return
     node.scrollTop = node.scrollHeight
-  }, [viewportRef])
+  }, [viewportRef, pinnedToEnd])
 
   React.useLayoutEffect(() => {
     stickToEnd()

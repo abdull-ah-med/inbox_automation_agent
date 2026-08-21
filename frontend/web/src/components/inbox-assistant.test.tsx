@@ -5,11 +5,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const askChat = vi.fn()
 const listMailboxes = vi.fn()
+const createSession = vi.fn()
+const getSession = vi.fn()
 
 vi.mock("@/lib/api-client", () => ({
   api: {
     chat: {
       askStream: (...args: unknown[]) => askChat(...args),
+      createSession: (...args: unknown[]) => createSession(...args),
+      getSession: (...args: unknown[]) => getSession(...args),
     },
     mailboxes: {
       list: (...args: unknown[]) => listMailboxes(...args),
@@ -101,7 +105,15 @@ describe("InboxAssistant", () => {
   beforeEach(() => {
     askChat.mockReset()
     listMailboxes.mockReset()
+    createSession.mockReset()
+    getSession.mockReset()
+    window.localStorage.clear()
     listMailboxes.mockResolvedValue(mailboxList)
+    createSession.mockResolvedValue({
+      session_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      mailbox: null,
+    })
+    getSession.mockRejectedValue(new Error("missing"))
     askChat.mockImplementation(
       async (
         _body: unknown,
@@ -139,6 +151,7 @@ describe("InboxAssistant", () => {
     await user.click(screen.getByRole("button", { name: /^send$/i }))
     expect(askChat.mock.calls[0]?.[0]).toEqual({
       message: "billing disputes waiting on review",
+      session_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
     })
     expect(
       await screen.findByText("The overdue billing dispute is waiting on review."),
@@ -169,6 +182,7 @@ describe("InboxAssistant", () => {
     await user.click(screen.getByRole("button", { name: /^send$/i }))
     expect(askChat.mock.calls[1]?.[0]).toEqual({
       message: "tell me more",
+      session_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
       history: [
         { role: "user", content: "billing disputes waiting on review" },
         {

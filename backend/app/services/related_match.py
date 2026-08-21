@@ -66,6 +66,16 @@ def _high_cosine(candidate: RelatedCandidate, min_similarity: float) -> bool:
     return candidate.cosine is not None and candidate.cosine >= min_similarity
 
 
+def drip_key(sender: str, subject: str) -> tuple[str, str]:
+    return (normalize_sender(sender), strip_calendar_dates(subject))
+
+
+def _gap_days(left: datetime | None, right: datetime | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return abs((left - right).total_seconds()) / 86_400.0
+
+
 def select_related(
     source: RelatedCandidate,
     candidates: list[RelatedCandidate],
@@ -75,8 +85,13 @@ def select_related(
     min_similarity: float,
     queue_ids: set[UUID],
     limit: int = 5,
+    max_gap_days: float | None = 90.0,
+    confirmed_ids: set[UUID] | None = None,
+    suppressed_drip_keys: set[tuple[str, str]] | None = None,
 ) -> list[RelatedCandidate]:
     """Keep candidates that are still proposed and match cosine or drip subject."""
+    confirmed = confirmed_ids or set()
+    suppressed = suppressed_drip_keys or set()
     kept: list[RelatedCandidate] = []
     seen: set[UUID] = set()
     for candidate in candidates:
@@ -90,8 +105,21 @@ def select_related(
             continue
         if purpose == "siblings" and candidate.thread_id not in queue_ids:
             continue
-        if not (_high_cosine(candidate, min_similarity) or _same_drip(source, candidate)):
+        high = _high_cosine(candidate, min_similarity)
+        drip = _same_drip(source, candidate)
+        if not (high or drip):
             continue
+        key = drip_key(candidate.sender, candidate.subject)
+        if drip and key in suppressed and candidate.thread_id not in confirmed:
+            continue
+        if (
+            max_gap_days is not None
+            and candidate.thread_id not in confirmed
+            and not high
+        ):
+            gap = _gap_days(source.last_message_at, candidate.last_message_at)
+            if gap is not None and gap > max_gap_days:
+                continue
         seen.add(candidate.thread_id)
         kept.append(candidate)
 

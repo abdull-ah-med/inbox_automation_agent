@@ -21,12 +21,12 @@ from app.core.config import get_settings
 from app.core.dependencies import close_openai_client, openai_client_from_settings
 from app.db.session import dispose_engine, get_session_factory
 from app.llm.email_clean import clean_email_body
-from app.utils.email_quotes import EMBED_CLEAN_VERSION
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.db.message import Message
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
 from app.repositories import embedding_repo, message_repo, thread_repo
 from app.services import embedding_service
+from app.utils.email_quotes import EMBED_CLEAN_VERSION
 
 logger = structlog.get_logger(__name__)
 

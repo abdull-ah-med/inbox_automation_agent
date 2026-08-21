@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -94,6 +95,12 @@ async def test_resolve_matches_approved_draft() -> None:
             AsyncMock(return_value=object()),
         ) as outcome_mock,
         patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=SimpleNamespace(urgency="HIGH", id=thread_id)
+            ),
+        ),
+        patch(
             "app.services.sent_reply_service.audit_service.log_event",
             AsyncMock(),
         ) as audit_mock,
@@ -116,6 +123,7 @@ async def test_resolve_matches_approved_draft() -> None:
     payload = audit_mock.await_args.kwargs["payload"]
     assert payload["matched_by"] == "approved_draft"
     assert payload["message_id"] == str(message.id)
+    assert payload["human"]["title"] == "Resolved from sent reply"
     assert "sent_body" not in payload
     assert "body" not in payload
 
@@ -149,6 +157,10 @@ async def test_resolve_falls_back_to_time_window() -> None:
         patch(
             "app.services.sent_reply_service.thread_repo.set_thread_outcome",
             AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(return_value=SimpleNamespace(urgency="NORMAL", id=thread_id)),
         ),
         patch(
             "app.services.sent_reply_service.audit_service.log_event",
@@ -243,6 +255,10 @@ async def test_resolve_skips_approved_draft_already_linked() -> None:
         patch(
             "app.services.sent_reply_service.thread_repo.set_thread_outcome",
             AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(return_value=SimpleNamespace(urgency="NORMAL", id=thread_id)),
         ),
         patch(
             "app.services.sent_reply_service.audit_service.log_event",

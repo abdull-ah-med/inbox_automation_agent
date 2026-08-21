@@ -49,6 +49,16 @@ const MessageBlock = ({
               To: {message.to.join(", ")}
             </p>
           ) : null}
+          {message.cc.length > 0 ? (
+            <p className="truncate text-xs text-gray-400">
+              Cc: {message.cc.join(", ")}
+            </p>
+          ) : null}
+          {message.bcc.length > 0 ? (
+            <p className="truncate text-xs text-gray-400">
+              Bcc: {message.bcc.join(", ")}
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-3 pt-0.5">
           {message.outlook_url ? (
@@ -95,7 +105,6 @@ const MessageBlock = ({
 export const ThreadEmailPanel = ({
   subject,
   messages,
-  outlookUrl,
 }: {
   subject: string
   messages: MessageDetail[]
