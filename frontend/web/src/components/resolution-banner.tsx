@@ -6,6 +6,22 @@ import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { api } from "@/lib/api-client"
 import type { ThreadPresentation } from "@/lib/types"
 
+type FeedbackOutcome = "reopened" | "wrong_reason"
+
+const OUTCOME_COPY: Record<
+  FeedbackOutcome,
+  { title: string; body: string }
+> = {
+  reopened: {
+    title: "Reopened",
+    body: "Back in Needs Attention when a draft awaits review.",
+  },
+  wrong_reason: {
+    title: "Reason noted",
+    body: "We recorded that the auto-resolve reason was wrong.",
+  },
+}
+
 export const ResolutionBanner = ({
   threadId,
   presentation,
@@ -18,12 +34,14 @@ export const ResolutionBanner = ({
   const queryClient = useQueryClient()
   const [dismissed, setDismissed] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [outcome, setOutcome] = useState<FeedbackOutcome | null>(null)
 
   const feedbackMutation = useMutation({
     mutationFn: (action: "reopen" | "wrong_reason") =>
       api.threads.resolutionFeedback(threadId, { action }),
-    onSuccess: async () => {
+    onSuccess: async (_data, action) => {
       setError(null)
+      setOutcome(action === "reopen" ? "reopened" : "wrong_reason")
       await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] })
     },
@@ -32,11 +50,8 @@ export const ResolutionBanner = ({
     },
   })
 
-  if (!presentation?.show_resolution_banner || dismissed) return null
-
-  const urgencyNote = urgencyAssessed
-    ? ` Assessed urgency was ${urgencyAssessed}; it no longer drives priority.`
-    : ""
+  if (dismissed) return null
+  if (!outcome && !presentation?.show_resolution_banner) return null
 
   const handleReopen = () => {
     feedbackMutation.mutate("reopen")
@@ -49,6 +64,36 @@ export const ResolutionBanner = ({
   const handleDismiss = () => {
     setDismissed(true)
   }
+
+  if (outcome) {
+    const copy = OUTCOME_COPY[outcome]
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
+      >
+        <p className="font-medium">{copy.title}</p>
+        <p className="mt-1 text-emerald-900/90 dark:text-emerald-100/90">
+          {copy.body}
+        </p>
+        <div className="mt-3">
+          <button
+            type="button"
+            className="cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-800 underline-offset-2 hover:underline dark:text-emerald-200"
+            aria-label="Dismiss resolution banner"
+            onClick={handleDismiss}
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const urgencyNote = urgencyAssessed
+    ? ` Assessed urgency was ${urgencyAssessed}; it no longer drives priority.`
+    : ""
 
   return (
     <div
