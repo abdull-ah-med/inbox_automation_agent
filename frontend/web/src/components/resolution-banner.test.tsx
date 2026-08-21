@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ResolutionBanner } from "@/components/resolution-banner"
-import type { ThreadPresentation } from "@/lib/types"
+import type { ActivityEntry, ThreadPresentation } from "@/lib/types"
 
 const resolutionFeedbackMock = vi.fn()
 
@@ -34,9 +34,13 @@ const resolvedPresentation: ThreadPresentation = {
   show_resolution_banner: true,
 }
 
-const renderBanner = (
-  presentation: ThreadPresentation | null | undefined = resolvedPresentation,
-) => {
+const renderBanner = ({
+  presentation = resolvedPresentation,
+  activity = [],
+}: {
+  presentation?: ThreadPresentation | null
+  activity?: ActivityEntry[]
+} = {}) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
@@ -46,6 +50,7 @@ const renderBanner = (
         threadId="a1111111-1111-1111-1111-111111111111"
         presentation={presentation}
         urgencyAssessed="LOW"
+        activity={activity}
       />
     </QueryClientProvider>,
   )
@@ -92,6 +97,7 @@ describe("ResolutionBanner", () => {
           threadId="a1111111-1111-1111-1111-111111111111"
           presentation={resolvedPresentation}
           urgencyAssessed="LOW"
+          activity={[]}
         />
       </QueryClientProvider>,
     )
@@ -105,6 +111,7 @@ describe("ResolutionBanner", () => {
           threadId="a1111111-1111-1111-1111-111111111111"
           presentation={{ ...resolvedPresentation, show_resolution_banner: false }}
           urgencyAssessed="LOW"
+          activity={[]}
         />
       </QueryClientProvider>,
     )
@@ -125,6 +132,31 @@ describe("ResolutionBanner", () => {
     )
 
     const status = await screen.findByRole("status")
+    expect(status).toHaveTextContent(/recorded/i)
+    expect(status).toHaveTextContent(/reason was wrong/i)
+    expect(
+      screen.queryByRole("button", { name: "Wrong auto-resolve reason" }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole("button", { name: "Mark thread still open" }),
+    ).toBeNull()
+  })
+
+  it("shows wrong-reason confirmation from activity after reload without action buttons", () => {
+    renderBanner({
+      presentation: { ...resolvedPresentation, show_resolution_banner: false },
+      activity: [
+        {
+          title: "Resolution reason corrected",
+          body: "Thanks — we recorded that the auto-resolve reason was wrong.",
+          actor_kind: "elise",
+          event_type: "thread.resolved.wrong_reason",
+          timestamp: "2026-08-21T20:00:00Z",
+        },
+      ],
+    })
+
+    const status = screen.getByRole("status")
     expect(status).toHaveTextContent(/recorded/i)
     expect(status).toHaveTextContent(/reason was wrong/i)
     expect(

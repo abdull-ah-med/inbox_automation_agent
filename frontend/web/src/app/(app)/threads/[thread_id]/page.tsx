@@ -164,6 +164,7 @@ export default function ThreadDetailPage() {
         threadId={threadId}
         presentation={presentation}
         urgencyAssessed={presentation?.urgency_assessed ?? thread.urgency}
+        activity={activity ?? []}
       />
       <CourtesyCloseBanner
         state={thread.state}

@@ -4,7 +4,7 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { api } from "@/lib/api-client"
-import type { ThreadPresentation } from "@/lib/types"
+import type { ActivityEntry, ThreadPresentation } from "@/lib/types"
 
 type FeedbackOutcome = "reopened" | "wrong_reason"
 
@@ -22,14 +22,31 @@ const OUTCOME_COPY: Record<
   },
 }
 
+const outcomeFromActivity = (
+  activity: ActivityEntry[] | undefined,
+): FeedbackOutcome | null => {
+  if (!activity?.length) return null
+  if (activity.some((entry) => entry.event_type === "thread.resolved.wrong_reason")) {
+    return "wrong_reason"
+  }
+  if (
+    activity.some((entry) => entry.event_type === "thread.reopened.resolution_feedback")
+  ) {
+    return "reopened"
+  }
+  return null
+}
+
 export const ResolutionBanner = ({
   threadId,
   presentation,
   urgencyAssessed,
+  activity,
 }: {
   threadId: string
   presentation: ThreadPresentation | null | undefined
   urgencyAssessed: string | null
+  activity?: ActivityEntry[]
 }) => {
   const queryClient = useQueryClient()
   const [dismissed, setDismissed] = useState(false)
@@ -50,8 +67,10 @@ export const ResolutionBanner = ({
     },
   })
 
+  const effectiveOutcome = outcome ?? outcomeFromActivity(activity)
+
   if (dismissed) return null
-  if (!outcome && !presentation?.show_resolution_banner) return null
+  if (!effectiveOutcome && !presentation?.show_resolution_banner) return null
 
   const handleReopen = () => {
     feedbackMutation.mutate("reopen")
@@ -65,8 +84,8 @@ export const ResolutionBanner = ({
     setDismissed(true)
   }
 
-  if (outcome) {
-    const copy = OUTCOME_COPY[outcome]
+  if (effectiveOutcome) {
+    const copy = OUTCOME_COPY[effectiveOutcome]
     return (
       <div
         role="status"

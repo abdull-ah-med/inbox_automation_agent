@@ -88,6 +88,7 @@ class ThreadPolicyInput:
     action_items_summary: str | None = None
     context_reason: str | None = None
     spam_reason: str | None = None
+    resolution_reason_corrected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +162,11 @@ def derive_presentation(inp: ThreadPolicyInput) -> ThreadPresentation:
             spam_reason=inp.spam_reason,
         ),
         suggest_resolve_default=suggest_resolve,
-        show_resolution_banner=is_finished and state == ThreadStateEnum.RESOLVED.value,
+        show_resolution_banner=(
+            is_finished
+            and state == ThreadStateEnum.RESOLVED.value
+            and not inp.resolution_reason_corrected
+        ),
     )
 
 
@@ -199,6 +204,7 @@ def presentation_from_flags(
     draft_review_finished: bool = False,
     closing_signal: bool = False,
     category: str | None = None,
+    resolution_reason_corrected: bool = False,
 ) -> ThreadPresentation:
     """Build presentation from thread row + optional TriageFlags-like object."""
     has_action = getattr(triage, "has_action_items", None) if triage is not None else None
@@ -225,5 +231,6 @@ def presentation_from_flags(
                 getattr(triage, "context_reason", None) if triage is not None else None
             ),
             spam_reason=getattr(triage, "spam_reason", None) if triage is not None else None,
+            resolution_reason_corrected=resolution_reason_corrected,
         )
     )

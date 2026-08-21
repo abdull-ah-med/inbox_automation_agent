@@ -169,6 +169,38 @@ def test_suggest_resolve_default_false_when_waiting_on_them() -> None:
     assert view.in_needs_attention is False
 
 
+def test_resolved_shows_resolution_banner() -> None:
+    view = derive_presentation(
+        ThreadPolicyInput(
+            state="RESOLVED",
+            urgency="LOW",
+            has_action_items=False,
+            needs_context=False,
+            is_spam=False,
+            is_internal=False,
+            is_automated=False,
+        )
+    )
+    assert view.show_resolution_banner is True
+
+
+def test_resolved_hides_resolution_banner_after_wrong_reason_feedback() -> None:
+    view = derive_presentation(
+        ThreadPolicyInput(
+            state="RESOLVED",
+            urgency="LOW",
+            has_action_items=False,
+            needs_context=False,
+            is_spam=False,
+            is_internal=False,
+            is_automated=False,
+            resolution_reason_corrected=True,
+        )
+    )
+    assert view.show_resolution_banner is False
+    assert view.is_finished is True
+
+
 def test_recurrence_floor_second_alert_in_48h_is_high() -> None:
     assert recurrence_urgency_floor(automated_inbound_count_48h=2) == "HIGH"
 
