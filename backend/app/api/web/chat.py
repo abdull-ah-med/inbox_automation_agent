@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncIterator
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,8 +17,16 @@ from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ChatError
 from app.core.rate_limit import chat_limit_value, chat_rate_limit_key, limiter
-from app.models.schemas.chat import ChatAskRequest, ChatAskResponse
-from app.services import chat_service
+from app.models.schemas.chat import (
+    ChatAskRequest,
+    ChatAskResponse,
+    ChatCitedThread,
+    ChatSessionCreateRequest,
+    ChatSessionCreateResponse,
+    ChatSessionMessage,
+    ChatSessionResponse,
+)
+from app.services import chat_service, chat_session_service
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +34,83 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
+
+
+@router.post(
+    "/session",
+    response_model=ChatSessionCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(chat_limit_value, key_func=chat_rate_limit_key)
+async def create_session(
+    body: ChatSessionCreateRequest,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    _user: CurrentUser,
+) -> ChatSessionCreateResponse:
+    """Create a durable InboxAssistant conversation the client can resume."""
+    _ = request, response
+    row = await chat_session_service.create_session(
+        session,
+        user_id=_user.id,
+        mailbox=body.mailbox,
+    )
+    return ChatSessionCreateResponse(session_id=row.id, mailbox=row.mailbox)
+
+
+@router.get(
+    "/session/{session_id}",
+    response_model=ChatSessionResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit(chat_limit_value, key_func=chat_rate_limit_key)
+async def get_session(
+    session_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    _user: CurrentUser,
+) -> ChatSessionResponse:
+    """Load a prior conversation owned by the current user."""
+    _ = request, response
+    row = await chat_session_service.get_session(
+        session,
+        session_id=session_id,
+        user_id=_user.id,
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    messages: list[ChatSessionMessage] = []
+    for item in row.messages or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        citations: list[ChatCitedThread] = []
+        for cited in item.get("citations") or []:
+            if not isinstance(cited, dict):
+                continue
+            try:
+                citations.append(
+                    ChatCitedThread(
+                        thread_id=uuid.UUID(str(cited["thread_id"])),
+                        subject=cited.get("subject"),
+                    )
+                )
+            except (KeyError, ValueError, TypeError):
+                continue
+        messages.append(
+            ChatSessionMessage(role=role, content=content, citations=citations)
+        )
+    return ChatSessionResponse(
+        session_id=row.id,
+        mailbox=row.mailbox,
+        messages=messages,
+        summary=row.summary or "",
+    )
 
 
 @router.post(
@@ -55,7 +141,9 @@ async def ask(
         limit=body.limit,
         history=body.history,
         user_key=str(_user.id),
+        user_id=_user.id,
         bypass_cache=body.bypass_cache,
+        session_id=body.session_id,
     )
 
 
@@ -90,7 +178,9 @@ async def ask_stream(
                 limit=body.limit,
                 history=body.history,
                 user_key=str(_user.id),
+                user_id=_user.id,
                 bypass_cache=body.bypass_cache,
+                session_id=body.session_id,
             ):
                 yield _sse_data(payload)
         except ChatError:

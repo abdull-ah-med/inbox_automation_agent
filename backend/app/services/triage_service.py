@@ -63,6 +63,7 @@ async def run_triage(
         result.triage,
         sender=state.original_email.sender,
         mailbox=state.original_email.mailbox,
+        extra_domains=settings.internal_domain_list,
     )
     triage = apply_spam_allowlist_policy(
         triage,

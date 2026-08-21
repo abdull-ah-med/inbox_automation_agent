@@ -39,11 +39,10 @@ def test_out_of_office_subject_is_automated_even_from_a_person() -> None:
     )
 
 
-def test_undeliverable_subject_is_automated() -> None:
-    assert is_automated_mail(
-        sender="postmaster@client.example",
-        subject="Undeliverable: Invoice 4412",
-    )
+def test_alert_and_monitor_senders_are_automated() -> None:
+    assert is_automated_mail(sender="alerts@vendor.example", subject="Disk full")
+    assert is_automated_mail(sender="monitor@ops.example", subject="Latency spike")
+    assert is_automated_mail(sender="ops@vendor.example", subject="Alert: payment sync failed")
 
 
 def test_enrich_flags_tags_automated_without_touching_spam() -> None:

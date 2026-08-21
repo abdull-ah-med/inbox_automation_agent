@@ -31,6 +31,7 @@ class MessageSchema(BaseModel):
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
+    bcc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
     graph_folder: str | None = None
     summary_json: dict[str, Any] | None = None
@@ -73,6 +74,26 @@ async def list_by_thread(
     return [MessageSchema.model_validate(m) for m in result.scalars().all()]
 
 
+async def list_by_thread_ids(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, list[MessageSchema]]:
+    """Load messages for many threads in one query, grouped and ordered per thread."""
+    if not thread_ids:
+        return {}
+    stmt = (
+        select(Message)
+        .where(Message.thread_id.in_(thread_ids))
+        .order_by(Message.thread_id.asc(), Message.received_at.asc())
+    )
+    result = await session.execute(stmt)
+    grouped: dict[uuid.UUID, list[MessageSchema]] = {}
+    for row in result.scalars().all():
+        schema = MessageSchema.model_validate(row)
+        grouped.setdefault(schema.thread_id, []).append(schema)
+    return grouped
+
+
 async def create_message(
     session: AsyncSession,
     *,
@@ -85,6 +106,7 @@ async def create_message(
     received_at: datetime,
     to_recipients: list[str] | None = None,
     cc_recipients: list[str] | None = None,
+    bcc_recipients: list[str] | None = None,
     has_attachments: bool = False,
     graph_folder: str | None = None,
     body_content_type: str = "text",
@@ -103,6 +125,7 @@ async def create_message(
         received_at=received_at,
         to_recipients=list(to_recipients or []),
         cc_recipients=list(cc_recipients or []),
+        bcc_recipients=list(bcc_recipients or []),
         has_attachments=has_attachments,
         graph_folder=graph_folder,
         body_content_type=body_content_type,

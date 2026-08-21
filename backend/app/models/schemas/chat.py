@@ -37,6 +37,31 @@ class ChatAskRequest(BaseModel):
     limit: int | None = Field(default=None, ge=1, le=CHAT_MAX_LIMIT)
     history: list[ChatHistoryTurn] = Field(default_factory=list, max_length=CHAT_HISTORY_MAX_TURNS)
     bypass_cache: bool = False
+    session_id: uuid.UUID | None = None
+
+
+class ChatSessionCreateRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    mailbox: str | None = None
+
+
+class ChatSessionCreateResponse(BaseModel):
+    session_id: uuid.UUID
+    mailbox: str | None = None
+
+
+class ChatSessionMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+    citations: list[ChatCitedThread] = Field(default_factory=list)
+
+
+class ChatSessionResponse(BaseModel):
+    session_id: uuid.UUID
+    mailbox: str | None = None
+    messages: list[ChatSessionMessage] = Field(default_factory=list)
+    summary: str = ""
 
 
 class ChatCitation(BaseModel):

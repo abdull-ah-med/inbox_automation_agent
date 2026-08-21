@@ -42,6 +42,42 @@ class TriageFlags(BaseModel):
     outcome: str | None = None
 
 
+class BadgeNowView(BaseModel):
+    kind: str
+    label: str
+
+
+class TriageHistoryView(BaseModel):
+    has_action_items: bool | None = None
+    needs_context: bool | None = None
+    is_spam: bool | None = None
+    action_items_summary: str | None = None
+    context_reason: str | None = None
+    spam_reason: str | None = None
+
+
+class ThreadPresentationView(BaseModel):
+    """Derived Now story — single source for badges across header/cards/queue."""
+
+    is_finished: bool
+    open_work: bool
+    in_needs_attention: bool
+    urgency_assessed: str | None = None
+    urgency_active: bool
+    badges_now: list[BadgeNowView] = Field(default_factory=list)
+    triage_history: TriageHistoryView = Field(default_factory=TriageHistoryView)
+    suggest_resolve_default: bool = False
+    show_resolution_banner: bool = False
+
+
+class ActivityEntryView(BaseModel):
+    title: str
+    body: str
+    actor_kind: str
+    event_type: str
+    timestamp: datetime
+
+
 class ThreadSummary(BaseModel):
     id: uuid.UUID
     mailbox: str
@@ -60,6 +96,7 @@ class ThreadSummary(BaseModel):
     teaching_note: str | None = None
     triage: TriageFlags | None = None
     outlook_url: str | None = None
+    presentation: ThreadPresentationView | None = None
 
 
 class MailboxOverview(BaseModel):
@@ -98,6 +135,7 @@ class MessageDetail(BaseModel):
     sender: str
     to: list[str] = Field(default_factory=list)
     cc: list[str] = Field(default_factory=list)
+    bcc: list[str] = Field(default_factory=list)
     body_text: str
     body_preview: str | None = None
     received_at: datetime
@@ -179,6 +217,7 @@ class ThreadDetail(BaseModel):
     draft: DraftView | None = None
     triage: TriageFlags | None = None
     audit_log: list[AuditEntry] = Field(default_factory=list)
+    activity: list[ActivityEntryView] = Field(default_factory=list)
     sent_reply: SentReplyView | None = None
     draft_vs_sent_diff: DraftVsSentDiff | None = None
     associated_threads: list[RelatedThreadItem] = Field(default_factory=list)

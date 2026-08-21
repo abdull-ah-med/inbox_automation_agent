@@ -143,6 +143,14 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(return_value=[]),
         ),
         patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.recurrence_service.count_automated_inbound_48h",
+            new=AsyncMock(return_value=0),
+        ),
+        patch(
             "app.services.pipeline_service.draft_repo.create_draft",
             new=AsyncMock(
                 return_value=MagicMock(model_dump=lambda **_: generated.draft.model_dump())

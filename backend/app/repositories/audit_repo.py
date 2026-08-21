@@ -197,3 +197,34 @@ async def list_by_thread_id(
         mailbox=mailbox,
         limit=limit,
     )
+
+
+async def list_raw_by_conversation(
+    session: AsyncSession,
+    conversation_id: str,
+    *,
+    mailbox: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Raw audit rows for human narrative mapping (includes payload)."""
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.conversation_id == conversation_id,
+            AuditEvent.mailbox == mailbox,
+        )
+        .order_by(AuditEvent.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    rows: list[dict[str, Any]] = []
+    for event in result.scalars().all():
+        rows.append(
+            {
+                "event_type": event.event_type,
+                "created_at": event.created_at,
+                "payload": event.payload if isinstance(event.payload, dict) else {},
+                "actor": event.actor,
+            }
+        )
+    return rows

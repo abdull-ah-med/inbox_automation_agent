@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -529,6 +529,39 @@ async def latest_teaching_notes_by_threads(
     )
     result = await session.execute(stmt)
     return {row.thread_id: row.teaching_note for row in result if row.teaching_note}
+
+
+async def review_finished_by_threads(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> set[uuid.UUID]:
+    """Thread ids whose latest draft is approved or marked wrong (no-reply)."""
+    if not thread_ids:
+        return set()
+    ranked = (
+        select(
+            Draft.thread_id.label("tid"),
+            Draft.feedback_action.label("feedback_action"),
+            Draft.approved_at.label("approved_at"),
+            func.row_number()
+            .over(
+                partition_by=Draft.thread_id,
+                order_by=(Draft.created_at.desc(), Draft.id.desc()),
+            )
+            .label("rn"),
+        )
+        .where(Draft.thread_id.in_(thread_ids))
+        .subquery()
+    )
+    stmt = select(ranked.c.tid).where(
+        ranked.c.rn == 1,
+        or_(
+            ranked.c.approved_at.is_not(None),
+            ranked.c.feedback_action == "wrong",
+        ),
+    )
+    result = await session.execute(stmt)
+    return {row[0] for row in result.all()}
 
 
 async def get_latest_by_thread(

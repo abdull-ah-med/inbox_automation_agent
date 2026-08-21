@@ -14,6 +14,7 @@ const message: MessageDetail = {
   sender: SENDER,
   to: ["sales@example.com"],
   cc: [],
+  bcc: [],
   body_text: BODY,
   body_preview: "Please review",
   received_at: "2026-08-18T14:00:00Z",
@@ -40,15 +41,34 @@ describe("ThreadEmailPanel", () => {
     expect(screen.getByText(BODY)).toBeInTheDocument()
   })
 
-  it("shows the received time in US month-day order", () => {
+  it("shows To, Cc, and Bcc on separate lines without merging Cc into To", () => {
     render(
       <ThreadEmailPanel
         subject="Invoice dispute"
-        messages={[{ ...message, received_at: "2026-08-10T14:00:00Z" }]}
+        messages={[
+          {
+            ...message,
+            to: ["sales@example.com"],
+            cc: ["ops@example.com"],
+            bcc: ["audit@example.com"],
+          },
+        ]}
       />,
     )
-    const when = screen.getByText(/8\/10\/2026/)
-    expect(when).toBeInTheDocument()
-    expect(when.textContent).not.toMatch(/10\/8\/2026/)
+    const toLine = screen.getByText(/^To:/)
+    const ccLine = screen.getByText(/^Cc:/)
+    const bccLine = screen.getByText(/^Bcc:/)
+    expect(toLine).toHaveTextContent("To: sales@example.com")
+    expect(ccLine).toHaveTextContent("Cc: ops@example.com")
+    expect(bccLine).toHaveTextContent("Bcc: audit@example.com")
+    expect(toLine.textContent).not.toContain("ops@example.com")
+    expect(toLine.textContent).not.toContain("audit@example.com")
+  })
+
+  it("omits Cc and Bcc lines when those lists are empty", () => {
+    render(<ThreadEmailPanel subject="Invoice dispute" messages={[message]} />)
+    expect(screen.getByText(/^To:/)).toBeInTheDocument()
+    expect(screen.queryByText(/^Cc:/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Bcc:/)).not.toBeInTheDocument()
   })
 })

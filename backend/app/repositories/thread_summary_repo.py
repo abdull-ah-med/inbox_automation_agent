@@ -64,6 +64,7 @@ async def upsert(
 
 
 def stmt_now() -> datetime:
-    from datetime import UTC, datetime as dt
+    from datetime import UTC
+    from datetime import datetime as dt
 
     return dt.now(UTC)

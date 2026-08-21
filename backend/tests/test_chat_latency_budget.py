@@ -75,7 +75,7 @@ async def test_cache_hit_ttft_under_200ms() -> None:
             _settings(),
             openai_client=MagicMock(),
             anthropic_client=anthropic,
-            message="what should I focus on today",
+            message="billing disputes waiting on review",
             user_key="reviewer-a",
         ):
             if event.get("type") == "delta" and first_delta_ms is None:
@@ -130,3 +130,63 @@ async def test_cold_retrieval_p95_under_500ms_with_llm_mocked() -> None:
     p95 = elapsed[18]
     assert p95 < 500
     assert len(elapsed) == 20
+
+
+@pytest.mark.asyncio
+async def test_stream_status_arrives_before_first_delta() -> None:
+    """Perceived TTFT includes the first status event, not only the first token."""
+    from app.services import chat_service
+
+    hit = SearchHit(
+        thread_id=THREAD_A,
+        mailbox=SALES,
+        conversation_id="conv-a",
+        subject="Invoice dispute — overdue billing",
+        state="REQUIRES_HUMAN",
+        urgency="HIGH",
+        snippet="Please review the overdue billing packet.",
+        score=0.02,
+        last_message_at=datetime(2026, 8, 5, 15, 0, tzinfo=UTC),
+    )
+
+    async def agent(**_kwargs):
+        yield {"type": "retrieved", "hits": [hit]}
+        yield {"type": "delta", "text": "Focus on billing."}
+        yield {
+            "type": "result",
+            "answer": "Focus on billing.",
+            "hits": [hit],
+            "grounded": True,
+        }
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch("app.services.chat_service.iter_chat_agent", new=agent),
+    ):
+        started = time.perf_counter()
+        first_status_ms = None
+        first_delta_ms = None
+        async for event in chat_service.iter_ask_events(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key="reviewer-a",
+        ):
+            if event.get("type") == "status" and first_status_ms is None:
+                first_status_ms = (time.perf_counter() - started) * 1000
+            if event.get("type") == "delta" and first_delta_ms is None:
+                first_delta_ms = (time.perf_counter() - started) * 1000
+    assert first_status_ms is not None
+    assert first_delta_ms is not None
+    assert first_status_ms < first_delta_ms
+    assert first_status_ms < 200

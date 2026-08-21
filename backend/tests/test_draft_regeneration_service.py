@@ -128,6 +128,10 @@ async def test_regenerate_creates_new_draft() -> None:
             AsyncMock(return_value=[]),
         ),
         patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.draft_regeneration_service.draft_llm.generate_draft",
             AsyncMock(
                 return_value=DraftCallResult(

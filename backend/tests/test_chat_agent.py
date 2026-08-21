@@ -136,7 +136,7 @@ async def test_agent_answers_from_search_mail_hits() -> None:
     assert str(THREAD_A) not in result.answer
     first = client.messages.create.await_args_list[0].kwargs
     assert first["tool_choice"] == {"type": "any"}
-    assert first["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in first
     tools = first["tools"]
     assert [tool["name"] for tool in tools] == [
         "search_mail",
@@ -147,7 +147,7 @@ async def test_agent_answers_from_search_mail_hits() -> None:
     assert first["tools"][-1]["cache_control"] == {"type": "ephemeral"}
     second = client.messages.stream.call_args.kwargs
     assert second["tool_choice"] == {"type": "none"}
-    assert second["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in second
 
 
 @pytest.mark.asyncio
@@ -682,25 +682,82 @@ async def test_agent_does_not_retry_after_streaming_a_partial_answer() -> None:
             events.append(event)
 
     deltas = [event["text"] for event in events if event.get("type") == "delta"]
-    assert deltas == ["The overdue "]
+    assert "".join(deltas) == "The overdue "
+    assert deltas  # partial answer must reach the client before the error
+
+
+def _system_blocks(kwargs: dict) -> list[dict]:
+    system = kwargs.get("system") or []
+    if isinstance(system, str):
+        return [{"type": "text", "text": system}]
+    return [block for block in system if isinstance(block, dict)]
 
 
 def _system_text(kwargs: dict) -> str:
-    system = kwargs.get("system") or []
-    if isinstance(system, str):
-        return system
-    parts: list[str] = []
-    for block in system:
-        if isinstance(block, dict):
-            parts.append(str(block.get("text") or ""))
-    return "\n".join(parts)
+    return "\n".join(str(block.get("text") or "") for block in _system_blocks(kwargs))
 
 
-def _salt_from_system(kwargs: dict) -> str:
-    system = _system_text(kwargs)
-    match = re.search(r"<untrusted_content_([0-9a-f]{8})>", system)
+def _first_user_text(kwargs: dict) -> str:
+    for turn in kwargs.get("messages") or []:
+        if turn.get("role") != "user":
+            continue
+        content = turn.get("content")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(str(block.get("text") or ""))
+            return "\n".join(parts)
+    return ""
+
+
+def _salt_from_user_message(kwargs: dict) -> str:
+    text = _first_user_text(kwargs)
+    match = re.search(r"<untrusted_content_([0-9a-f]{8})>", text)
     assert match is not None
     return f"untrusted_content_{match.group(1)}"
+
+
+@pytest.mark.asyncio
+async def test_cached_system_prefix_is_stable_across_turns() -> None:
+    """Anthropic prompt cache is longest-prefix; system+tools must be byte-identical."""
+    from app.llm.chat import run_chat_agent
+    from app.services.chat_tools import ChatToolExecution
+
+    hit = _hit()
+
+    async def execute(name: str, arguments: dict) -> ChatToolExecution:
+        _ = name, arguments
+        return ChatToolExecution(hits=[hit], status="Searching mail")
+
+    systems: list[list[dict]] = []
+    for question in ("billing disputes waiting on review", "ACH form requests"):
+        client = _client_tool_then_answer(
+            _tool_use(
+                name="search_mail",
+                tool_use_id="tu1",
+                tool_input={"query": "billing"},
+            ),
+            "The overdue billing packet still needs review.",
+        )
+        await run_chat_agent(
+            client=client,
+            settings=_settings(),
+            question=question,
+            execute_tool=execute,
+        )
+        kwargs = client.messages.create.await_args.kwargs
+        systems.append(_system_blocks(kwargs))
+        assert len(_system_blocks(kwargs)) == 1
+        assert _system_blocks(kwargs)[0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in kwargs
+        assert re.search(r"<untrusted_content_[0-9a-f]{8}>", _system_text(kwargs)) is None
+        assert "This turn's retrieved-data delimiter" not in _system_text(kwargs)
+        assert "This turn's retrieved-data delimiter" in _first_user_text(kwargs)
+
+    assert systems[0] == systems[1]
 
 
 @pytest.mark.asyncio
@@ -730,12 +787,12 @@ async def test_delimiter_tag_is_unique_per_request() -> None:
             question="billing disputes waiting on review",
             execute_tool=execute,
         )
-        tags.append(_salt_from_system(client.messages.create.await_args.kwargs))
+        tags.append(_salt_from_user_message(client.messages.create.await_args.kwargs))
     assert tags[0] != tags[1]
 
 
 @pytest.mark.asyncio
-async def test_system_prompt_references_actual_salted_tag() -> None:
+async def test_user_message_references_actual_salted_tag() -> None:
     from app.llm.chat import run_chat_agent
     from app.services.chat_tools import ChatToolExecution
 
@@ -760,8 +817,9 @@ async def test_system_prompt_references_actual_salted_tag() -> None:
         execute_tool=execute,
     )
     kwargs = client.messages.create.await_args.kwargs
-    tag = _salt_from_system(kwargs)
-    assert f"<{tag}>" in _system_text(kwargs)
+    tag = _salt_from_user_message(kwargs)
+    assert f"<{tag}>" in _first_user_text(kwargs)
+    assert f"<{tag}>" not in _system_text(kwargs)
     packed = str(client.messages.stream.call_args.kwargs.get("messages"))
     assert f"<{tag}>" in packed
     assert f"</{tag}>" in packed

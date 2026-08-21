@@ -35,7 +35,7 @@ from app.models.schemas.chat import (
 )
 from app.models.schemas.search import SearchHit
 from app.repositories import chat_cache_repo
-from app.services import embedding_service, search_service
+from app.services import chat_session_service, embedding_service, search_service
 from app.services.chat_intent import ChatIntent, classify_chat_intent
 from app.services.chat_query import retrieval_message
 from app.services.chat_tools import execute_chat_tool
@@ -62,11 +62,80 @@ _WRITE_PHRASES: tuple[str, ...] = (
     "mark this as spam",
 )
 
+STATUS_SEARCHING = "Searching your inbox…"
+STATUS_DRAFTING = "Drafting answer…"
+
 
 def detect_write_intent(message: str) -> bool:
     """Light phrase match for send/approve/reject/delete/move-to-junk asks."""
     lowered = " ".join((message or "").lower().split())
     return any(phrase in lowered for phrase in _WRITE_PHRASES)
+
+
+def _merge_history(
+    client_history: list[ChatHistoryTurn] | None,
+    session_history: list[ChatHistoryTurn] | None,
+) -> list[ChatHistoryTurn]:
+    """Prefer explicit client history; otherwise use the durable session transcript."""
+    if client_history:
+        return list(client_history)
+    return list(session_history or [])
+
+
+async def _load_session_history(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+) -> list[ChatHistoryTurn]:
+    if session_id is None or user_id is None:
+        return []
+    row = await chat_session_service.get_session(
+        session,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    if row is None:
+        return []
+    return chat_session_service.history_from_session(row)
+
+
+async def _persist_session_turn(
+    session: AsyncSession,
+    *,
+    session_id: uuid.UUID | None,
+    user_id: uuid.UUID | None,
+    user_message: str,
+    assistant_message: str,
+    citations: list[ChatCitation],
+) -> None:
+    if session_id is None or user_id is None or not assistant_message.strip():
+        return
+    try:
+        await chat_session_service.append_turn(
+            session,
+            session_id=session_id,
+            user_id=user_id,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            citations=[
+                {"thread_id": str(c.thread_id), "subject": c.subject}
+                for c in citations
+            ],
+        )
+    except Exception:
+        logger.warning("chat_session_persist_failed", session_id=str(session_id))
+
+
+def intent_uses_semantic_cache(intent: ChatIntent) -> bool:
+    """Follow-ups and recent-list asks are deterministic; skip the embed round-trip."""
+    return intent not in {ChatIntent.FOLLOW_UP, ChatIntent.OVERVIEW}
+
+
+def _reading_status(hit_count: int) -> str:
+    if hit_count == 1:
+        return "Reading 1 thread…"
+    return f"Reading {hit_count} threads…"
 
 
 def thread_url_path(thread_id: uuid.UUID) -> str:
@@ -372,12 +441,19 @@ async def ask(
     limit: int | None = None,
     history: list[ChatHistoryTurn] | None = None,
     user_key: str | None = None,
+    user_id: uuid.UUID | None = None,
     bypass_cache: bool = False,
+    session_id: uuid.UUID | None = None,
 ) -> ChatAskResponse:
     cleaned = sanitize_user_text(message)
     refused_write = detect_write_intent(cleaned)
     retrieval_limit = CHAT_DEFAULT_LIMIT if limit is None else limit
-    prior = _cleaned_history(history)
+    session_history = await _load_session_history(
+        session,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    prior = _cleaned_history(_merge_history(history, session_history))
     started = time.perf_counter()
 
     if refused_write:
@@ -399,15 +475,26 @@ async def ask(
             refused_write=True,
         )
 
-    cached, embedding = await _lookup_semantic_cache(
-        session,
-        settings,
-        openai_client=openai_client,
-        message=cleaned,
-        mailbox=mailbox,
-        user_key=user_key,
-        bypass_cache=bypass_cache,
+    plan = classify_chat_intent(
+        cleaned,
+        history=prior,
+        mailbox_emails=list(settings.mailbox_list),
     )
+    if plan.intent == ChatIntent.OUT_OF_SCOPE:
+        return _out_of_scope_response(mailbox=mailbox)
+
+    cached: ChatAskResponse | None = None
+    embedding: list[float] | None = None
+    if intent_uses_semantic_cache(plan.intent):
+        cached, embedding = await _lookup_semantic_cache(
+            session,
+            settings,
+            openai_client=openai_client,
+            message=cleaned,
+            mailbox=mailbox,
+            user_key=user_key,
+            bypass_cache=bypass_cache,
+        )
     if cached is not None:
         _log_chat_ask(
             hit_count=cached.retrieval_count,
@@ -418,7 +505,7 @@ async def ask(
             cache_similarity=cached.cache_similarity,
             retrieval_count=cached.retrieval_count,
             grounded_verifier=cached.grounded_verifier,
-            intent=None,
+            intent=plan.intent,
             tool_used_first=None,
             tool_iterations=0,
             ttft_ms=_elapsed_ms(started),
@@ -429,14 +516,6 @@ async def ask(
             cache_write_tokens=None,
         )
         return cached
-
-    plan = classify_chat_intent(
-        cleaned,
-        history=prior,
-        mailbox_emails=list(settings.mailbox_list),
-    )
-    if plan.intent == ChatIntent.OUT_OF_SCOPE:
-        return _out_of_scope_response(mailbox=mailbox)
 
     tool_mailbox = mailbox or plan.mailbox
     question = _agent_question(cleaned, plan.thread_id)
@@ -497,6 +576,14 @@ async def ask(
         refused_write=False,
         grounded_verifier=verdict,  # type: ignore[arg-type]
     )
+    await _persist_session_turn(
+        session,
+        session_id=session_id,
+        user_id=user_id,
+        user_message=cleaned,
+        assistant_message=answer,
+        citations=citations,
+    )
     await _store_semantic_cache(
         session,
         settings,
@@ -541,13 +628,20 @@ async def iter_ask_events(
     limit: int | None = None,
     history: list[ChatHistoryTurn] | None = None,
     user_key: str | None = None,
+    user_id: uuid.UUID | None = None,
     bypass_cache: bool = False,
+    session_id: uuid.UUID | None = None,
 ) -> AsyncIterator[dict]:
     """SSE payload dicts: status, meta, zero or more deltas, then done."""
     cleaned = sanitize_user_text(message)
     refused_write = detect_write_intent(cleaned)
     retrieval_limit = CHAT_DEFAULT_LIMIT if limit is None else limit
-    prior = _cleaned_history(history)
+    session_history = await _load_session_history(
+        session,
+        session_id=session_id,
+        user_id=user_id,
+    )
+    prior = _cleaned_history(_merge_history(history, session_history))
     started = time.perf_counter()
 
     if refused_write:
@@ -571,15 +665,34 @@ async def iter_ask_events(
         yield {"type": "done"}
         return
 
-    cached, embedding = await _lookup_semantic_cache(
-        session,
-        settings,
-        openai_client=openai_client,
-        message=cleaned,
-        mailbox=mailbox,
-        user_key=user_key,
-        bypass_cache=bypass_cache,
+    plan = classify_chat_intent(
+        cleaned,
+        history=prior,
+        mailbox_emails=list(settings.mailbox_list),
     )
+    if plan.intent == ChatIntent.OUT_OF_SCOPE:
+        yield _meta_event(
+            citations=[],
+            retrieval_count=0,
+            mailbox=mailbox,
+            refused_write=False,
+        )
+        yield {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
+        yield {"type": "done"}
+        return
+
+    cached: ChatAskResponse | None = None
+    embedding: list[float] | None = None
+    if intent_uses_semantic_cache(plan.intent):
+        cached, embedding = await _lookup_semantic_cache(
+            session,
+            settings,
+            openai_client=openai_client,
+            message=cleaned,
+            mailbox=mailbox,
+            user_key=user_key,
+            bypass_cache=bypass_cache,
+        )
     if cached is not None:
         _log_chat_ask(
             hit_count=cached.retrieval_count,
@@ -590,6 +703,7 @@ async def iter_ask_events(
             cache_similarity=cached.cache_similarity,
             retrieval_count=cached.retrieval_count,
             grounded_verifier=cached.grounded_verifier,
+            intent=plan.intent,
             tool_iterations=0,
             ttft_ms=_elapsed_ms(started),
             total_ms=_elapsed_ms(started),
@@ -609,21 +723,7 @@ async def iter_ask_events(
         yield {"type": "done", "grounded_verifier": cached.grounded_verifier}
         return
 
-    plan = classify_chat_intent(
-        cleaned,
-        history=prior,
-        mailbox_emails=list(settings.mailbox_list),
-    )
-    if plan.intent == ChatIntent.OUT_OF_SCOPE:
-        yield _meta_event(
-            citations=[],
-            retrieval_count=0,
-            mailbox=mailbox,
-            refused_write=False,
-        )
-        yield {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
-        yield {"type": "done"}
-        return
+    yield {"type": "status", "text": STATUS_SEARCHING}
 
     tool_mailbox = mailbox or plan.mailbox
     question = _agent_question(cleaned, plan.thread_id)
@@ -644,6 +744,7 @@ async def iter_ask_events(
     grounded = False
     forwarded_delta = False
     meta_sent = False
+    drafting_sent = False
     tool_used_first: str | None = None
     tool_iterations = 0
     ttft_ms: int | None = None
@@ -664,6 +765,8 @@ async def iter_ask_events(
                 yield {"type": "status", "text": event.get("text") or ""}
             elif event.get("type") == "retrieved":
                 hits = list(event.get("hits") or [])
+                if hits:
+                    yield {"type": "status", "text": _reading_status(len(hits))}
                 if not meta_sent:
                     yield _meta_event(
                         citations=citations_from_hits(hits),
@@ -672,10 +775,16 @@ async def iter_ask_events(
                         refused_write=False,
                     )
                     meta_sent = True
+                if not drafting_sent:
+                    yield {"type": "status", "text": STATUS_DRAFTING}
+                    drafting_sent = True
             elif event.get("type") == "delta":
                 piece = str(event.get("text") or "")
                 if not piece:
                     continue
+                if not drafting_sent:
+                    yield {"type": "status", "text": STATUS_DRAFTING}
+                    drafting_sent = True
                 if not meta_sent:
                     yield _meta_event(
                         citations=citations_from_hits(hits),
@@ -718,7 +827,7 @@ async def iter_ask_events(
                 "partial": True,
             }
             return
-        raise ChatError("Claude chat failed")
+        raise ChatError("Claude chat failed") from None
 
     if hits:
         citations = citations_from_hits(hits)
@@ -745,22 +854,21 @@ async def iter_ask_events(
         hits=hits,
         grounded=grounded_for_verify,
     )
-    if not meta_sent:
-        yield _meta_event(
-            citations=citations,
-            retrieval_count=count,
-            mailbox=mailbox,
-            refused_write=False,
-            grounded_verifier=verdict,
-        )
-    else:
-        yield _meta_event(
-            citations=citations,
-            retrieval_count=count,
-            mailbox=mailbox,
-            refused_write=False,
-            grounded_verifier=verdict,
-        )
+    yield _meta_event(
+        citations=citations,
+        retrieval_count=count,
+        mailbox=mailbox,
+        refused_write=False,
+        grounded_verifier=verdict,
+    )
+    await _persist_session_turn(
+        session,
+        session_id=session_id,
+        user_id=user_id,
+        user_message=cleaned,
+        assistant_message=text,
+        citations=citations,
+    )
     await _store_semantic_cache(
         session,
         settings,

@@ -82,6 +82,7 @@ describe("AssociatedThreadsList", () => {
           sender: "rep@sample-client.example.com",
           to: ["cr@example.com"],
           cc: [],
+          bcc: [],
           body_text: PACKET,
           body_preview: "SampleClient packet",
           received_at: "2026-08-10T14:00:00Z",

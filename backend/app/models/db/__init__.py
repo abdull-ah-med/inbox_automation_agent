@@ -1,6 +1,7 @@
 from app.models.db.audit_event import AuditEvent
 from app.models.db.base import Base
 from app.models.db.chat_response_cache import ChatResponseCache
+from app.models.db.chat_session import ChatSession
 from app.models.db.classification import Classification
 from app.models.db.draft import Draft
 from app.models.db.email_embedding import EmailEmbedding
@@ -10,9 +11,9 @@ from app.models.db.rejection_memory import RejectionMemory
 from app.models.db.reply_embedding import ReplyEmbedding
 from app.models.db.sent_reply import SentReply
 from app.models.db.skill import Skill
-from app.models.db.spam_allowlist import SpamAllowlist
 from app.models.db.skill_candidate import SkillCandidate
 from app.models.db.skill_file import SkillFile
+from app.models.db.spam_allowlist import SpamAllowlist
 from app.models.db.thread import Thread
 from app.models.db.thread_association_review import ThreadAssociationReview
 from app.models.db.thread_link import ThreadLink
@@ -25,6 +26,7 @@ __all__ = [
     "AuditEvent",
     "Base",
     "ChatResponseCache",
+    "ChatSession",
     "Classification",
     "Draft",
     "EmailEmbedding",

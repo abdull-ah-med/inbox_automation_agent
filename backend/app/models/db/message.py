@@ -47,6 +47,11 @@ class Message(Base):
         nullable=False,
         default=list,
     )
+    bcc_recipients: Mapped[list[str]] = mapped_column(
+        ARRAY(String(320)),
+        nullable=False,
+        default=list,
+    )
     # Graph ``hasAttachments`` — flag only; attachment bytes are never stored.
     has_attachments: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # Well-known Graph folder at ingest (inbox / junkemail / sentitems). Hint only.

@@ -174,7 +174,11 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     # Cite by subject with [n] markers; UUIDs belong on citation cards.
     assert "uuid" in lowered
     assert "subject" in lowered
-    assert "[1]" in CHAT_SYSTEM_PROMPT or "citation marker" in lowered or "[n]" in CHAT_SYSTEM_PROMPT
+    assert (
+        "[1]" in CHAT_SYSTEM_PROMPT
+        or "citation marker" in lowered
+        or "[n]" in CHAT_SYSTEM_PROMPT
+    )
     assert "review ui" not in lowered
     assert "triage labels" in lowered
     assert "overview" in lowered or "latest" in lowered

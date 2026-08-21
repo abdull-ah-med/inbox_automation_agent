@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
 from app.db.session import get_session_factory
-from app.models.schemas.email import ThreadStateEnum
 from app.models.schemas.draft import DraftResponseSchema
+from app.models.schemas.email import ThreadStateEnum
 from app.repositories import draft_repo, thread_repo
 from app.services import (
     audit_service,

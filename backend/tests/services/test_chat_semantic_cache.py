@@ -106,7 +106,7 @@ async def test_cache_hit_skips_llm_call() -> None:
             _settings(),
             openai_client=MagicMock(),
             anthropic_client=anthropic,
-            message="what should I focus on today",
+            message="billing disputes waiting on review",
             user_key=USER,
         )
 
@@ -219,6 +219,81 @@ async def test_bypass_cache_skips_lookup_and_store() -> None:
     lookup.assert_not_awaited()
     store.assert_not_awaited()
     assert "Invoice dispute" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_follow_up_intent_skips_semantic_cache_embed() -> None:
+    """Deterministic get_thread asks never cache-hit; skip the OpenAI embed."""
+    from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
+    from app.services import chat_service
+
+    embed = AsyncMock(side_effect=AssertionError("must not embed for follow-up"))
+    hit = _hit()
+    with (
+        patch("app.services.chat_service.embedding_service.embed_text", embed),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="The overdue billing packet still needs review.",
+                    hits=[hit],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="tell me more about the first one",
+            user_key=USER,
+            history=[
+                ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
+                ChatHistoryTurn(
+                    role="assistant",
+                    content="The overdue billing dispute is waiting on review.",
+                    citations=[
+                        ChatCitedThread(thread_id=hit.thread_id, subject=hit.subject),
+                    ],
+                ),
+            ],
+        )
+
+    assert result.cached is False
+    embed.assert_not_awaited()
+    assert "overdue billing" in result.answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_overview_intent_skips_semantic_cache_embed() -> None:
+    from app.services import chat_service
+
+    embed = AsyncMock(side_effect=AssertionError("must not embed for overview"))
+    with (
+        patch("app.services.chat_service.embedding_service.embed_text", embed),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="There are three threads waiting.",
+                    hits=[],
+                    grounded=True,
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="what should I focus on today?",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+    embed.assert_not_awaited()
 
 
 @pytest.mark.db

@@ -38,7 +38,7 @@ async def _build_mailbox_overviews(
             MailboxOverview(
                 mailbox=key,
                 email_address=email,
-                label=mailbox_label(email, key),
+                label=mailbox_label(email, key, owners=settings.mailbox_owner_map),
                 thread_count=int(row.get("thread_count", 0) or 0),
                 unread_count=0,
                 awaiting_action_count=int(row.get("awaiting_action_count", 0) or 0),

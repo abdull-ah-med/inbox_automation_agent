@@ -30,7 +30,7 @@ from app.repositories import (
     thread_repo,
 )
 from app.services import audit_service, draft_feedback_service, search_service
-from app.services.related_match import RelatedCandidate, select_related
+from app.services.related_match import RelatedCandidate, drip_key, select_related
 
 logger = structlog.get_logger(__name__)
 
@@ -132,7 +132,8 @@ async def list_related(
         )
 
     if purpose == "associated":
-        missing_confirmed = [rid for rid in confirmed_ids if rid not in {c.thread_id for c in candidates}]
+        candidate_ids = {c.thread_id for c in candidates}
+        missing_confirmed = [rid for rid in confirmed_ids if rid not in candidate_ids]
         for related_id in missing_confirmed:
             related = await thread_repo.get_by_id(session, related_id)
             if related is None:
@@ -158,6 +159,16 @@ async def list_related(
             [row.thread_id for row in candidates],
         )
 
+    suppressed: set[tuple[str, str]] = set()
+    for related_id, status in statuses.items():
+        if status != "dismissed":
+            continue
+        related = await thread_repo.get_by_id(session, related_id)
+        if related is None:
+            continue
+        sender_for_key = await _latest_inbound_sender(session, related.id)
+        suppressed.add(drip_key(sender_for_key, related.subject))
+
     selected = select_related(
         source,
         candidates,
@@ -165,6 +176,8 @@ async def list_related(
         dismissed_ids=dismissed_ids,
         min_similarity=settings.embedding_min_similarity,
         queue_ids=queue_ids,
+        confirmed_ids=confirmed_ids,
+        suppressed_drip_keys=suppressed,
     )
 
     items: list[RelatedThreadItem] = []
@@ -358,6 +371,7 @@ def _row_to_email(
         direction=direction,
         to_recipients=list(message.to_recipients or []),
         cc_recipients=list(message.cc_recipients or []),
+        bcc_recipients=list(message.bcc_recipients or []),
         has_attachments=bool(message.has_attachments),
         summary_one_line=message.summary_one_line,
         summary_json=message.summary_json,

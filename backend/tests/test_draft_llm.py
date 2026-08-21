@@ -72,6 +72,59 @@ def _ok_draft() -> DraftSchema:
     )
 
 
+def test_build_user_content_injects_reply_addressee_from_thread_tip() -> None:
+    mailbox = "inquiries@sample-site.example.com"
+    first = _email().model_copy(
+        update={
+            "message_id": "1",
+            "mailbox": mailbox,
+            "sender": "Smit Patel <smit.patel@sample-transport.example.com>",
+            "to_recipients": [mailbox],
+            "cc_recipients": [],
+        }
+    )
+    tip = _email().model_copy(
+        update={
+            "message_id": "2",
+            "mailbox": mailbox,
+            "sender": mailbox,
+            "direction": EmailDirectionEnum.OUTBOUND,
+            "to_recipients": ["Dev@sample-site.example.com"],
+            "cc_recipients": [],
+            "body_text": "Following up with Dev.",
+        }
+    )
+    context = ThreadContextSchema(
+        conversation_id=first.conversation_id,
+        mailbox=mailbox,
+        subject=first.subject,
+        messages=[first, tip],
+    )
+    content = draft_llm._build_user_content(tip, context, _triage())
+    assert "Reply addressee (hard constraint):" in content
+    assert "Salute: Dev" in content
+    assert "Primary To: dev@sample-site.example.com" in content
+    assert "Source: last_outbound_to" in content
+    assert "Do not greet the thread opener" in content
+
+
+def test_build_user_content_includes_owner_signoff_when_set() -> None:
+    email = _email().model_copy(update={"mailbox": "sampleagent@sample-site.example.com"})
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+        mailbox_owner="Elise",
+    )
+    assert 'Sign the reply as Elise' in content
+    assert 'Closing name must be exactly "Elise"' in content
+
+
+def test_build_user_content_omits_owner_signoff_when_unset() -> None:
+    content = draft_llm._build_user_content(_email(), _context(_email()), _triage())
+    assert "Sign the reply as" not in content
+
+
 def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     email = _email()
     prior = EmailMessageSchema(

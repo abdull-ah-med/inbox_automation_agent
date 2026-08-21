@@ -33,8 +33,29 @@ def infer_mailbox_key(email: str) -> MailboxKey | str:
     return _slugify_local(email)
 
 
-def mailbox_label(email: str, key: str | None = None) -> str:
+def owner_for_mailbox(
+    email: str,
+    owners: dict[str, str] | None = None,
+) -> str | None:
+    """Return the configured owner display name for a mailbox email, if any."""
+    if not owners:
+        return None
+    needle = email.strip().lower()
+    if not needle:
+        return None
+    return owners.get(needle)
+
+
+def mailbox_label(
+    email: str,
+    key: str | None = None,
+    *,
+    owners: dict[str, str] | None = None,
+) -> str:
     """Human-readable label for a mailbox."""
+    owner = owner_for_mailbox(email, owners)
+    if owner:
+        return owner
     resolved = key or infer_mailbox_key(email)
     labels = {
         "client-relations": "Client Relations",

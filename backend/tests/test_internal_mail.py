@@ -34,10 +34,20 @@ def test_display_name_and_case_still_internal() -> None:
     )
 
 
-def test_external_vendor_is_not_internal() -> None:
-    assert not is_internal_sender(
-        "orders@vendor.example",
+def test_allowlisted_extra_domain_is_internal() -> None:
+    assert is_internal_sender(
+        "ops@sisterco.example",
         "elise@sample-site.example.com",
+        extra_domains=["sisterco.example"],
+    )
+
+
+def test_body_keyword_is_irrelevant_to_internal_flag() -> None:
+    """INTERNAL in a body is not an input to is_internal_sender."""
+    assert not is_internal_sender(
+        "customer@gmail.com",
+        "elise@sample-site.example.com",
+        extra_domains=[],
     )
 
 

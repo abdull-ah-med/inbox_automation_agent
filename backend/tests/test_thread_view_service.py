@@ -182,6 +182,10 @@ async def test_thread_view_assembles_detail() -> None:
             AsyncMock(return_value=[]),
         ),
         patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
             AsyncMock(return_value=None),
         ),
@@ -303,6 +307,10 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
         ),
         patch(
             "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
             AsyncMock(return_value=[]),
         ),
         patch(

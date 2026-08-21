@@ -103,6 +103,10 @@ class GraphMessageSchema(BaseModel):
         default_factory=list,
         alias="ccRecipients",
     )
+    bcc_recipients: list[GraphRecipientSchema] = Field(
+        default_factory=list,
+        alias="bccRecipients",
+    )
     received_date_time: datetime | None = Field(default=None, alias="receivedDateTime")
     conversation_id: str | None = Field(default=None, alias="conversationId")
     is_read: bool | None = Field(default=None, alias="isRead")
@@ -147,6 +151,7 @@ class SimulateIngestRequestSchema(BaseModel):
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list, max_length=50)
     cc_recipients: list[str] = Field(default_factory=list, max_length=50)
+    bcc_recipients: list[str] = Field(default_factory=list, max_length=50)
     has_attachments: bool = False
 
 

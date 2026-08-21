@@ -22,10 +22,17 @@ from app.core.internal_mail import (
 )
 from app.core.mailbox_keys import infer_mailbox_key
 from app.core.outlook_links import outlook_web_link
+from app.core.thread_policy import presentation_from_flags
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
-from app.models.schemas.dashboard import ThreadSummary, TriageFlags
+from app.models.schemas.dashboard import (
+    BadgeNowView,
+    ThreadPresentationView,
+    ThreadSummary,
+    TriageFlags,
+    TriageHistoryView,
+)
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import audit_repo, draft_repo
 
@@ -71,6 +78,66 @@ def _enriched_triage(
 
 def _display_state(state: str, *, mailbox: str, last_sender: str | None) -> str:
     return display_state_for_internal_mail(state, sender=last_sender, mailbox=mailbox)
+
+
+def _to_presentation_view(
+    *,
+    state: str,
+    urgency: str | None,
+    triage: TriageFlags | None,
+    category: str | None,
+    draft_review_finished: bool = False,
+    closing_signal: bool = False,
+) -> ThreadPresentationView:
+    derived = presentation_from_flags(
+        state=state,
+        urgency=urgency,
+        triage=triage,
+        draft_review_finished=draft_review_finished,
+        closing_signal=closing_signal,
+        category=category,
+    )
+    return ThreadPresentationView(
+        is_finished=derived.is_finished,
+        open_work=derived.open_work,
+        in_needs_attention=derived.in_needs_attention,
+        urgency_assessed=derived.urgency_assessed,
+        urgency_active=derived.urgency_active,
+        badges_now=[
+            BadgeNowView(kind=badge.kind.value, label=badge.label)
+            for badge in derived.badges_now
+        ],
+        triage_history=TriageHistoryView(
+            has_action_items=derived.triage_history.has_action_items,
+            needs_context=derived.triage_history.needs_context,
+            is_spam=derived.triage_history.is_spam,
+            action_items_summary=derived.triage_history.action_items_summary,
+            context_reason=derived.triage_history.context_reason,
+            spam_reason=derived.triage_history.spam_reason,
+        ),
+        suggest_resolve_default=derived.suggest_resolve_default,
+        show_resolution_banner=derived.show_resolution_banner,
+    )
+
+
+def with_presentation(
+    summary: ThreadSummary,
+    *,
+    draft_review_finished: bool = False,
+    closing_signal: bool = False,
+) -> ThreadSummary:
+    return summary.model_copy(
+        update={
+            "presentation": _to_presentation_view(
+                state=summary.state,
+                urgency=summary.urgency,
+                triage=summary.triage,
+                category=summary.category,
+                draft_review_finished=draft_review_finished,
+                closing_signal=closing_signal,
+            )
+        }
+    )
 
 
 def _latest_message_ranked():
@@ -448,19 +515,23 @@ async def list_by_mailbox(
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
+    finished = await draft_repo.review_finished_by_threads(session, thread_ids)
     for i, thread_row in enumerate(rows):
         thread = thread_row[0]
-        items[i] = items[i].model_copy(
-            update={
-                "triage": _enriched_triage(
-                    triage_map.get((thread.mailbox, thread.conversation_id)),
-                    mailbox=thread.mailbox,
-                    last_sender=items[i].last_sender,
-                    subject=items[i].subject,
-                ),
-                "has_draft": thread.id in draft_ids,
-                "teaching_note": teaching_notes.get(thread.id),
-            }
+        items[i] = with_presentation(
+            items[i].model_copy(
+                update={
+                    "triage": _enriched_triage(
+                        triage_map.get((thread.mailbox, thread.conversation_id)),
+                        mailbox=thread.mailbox,
+                        last_sender=items[i].last_sender,
+                        subject=items[i].subject,
+                    ),
+                    "has_draft": thread.id in draft_ids,
+                    "teaching_note": teaching_notes.get(thread.id),
+                }
+            ),
+            draft_review_finished=thread.id in finished,
         )
 
     next_cursor = None
@@ -552,22 +623,26 @@ async def list_recent_for_mailboxes(
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
+    finished = await draft_repo.review_finished_by_threads(session, thread_ids)
     for mailbox, thread_id, conversation_id in pending:
         key = mailbox.lower()
         for i, item in enumerate(buckets[key]):
             if item.id != thread_id:
                 continue
-            buckets[key][i] = item.model_copy(
-                update={
-                    "triage": _enriched_triage(
-                        triage_map.get((mailbox, conversation_id)),
-                        mailbox=mailbox,
-                        last_sender=item.last_sender,
-                        subject=item.subject,
-                    ),
-                    "has_draft": thread_id in draft_ids,
-                    "teaching_note": teaching_notes.get(thread_id),
-                }
+            buckets[key][i] = with_presentation(
+                item.model_copy(
+                    update={
+                        "triage": _enriched_triage(
+                            triage_map.get((mailbox, conversation_id)),
+                            mailbox=mailbox,
+                            last_sender=item.last_sender,
+                            subject=item.subject,
+                        ),
+                        "has_draft": thread_id in draft_ids,
+                        "teaching_note": teaching_notes.get(thread_id),
+                    }
+                ),
+                draft_review_finished=thread_id in finished,
             )
             break
 
@@ -726,19 +801,23 @@ async def list_needs_attention(
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
+    finished = await draft_repo.review_finished_by_threads(session, thread_ids)
     for i, thread_row in enumerate(rows):
         thread = thread_row[0]
-        summaries[i] = summaries[i].model_copy(
-            update={
-                "triage": _enriched_triage(
-                    triage_map.get((thread.mailbox, thread.conversation_id)),
-                    mailbox=thread.mailbox,
-                    last_sender=summaries[i].last_sender,
-                    subject=summaries[i].subject,
-                ),
-                "has_draft": thread.id in draft_ids,
-                "teaching_note": teaching_notes.get(thread.id),
-            }
+        summaries[i] = with_presentation(
+            summaries[i].model_copy(
+                update={
+                    "triage": _enriched_triage(
+                        triage_map.get((thread.mailbox, thread.conversation_id)),
+                        mailbox=thread.mailbox,
+                        last_sender=summaries[i].last_sender,
+                        subject=summaries[i].subject,
+                    ),
+                    "has_draft": thread.id in draft_ids,
+                    "teaching_note": teaching_notes.get(thread.id),
+                }
+            ),
+            draft_review_finished=thread.id in finished,
         )
     return summaries
 
@@ -832,7 +911,8 @@ async def build_thread_summary(
     to_recipients = latest[4] if latest else None
     party = _party_sender(thread.mailbox, sender, direction, to_recipients)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, [thread.id])
-    return ThreadSummary(
+    finished = await draft_repo.review_finished_by_threads(session, [thread.id])
+    summary = ThreadSummary(
         id=thread.id,
         mailbox=thread.mailbox,
         mailbox_key=infer_mailbox_key(thread.mailbox),
@@ -859,4 +939,8 @@ async def build_thread_summary(
             subject=thread.subject,
         ),
         outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
+    )
+    return with_presentation(
+        summary,
+        draft_review_finished=thread.id in finished,
     )
