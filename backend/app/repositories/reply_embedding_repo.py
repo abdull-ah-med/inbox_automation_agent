@@ -11,7 +11,9 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.db.reply_embedding import ReplyEmbedding
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 
 class ReplyEmbeddingSchema(BaseModel):
@@ -71,14 +73,40 @@ async def store_reply_embedding(
 async def list_reply_embeddings(
     session: AsyncSession,
     *,
-    mailbox: str | None = None,
+    mailbox: str,
     limit: int = 100,
 ) -> list[ReplyEmbeddingSchema]:
     """List approved replies newest-first for Settings (includes excluded)."""
+    if not (mailbox or "").strip():
+        raise ValueError("mailbox is required")
     capped = max(1, min(limit, 500))
-    stmt = select(ReplyEmbedding).order_by(ReplyEmbedding.created_at.desc()).limit(capped)
-    if mailbox is not None:
-        stmt = stmt.where(ReplyEmbedding.mailbox == mailbox)
+    stmt = (
+        select(ReplyEmbedding)
+        .where(ReplyEmbedding.mailbox == mailbox)
+        .order_by(ReplyEmbedding.created_at.desc())
+        .limit(capped)
+    )
+    result = await session.execute(stmt)
+    return [ReplyEmbeddingSchema.model_validate(row) for row in result.scalars().all()]
+
+
+async def list_all_reply_embeddings_admin(
+    session: AsyncSession,
+    *,
+    mailboxes: list[str],
+    limit: int = 100,
+) -> list[ReplyEmbeddingSchema]:
+    """Cross-mailbox list for admin Settings. Empty allowlist returns no rows."""
+    allowed = [item.strip() for item in mailboxes if item and item.strip()]
+    if not allowed:
+        return []
+    capped = max(1, min(limit, 500))
+    stmt = (
+        select(ReplyEmbedding)
+        .where(ReplyEmbedding.mailbox.in_(allowed))
+        .order_by(ReplyEmbedding.created_at.desc())
+        .limit(capped)
+    )
     result = await session.execute(stmt)
     return [ReplyEmbeddingSchema.model_validate(row) for row in result.scalars().all()]
 
@@ -136,6 +164,7 @@ async def find_similar_replies(
     if limit < 1:
         return []
 
+    await set_hnsw_session_defaults(session, get_settings())
     distance = ReplyEmbedding.embedding.cosine_distance(query_embedding)
     stmt = (
         select(ReplyEmbedding.reply_text, distance.label("distance"))

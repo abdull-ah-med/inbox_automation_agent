@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db
+from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
 from app.core.exceptions import ReplyMemoryNotFoundError
 from app.core.rate_limit import limiter
@@ -33,6 +33,7 @@ async def list_reply_memory(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: SettingsDep,
     _user: CurrentUser,
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[ReplyMemoryResponseSchema]:
@@ -40,6 +41,7 @@ async def list_reply_memory(
     rows = await reply_memory_service.list_memories(
         session,
         mailbox=mailbox,
+        mailboxes=list(settings.mailbox_list),
         limit=100,
     )
     return [ReplyMemoryResponseSchema.model_validate(row) for row in rows]

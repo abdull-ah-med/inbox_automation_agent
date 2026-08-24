@@ -142,12 +142,19 @@ async def list_memories(
     session: AsyncSession,
     *,
     mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
     limit: int = 100,
 ) -> list:
     """List stored reply memories for the settings UI."""
-    return await reply_embedding_repo.list_reply_embeddings(
+    if mailbox:
+        return await reply_embedding_repo.list_reply_embeddings(
+            session,
+            mailbox=mailbox,
+            limit=limit,
+        )
+    return await reply_embedding_repo.list_all_reply_embeddings_admin(
         session,
-        mailbox=mailbox,
+        mailboxes=list(mailboxes or []),
         limit=limit,
     )
 
