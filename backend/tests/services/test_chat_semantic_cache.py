@@ -74,6 +74,7 @@ class _CacheHit:
         }
         self.similarity = 0.96
         self.id = uuid.uuid4()
+        self.citation_thread_ids: list[uuid.UUID] = []
 
 
 @pytest.mark.asyncio
@@ -658,3 +659,112 @@ async def test_unscoped_cache_does_not_survive_mailbox_allowlist_change(
         )
 
     assert cached is None
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_with_missing_cited_thread_is_miss() -> None:
+    """H19: a cached answer whose cited thread is gone must not be served."""
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    cached = _CacheHit()
+    cached.citation_thread_ids = [THREAD_A]
+    session = AsyncMock()
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute = AsyncMock(return_value=empty)
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=cached),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.invalidate_for_threads",
+            AsyncMock(return_value=1),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Fresh look at Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ),
+        patch(
+            "app.services.chat_service.verify_grounded",
+            AsyncMock(return_value=Groundedness(verdict="SUPPORTED", unsupported_spans=[])),
+        ),
+    ):
+        result = await chat_service.ask(
+            session,
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+    assert result.answer == "Fresh look at Invoice dispute — overdue billing."
+
+
+@pytest.mark.asyncio
+async def test_groundedness_uses_search_result_blocks_not_ui_snippets() -> None:
+    """H24: verifier must see the packed search_result blocks, not UI snippets."""
+    from app.llm.chat_tools import search_results_from_hits
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    hit = _hit()
+    blocks = search_results_from_hits([hit])
+    captured: dict[str, object] = {}
+
+    async def _capture(answer: str, citations: object, **_kwargs: object) -> Groundedness:
+        _ = answer
+        captured["citations"] = citations
+        return Groundedness(verdict="SUPPORTED", unsupported_spans=[])
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="The overdue billing packet still needs review.",
+                    hits=[hit],
+                    grounded=True,
+                    evidence_blocks=blocks,
+                )
+            ),
+        ),
+        patch("app.services.chat_service.verify_grounded", side_effect=_capture),
+    ):
+        await chat_service.ask(
+            AsyncMock(),
+            _settings(chat_groundedness_enabled=True),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    citations = captured["citations"]
+    assert isinstance(citations, list)
+    assert citations
+    assert citations[0]["type"] == "search_result"
+    assert citations[0]["title"] == "Invoice dispute — overdue billing"
