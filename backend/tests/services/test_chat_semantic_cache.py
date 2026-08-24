@@ -32,9 +32,7 @@ def _settings(**overrides: object) -> Settings:
         "chat_model": "claude-haiku-4-5",
         "classification_model": "claude-haiku-4-5",
         "chat_semantic_cache_enabled": True,
-        "database_url": (
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"
-        ),
+        "database_url": ("postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"),
         "redis_url": "redis://localhost:6379/15",
     }
     values.update(overrides)
@@ -158,9 +156,7 @@ async def test_write_refusal_is_never_cached() -> None:
     with (
         patch(
             "app.services.chat_service.search_service.search_threads",
-            AsyncMock(
-                return_value=SearchResponse(query="approve this", mailbox=SALES, hits=[])
-            ),
+            AsyncMock(return_value=SearchResponse(query="approve this", mailbox=SALES, hits=[])),
         ),
         patch("app.services.chat_service.chat_cache_repo.store", store),
         patch(
@@ -440,9 +436,7 @@ async def test_overview_intent_skips_semantic_cache_embed() -> None:
 
 @pytest.mark.db
 @pytest.mark.asyncio
-async def test_ask_persists_cache_row_across_requests(
-    db_session, migrated_test_database
-) -> None:
+async def test_ask_persists_cache_row_across_requests(db_session, migrated_test_database) -> None:
     """B5: get_db_session never commits; a second, independent connection
     must be able to see the cache row `ask` wrote — proof the write survived
     the request-scoped session's implicit rollback-on-close.
@@ -483,19 +477,25 @@ async def test_ask_persists_cache_row_across_requests(
     try:
         other_factory = async_sessionmaker(other_engine)
         async with other_factory() as other_session:
-            row_count = (
+            rows = (
                 await other_session.execute(
                     text(
-                        "SELECT COUNT(*) FROM chat_response_cache "
-                        "WHERE mailbox_key = '' AND user_key = :uk"
+                        "SELECT mailbox_key, COUNT(*) "
+                        "FROM chat_response_cache "
+                        "WHERE user_key = :uk "
+                        "GROUP BY mailbox_key"
                     ),
                     {"uk": USER},
                 )
-            ).scalar_one()
+            ).all()
     finally:
         await other_engine.dispose()
 
+    assert len(rows) == 1
+    mailbox_key, row_count = rows[0]
     assert row_count == 1
+    assert mailbox_key != ""
+    assert str(mailbox_key).startswith("all:")
 
 
 @pytest.mark.db
@@ -547,3 +547,114 @@ async def test_cache_lookup_missing_table_does_not_block_search(db_session) -> N
         pytest.fail(f"cache lookup poisoned search: {exc}")
 
     assert result.hits == []
+
+
+@pytest.mark.asyncio
+async def test_two_users_no_cross_talk_on_all_mailboxes(db_session) -> None:
+    """H9: unscoped (mailbox=None) cache rows must not leak across users.
+
+    Independent oracle: user A stored 'Alice only'; user B's lookup of the
+    same question with mailbox=None must not return that answer.
+    """
+    from datetime import timedelta
+
+    from app.repositories import chat_cache_repo
+    from app.services import chat_service
+
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key="",
+        user_key="user-a",
+        query_normalized=chat_cache_repo.normalize_chat_query("billing disputes waiting on review"),
+        query_embedding=NEAR,
+        response_json={
+            "answer": "Alice only — Invoice dispute.",
+            "citations": [],
+            "retrieval_count": 1,
+            "mailbox": None,
+            "refused_write": False,
+        },
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Bob's own overdue billing packet.",
+                    hits=[_hit()],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            mailbox=None,
+            user_key="user-b",
+        )
+
+    assert "Alice only" not in result.answer
+    assert result.cached is False
+
+
+@pytest.mark.asyncio
+async def test_unscoped_cache_does_not_survive_mailbox_allowlist_change(
+    db_session,
+) -> None:
+    """H9: mailbox=None must not share the empty-string cache bucket.
+
+    Seed a row the way the old keying stored unscoped asks (mailbox_key='').
+    A lookup with mailbox=None for the same user must miss so a different
+    TARGET_MAILBOXES set cannot inherit that answer.
+    """
+    from datetime import timedelta
+
+    from app.repositories import chat_cache_repo
+    from app.services import chat_service
+
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key="",
+        user_key=USER,
+        query_normalized=chat_cache_repo.normalize_chat_query("billing disputes waiting on review"),
+        query_embedding=NEAR,
+        response_json={
+            "answer": "Stale all-mailbox answer.",
+            "citations": [],
+            "retrieval_count": 1,
+            "mailbox": None,
+            "refused_write": False,
+        },
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    with patch(
+        "app.services.chat_service.embedding_service.embed_text",
+        AsyncMock(return_value=NEAR),
+    ):
+        cached, _embedding = await chat_service._lookup_semantic_cache(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            message="billing disputes waiting on review",
+            mailbox=None,
+            user_key=USER,
+            bypass_cache=False,
+        )
+
+    assert cached is None

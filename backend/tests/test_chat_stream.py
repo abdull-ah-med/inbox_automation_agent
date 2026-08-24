@@ -295,6 +295,44 @@ async def test_iter_ask_events_strips_thread_ids_from_the_agent_answer() -> None
 
 
 @pytest.mark.asyncio
+async def test_stream_scrubs_unknown_thread_ids_in_delta() -> None:
+    """H10: a stray UUID in a streamed token must not reach the reviewer.
+
+    Independent oracle: the injected UUID is a fresh uuid4, not THREAD_A.
+    """
+    from app.services import chat_service
+
+    stray = str(uuid.uuid4())
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {"type": "retrieved", "hits": [_hit()]},
+            {"type": "delta", "text": f"Check id: {stray} here"},
+            {
+                "type": "result",
+                "answer": f"Check id: {stray} here",
+                "hits": [_hit()],
+            },
+        ),
+    ):
+        events = [
+            event
+            async for event in chat_service.iter_ask_events(
+                AsyncMock(),
+                _settings(),
+                openai_client=MagicMock(),
+                anthropic_client=MagicMock(),
+                message="What's happening on the overdue billing packet",
+            )
+        ]
+
+    text = "".join(event["text"] for event in events if event["type"] == "delta")
+    assert stray not in text
+    assert "Check" in text
+    assert "here" in text
+
+
+@pytest.mark.asyncio
 async def test_iter_ask_events_no_hits_streams_canned_answer_not_invented_text() -> None:
     from app.llm.chat_prompts import NO_MATCH_ANSWER
     from app.services import chat_service
@@ -513,9 +551,7 @@ async def test_chat_ask_stream_flushes_status_before_agent_finishes() -> None:
         enabled = False
 
     starlette_app.state.limiter = _Limiter()
-    app = SlowAPIStreamingMiddleware(
-        SecurityHeadersMiddleware(starlette_app, settings=_settings())
-    )
+    app = SlowAPIStreamingMiddleware(SecurityHeadersMiddleware(starlette_app, settings=_settings()))
 
     chunks: list[bytes] = []
     header_map: dict[bytes, bytes] = {}
@@ -561,4 +597,3 @@ async def test_chat_ask_stream_flushes_status_before_agent_finishes() -> None:
     released.set()
     await asyncio.wait_for(task, timeout=2)
     assert b"done" in b"".join(chunks)
-

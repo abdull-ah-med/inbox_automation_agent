@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -22,6 +24,22 @@ class ChatCacheHit:
 
 def normalize_chat_query(message: str) -> str:
     return " ".join((message or "").lower().split())
+
+
+def scope_key(mailbox: str | None, *, mailbox_list: Sequence[str] = ()) -> str:
+    """Cache isolation key. Empty string is never a shared 'all mailboxes' bucket.
+
+    When the reviewer did not scope the ask, key off a hash of the current
+    TARGET_MAILBOXES allowlist so a config change cannot inherit stale rows.
+    """
+    scoped = (mailbox or "").strip().lower()
+    if scoped:
+        return scoped
+    allowlist = ",".join(
+        sorted(item.strip().lower() for item in mailbox_list if item and item.strip())
+    )
+    digest = hashlib.sha256(allowlist.encode("utf-8")).hexdigest()[:16]
+    return f"all:{digest}"
 
 
 async def find_semantic_hit(
@@ -91,9 +109,8 @@ async def store(
 
 
 async def invalidate_for_mailbox(session: AsyncSession, mailbox_key: str) -> int:
-    keys = {mailbox_key, ""}
     result = await session.execute(
-        delete(ChatResponseCache).where(ChatResponseCache.mailbox_key.in_(keys))
+        delete(ChatResponseCache).where(ChatResponseCache.mailbox_key == mailbox_key)
     )
     return int(result.rowcount or 0)
 
@@ -105,9 +122,7 @@ async def invalidate_for_threads(
     if not thread_ids:
         return 0
     result = await session.execute(
-        delete(ChatResponseCache).where(
-            ChatResponseCache.citation_thread_ids.overlap(thread_ids)
-        )
+        delete(ChatResponseCache).where(ChatResponseCache.citation_thread_ids.overlap(thread_ids))
     )
     return int(result.rowcount or 0)
 

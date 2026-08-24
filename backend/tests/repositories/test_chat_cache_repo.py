@@ -163,6 +163,47 @@ async def test_invalidate_for_mailbox_deletes_matching_rows(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_invalidate_for_mailbox_does_not_delete_empty_unscoped_bucket(
+    db_session,
+) -> None:
+    """H9: invalidating sales@ must not sweep mailbox_key='' (shared bucket)."""
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_normalized="focus",
+        query_embedding=_unit(0),
+        response_json=_payload("Sales."),
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key="",
+        user_key=USER,
+        query_normalized="focus",
+        query_embedding=_unit(1),
+        response_json=_payload("Unscoped."),
+        citation_thread_ids=[THREAD_B],
+        expires_at=expires,
+    )
+    await db_session.flush()
+    deleted = await chat_cache_repo.invalidate_for_mailbox(db_session, MAILBOX)
+    await db_session.flush()
+    assert deleted == 1
+    kept = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key="",
+        user_key=USER,
+        query_embedding=_unit(1),
+        similarity_threshold=0.99,
+    )
+    assert kept is not None
+    assert kept.response_json["answer"] == "Unscoped."
+
+
+@pytest.mark.asyncio
 async def test_invalidate_for_threads_deletes_citing_rows(db_session) -> None:
     expires = datetime.now(UTC) + timedelta(minutes=20)
     await chat_cache_repo.store(

@@ -19,7 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.exceptions import ChatError
 from app.core.sanitize import sanitize_user_text
-from app.llm.chat import iter_chat_agent, run_chat_agent, sanitize_chat_answer
+from app.llm.chat import (
+    ChatDeltaScrubber,
+    iter_chat_agent,
+    run_chat_agent,
+    sanitize_chat_answer,
+)
 from app.llm.chat_prompts import (
     NO_MATCH_ANSWER,
     OUT_OF_SCOPE_ANSWER,
@@ -118,10 +123,7 @@ async def _persist_session_turn(
             user_id=user_id,
             user_message=user_message,
             assistant_message=assistant_message,
-            citations=[
-                {"thread_id": str(c.thread_id), "subject": c.subject}
-                for c in citations
-            ],
+            citations=[{"thread_id": str(c.thread_id), "subject": c.subject} for c in citations],
         )
     except Exception:
         logger.warning("chat_session_persist_failed", session_id=str(session_id))
@@ -222,8 +224,8 @@ async def _groundedness_verdict(
     return result.verdict
 
 
-def _mailbox_cache_key(mailbox: str | None) -> str:
-    return (mailbox or "").strip().lower()
+def _mailbox_cache_key(mailbox: str | None, settings: Settings) -> str:
+    return chat_cache_repo.scope_key(mailbox, mailbox_list=settings.mailbox_list)
 
 
 def _elapsed_ms(started: float) -> int:
@@ -335,7 +337,7 @@ async def _lookup_semantic_cache(
     try:
         hit = await chat_cache_repo.find_semantic_hit(
             session,
-            mailbox_key=_mailbox_cache_key(mailbox),
+            mailbox_key=_mailbox_cache_key(mailbox, settings),
             user_key=user_key or "",
             query_embedding=embedding,
             similarity_threshold=settings.chat_semantic_cache_threshold,
@@ -410,7 +412,7 @@ async def _store_semantic_cache(
     try:
         await chat_cache_repo.store(
             session,
-            mailbox_key=_mailbox_cache_key(mailbox),
+            mailbox_key=_mailbox_cache_key(mailbox, settings),
             user_key=user_key or "",
             query_normalized=chat_cache_repo.normalize_chat_query(message),
             query_embedding=embedding,
@@ -785,6 +787,7 @@ async def iter_ask_events(
     forwarded_delta = False
     meta_sent = False
     drafting_sent = False
+    delta_scrubber = ChatDeltaScrubber()
     tool_used_first: str | None = None
     tool_iterations = 0
     ttft_ms: int | None = None
@@ -805,6 +808,7 @@ async def iter_ask_events(
                 yield {"type": "status", "text": event.get("text") or ""}
             elif event.get("type") == "retrieved":
                 hits = list(event.get("hits") or [])
+                delta_scrubber.known_thread_ids = {hit.thread_id for hit in hits}
                 if hits:
                     yield {"type": "status", "text": _reading_status(len(hits))}
                 if not meta_sent:
@@ -835,8 +839,13 @@ async def iter_ask_events(
                     meta_sent = True
                 if ttft_ms is None:
                     ttft_ms = _elapsed_ms(started)
+                if hits:
+                    delta_scrubber.known_thread_ids = {hit.thread_id for hit in hits}
+                text = delta_scrubber.feed(piece)
+                if not text:
+                    continue
                 forwarded_delta = True
-                yield {"type": "delta", "text": piece}
+                yield {"type": "delta", "text": text}
             elif event.get("type") == "result":
                 answer = str(event.get("answer") or "")
                 hits = list(event.get("hits") or [])
@@ -869,12 +878,21 @@ async def iter_ask_events(
             return
         raise ChatError("Claude chat failed") from None
 
+    leftover = delta_scrubber.flush()
+    if leftover:
+        forwarded_delta = True
+        yield {"type": "delta", "text": leftover}
+
     if hits:
         citations = citations_from_hits(hits)
-        text = sanitize_chat_answer(
-            answer,
-            known_thread_ids={hit.thread_id for hit in hits},
-        ) if answer else NO_MATCH_ANSWER
+        text = (
+            sanitize_chat_answer(
+                answer,
+                known_thread_ids={hit.thread_id for hit in hits},
+            )
+            if answer
+            else NO_MATCH_ANSWER
+        )
         count = len(hits)
         grounded_for_verify = bool(answer)
     elif grounded and answer:
