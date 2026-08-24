@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
 import { associatedThreadHref } from "@/components/thread-origin-banner"
@@ -32,8 +32,14 @@ export const AssociatedThreadsList = ({
 }) => {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
-  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [rows, setRows] = useState(items)
+  const [inflightIds, setInflightIds] = useState<Set<string>>(() => new Set())
+  const inflightRef = useRef(new Map<string, AbortController>())
   const [previewId, setPreviewId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setRows(items)
+  }, [items])
 
   const previewQuery = useQuery({
     queryKey: ["thread", previewId],
@@ -41,31 +47,56 @@ export const AssociatedThreadsList = ({
     enabled: previewId != null,
   })
 
-  if (items.length === 0) {
+  if (rows.length === 0) {
     return null
   }
 
-  const previewItem = items.find((item) => item.thread_id === previewId) ?? null
+  const previewItem = rows.find((item) => item.thread_id === previewId) ?? null
 
   const handleReview = async (
     relatedId: string,
     status: "confirmed" | "dismissed",
   ) => {
-    setPendingId(relatedId)
+    if (inflightRef.current.has(relatedId)) {
+      return
+    }
+    const controller = new AbortController()
+    inflightRef.current.set(relatedId, controller)
+    setInflightIds(new Set(inflightRef.current.keys()))
     setError(null)
     try {
-      await api.threads.reviewRelated(sourceThreadId, relatedId, { status })
-      await queryClient.invalidateQueries({ queryKey: ["thread", sourceThreadId] })
-      await queryClient.invalidateQueries({
-        queryKey: ["thread", sourceThreadId, "associated"],
+      const result = await api.threads.reviewRelated(
+        sourceThreadId,
+        relatedId,
+        { status },
+        controller.signal,
+      )
+      if (controller.signal.aborted) {
+        return
+      }
+      inflightRef.current.delete(relatedId)
+      setInflightIds(new Set(inflightRef.current.keys()))
+      const nextStatus = result.status
+      setRows((current) => {
+        if (nextStatus === "dismissed") {
+          return current.filter((item) => item.thread_id !== relatedId)
+        }
+        return current.map((item) =>
+          item.thread_id === relatedId ? { ...item, status: nextStatus } : item,
+        )
       })
-      if (status === "dismissed" && previewId === relatedId) {
+      void queryClient.invalidateQueries({ queryKey: ["thread", sourceThreadId] })
+      if (nextStatus === "dismissed" && previewId === relatedId) {
         setPreviewId(null)
       }
     } catch (err) {
+      if (controller.signal.aborted) {
+        return
+      }
       setError(err instanceof Error ? err.message : "Could not update association.")
     } finally {
-      setPendingId(null)
+      inflightRef.current.delete(relatedId)
+      setInflightIds(new Set(inflightRef.current.keys()))
     }
   }
 
@@ -131,7 +162,7 @@ export const AssociatedThreadsList = ({
         </p>
       ) : null}
       <ul className="space-y-2">
-        {items.map((item) => (
+        {rows.map((item) => (
           <li
             key={item.thread_id}
             className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
@@ -163,8 +194,8 @@ export const AssociatedThreadsList = ({
                   type="button"
                   size="sm"
                   tabIndex={0}
-                  aria-label="Confirm associated thread"
-                  disabled={pendingId === item.thread_id}
+                  aria-label={`Confirm associated thread ${item.subject}`}
+                  disabled={inflightIds.has(item.thread_id)}
                   onClick={() => {
                     void handleReview(item.thread_id, "confirmed")
                   }}
@@ -178,8 +209,8 @@ export const AssociatedThreadsList = ({
                 size="icon-sm"
                 variant="ghost"
                 tabIndex={0}
-                aria-label="Dismiss associated thread"
-                disabled={pendingId === item.thread_id}
+                aria-label={`Dismiss associated thread ${item.subject}`}
+                disabled={inflightIds.has(item.thread_id)}
                 onClick={() => {
                   void handleReview(item.thread_id, "dismissed")
                 }}

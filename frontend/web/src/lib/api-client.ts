@@ -636,12 +636,14 @@ export const api = {
       id: string,
       relatedId: string,
       body: { status: "confirmed" | "dismissed" },
+      signal?: AbortSignal,
     ) {
       return apiFetch<{ status: "confirmed" | "dismissed" }>(
         `/api/threads/${id}/related/${relatedId}/review`,
         {
           method: "POST",
           body: JSON.stringify(body),
+          signal,
         },
       );
     },
