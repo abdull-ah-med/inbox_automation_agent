@@ -178,6 +178,48 @@ async def test_iter_ask_events_sends_status_then_meta_then_answer_then_done() ->
 
 
 @pytest.mark.asyncio
+async def test_stream_emits_single_meta_with_verdict() -> None:
+    """H1: chat_service.py used to yield ``_meta_event`` twice on a normal
+    grounded turn — once eagerly (no verdict known yet) inside the
+    ``retrieved``/``delta`` loop, and once more after the loop with the
+    verdict. The client's ``pendingMetaRef`` happens to overwrite so it never
+    broke visibly, but any client that appends per-meta citations would
+    double them. Independent oracle: count "meta" events yielded from the
+    async generator directly (not the client's post-processed view), and
+    check the single meta's grounded_verifier is a real verdict value.
+    """
+    from app.services import chat_service
+
+    with patch(
+        "app.services.chat_service.iter_chat_agent",
+        new=lambda **_kwargs: _agent_events(
+            {"type": "retrieved", "hits": [_hit()]},
+            {"type": "delta", "text": CHUNK_ONE},
+            {"type": "delta", "text": CHUNK_TWO},
+            {"type": "result", "answer": FULL_ANSWER, "hits": [_hit()]},
+        ),
+    ):
+        events = [
+            event
+            async for event in chat_service.iter_ask_events(
+                AsyncMock(),
+                _settings(),
+                openai_client=MagicMock(),
+                anthropic_client=MagicMock(),
+                message="billing disputes waiting on review",
+                mailbox=SALES,
+            )
+        ]
+
+    meta_events = [event for event in events if event["type"] == "meta"]
+    assert len(meta_events) == 1, f"expected exactly one meta event, got {len(meta_events)}"
+    assert meta_events[0]["grounded_verifier"] in {"SUPPORTED", "UNSUPPORTED", "SKIPPED"}
+    done = events[-1]
+    assert done["type"] == "done"
+    assert done["grounded_verifier"] in {"SUPPORTED", "UNSUPPORTED", "SKIPPED"}
+
+
+@pytest.mark.asyncio
 async def test_iter_ask_events_emits_status_before_any_delta() -> None:
     """Reviewer must see progress within the retrieval dead zone, before tokens."""
     from app.services import chat_service
@@ -312,7 +354,7 @@ async def test_iter_ask_events_out_of_scope_streams_canned_answer_without_llm() 
     assert events[0]["type"] == "meta"
     assert events[0]["citations"] == []
     assert events[1] == {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
-    assert events[-1] == {"type": "done"}
+    assert events[-1] == {"type": "done", "grounded_verifier": "SKIPPED"}
 
 
 @pytest.mark.asyncio

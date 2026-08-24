@@ -82,4 +82,4 @@ class ChatAskResponse(BaseModel):
     refused_write: bool
     cached: bool = False
     cache_similarity: float | None = None
-    grounded_verifier: Literal["SUPPORTED", "UNSUPPORTED", "SKIPPED"] = "SKIPPED"
+    grounded_verifier: Literal["SUPPORTED", "UNSUPPORTED", "SKIPPED", "UNKNOWN"] = "SKIPPED"

@@ -74,6 +74,23 @@ def _text_response(text: str) -> MagicMock:
     return resp
 
 
+def _multi_tool_use(calls: list[tuple[str, str, dict]]) -> MagicMock:
+    """One Claude turn that requests several tool_use blocks at once."""
+    blocks = []
+    for name, tool_use_id, tool_input in calls:
+        block = MagicMock()
+        block.type = "tool_use"
+        block.id = tool_use_id
+        block.name = name
+        block.input = tool_input
+        blocks.append(block)
+    resp = MagicMock()
+    resp.stop_reason = "tool_use"
+    resp.content = blocks
+    resp.usage = None
+    return resp
+
+
 class _FakeAnswerStream:
     def __init__(self, text: str) -> None:
         self._text = text
@@ -389,7 +406,16 @@ async def test_agent_emits_status_before_the_tool_returns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_runs_independent_tools_concurrently() -> None:
+async def test_agent_runs_independent_tools_sequentially() -> None:
+    """B6: tool_use blocks in one turn must NOT overlap in time.
+
+    Every tool call shares the one caller-owned AsyncSession via the
+    execute_tool closure; SQLAlchemy documents concurrent use of a single
+    AsyncSession as unsafe. This used to assert the opposite (windows
+    overlapping via asyncio.gather) — that was the bug, not the contract.
+    Independent oracle: each tool's [start, end) window, measured with the
+    event loop clock, must not overlap any other tool's window.
+    """
     from app.llm.chat import run_chat_agent
     from app.services.chat_tools import ChatToolExecution
 
@@ -417,7 +443,7 @@ async def test_agent_runs_independent_tools_concurrently() -> None:
     async def execute(name: str, arguments: dict) -> ChatToolExecution:
         _ = arguments
         started = asyncio.get_running_loop().time()
-        await asyncio.sleep(0.08)
+        await asyncio.sleep(0.02)
         windows.append((name, started, asyncio.get_running_loop().time()))
         return ChatToolExecution(hits=[hit], status=f"Running {name}")
 
@@ -429,8 +455,7 @@ async def test_agent_runs_independent_tools_concurrently() -> None:
     )
     assert {name for name, _s, _e in windows} == {"search_mail", "list_recent_threads"}
     (_n1, start_one, end_one), (_n2, start_two, end_two) = windows
-    assert start_two < end_one
-    assert start_one < end_two
+    assert end_one <= start_two or end_two <= start_one  # non-overlapping
     assert result.hits[0].thread_id == THREAD_A
 
 
@@ -824,3 +849,50 @@ async def test_user_message_references_actual_salted_tag() -> None:
     assert f"<{tag}>" in packed
     assert f"</{tag}>" in packed
     assert "overdue billing packet" in packed
+
+
+@pytest.mark.asyncio
+async def test_multiple_tool_calls_in_one_turn_execute_sequentially() -> None:
+    """B6: SQLAlchemy's AsyncSession is not safe for concurrent use, but every
+    tool call shares the one request-scoped session via the execute_tool
+    closure. asyncio.gather over tool_use blocks would run them concurrently.
+    Independent oracle: track the high-water mark of simultaneously in-flight
+    tool executions via a plain counter that increments-sleeps-decrements —
+    concurrent execution (gather) drives it to 2; sequential execution keeps
+    it at 1 regardless of how many tool_use blocks Claude requests in a turn.
+    """
+    from app.llm.chat import run_chat_agent
+    from app.services.chat_tools import ChatToolExecution
+
+    hit = _hit()
+    client = _client_tool_then_answer(
+        _multi_tool_use(
+            [
+                ("search_mail", "tu1", {"query": "billing disputes"}),
+                ("list_recent_threads", "tu2", {}),
+            ]
+        ),
+        "Found the overdue billing packet.",
+    )
+
+    in_flight = 0
+    max_in_flight = 0
+
+    async def execute(name: str, arguments: dict) -> ChatToolExecution:
+        nonlocal in_flight, max_in_flight
+        _ = name, arguments
+        in_flight += 1
+        max_in_flight = max(max_in_flight, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return ChatToolExecution(hits=[hit], status="Searching mail")
+
+    result = await run_chat_agent(
+        client=client,
+        settings=_settings(),
+        question="billing disputes waiting on review",
+        execute_tool=execute,
+    )
+
+    assert max_in_flight == 1  # never more than one tool call in flight
+    assert result.answer == "Found the overdue billing packet."
