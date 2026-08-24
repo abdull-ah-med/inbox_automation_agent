@@ -2,6 +2,14 @@
 
 Defaults (m=16, ef_construction=64) are demo settings. Query-time ef_search
 is set per statement in embedding_repo; this migration only rebuilds the graph.
+
+Dropping the live HNSW index before CREATE INDEX CONCURRENTLY leaves ANN
+queries on a sequential scan for the duration of the build. If the live
+index already matches production settings, this revision is a no-op.
+Catalogs that still have demo settings are rebuilt in 036_hnsw_swap_zero_downtime
+(create v2 concurrently, rename swap, drop old concurrently).
+
+See SQLAlchemy/Alembic ``only-concurrent-indexes``.
 """
 
 from collections.abc import Sequence
@@ -17,6 +25,14 @@ depends_on: Sequence[str] | None = None
 _INDEX_NAME = "ix_email_embeddings_embedding_hnsw"
 
 
+def _indexdef_is_production(indexdef: str | None) -> bool:
+    if not indexdef:
+        return False
+    has_m = "m='16'" in indexdef or "m=16" in indexdef
+    has_ef = "ef_construction='200'" in indexdef or "ef_construction=200" in indexdef
+    return has_m and has_ef
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -24,46 +40,20 @@ def upgrade() -> None:
     if "email_embeddings" not in tables:
         return
     indexes = {i["name"] for i in inspector.get_indexes("email_embeddings")}
-    with op.get_context().autocommit_block():
-        if _INDEX_NAME in indexes:
-            op.drop_index(
-                _INDEX_NAME,
-                table_name="email_embeddings",
-                postgresql_concurrently=True,
-            )
-        op.execute(sa.text("SET maintenance_work_mem = '2GB'"))
-        op.create_index(
-            _INDEX_NAME,
-            "email_embeddings",
-            ["embedding"],
-            unique=False,
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-            postgresql_with={"m": 16, "ef_construction": 200},
-            postgresql_concurrently=True,
-        )
+    if _INDEX_NAME not in indexes:
+        # 005 did not create it; 036 creates the production index concurrently.
+        return
+    indexdef = bind.execute(
+        sa.text(
+            "SELECT indexdef FROM pg_indexes "
+            "WHERE tablename = 'email_embeddings' AND indexname = :name"
+        ),
+        {"name": _INDEX_NAME},
+    ).scalar()
+    if _indexdef_is_production(str(indexdef) if indexdef is not None else None):
+        return
+    # Demo-settings catalogs: do not DROP here. 036 builds v2 concurrently.
 
 
 def downgrade() -> None:
-    bind = op.get_bind()
-    inspector = sa.inspect(bind)
-    tables = set(inspector.get_table_names())
-    if "email_embeddings" not in tables:
-        return
-    indexes = {i["name"] for i in inspector.get_indexes("email_embeddings")}
-    with op.get_context().autocommit_block():
-        if _INDEX_NAME in indexes:
-            op.drop_index(
-                _INDEX_NAME,
-                table_name="email_embeddings",
-                postgresql_concurrently=True,
-            )
-        op.create_index(
-            _INDEX_NAME,
-            "email_embeddings",
-            ["embedding"],
-            unique=False,
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-            postgresql_concurrently=True,
-        )
+    return
