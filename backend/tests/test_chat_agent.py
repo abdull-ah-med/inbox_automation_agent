@@ -112,6 +112,28 @@ class _FakeAnswerStream:
         return _text_response(self._text)
 
 
+class _FakeToolUseStream:
+    def __init__(self, tool_resp: MagicMock) -> None:
+        self._resp = tool_resp
+
+    async def __aenter__(self) -> _FakeToolUseStream:
+        return self
+
+    async def __aexit__(self, *args: object) -> bool:
+        return False
+
+    @property
+    def text_stream(self):
+        async def _gen():
+            if False:
+                yield ""
+
+        return _gen()
+
+    async def get_final_message(self) -> MagicMock:
+        return self._resp
+
+
 def _client_tool_then_answer(tool_resp: MagicMock, answer: str) -> MagicMock:
     client = MagicMock()
     client.messages.create = AsyncMock(side_effect=[tool_resp])
@@ -546,9 +568,7 @@ def test_fit_chat_messages_drops_oldest_history_first() -> None:
         {"role": "user", "content": "Reviewer question:\nlatest on billing"},
     ]
     fitted = fit_chat_messages(messages, budget_chars=120)
-    blob = " ".join(
-        turn["content"] if isinstance(turn["content"], str) else "" for turn in fitted
-    )
+    blob = " ".join(turn["content"] if isinstance(turn["content"], str) else "" for turn in fitted)
     assert "latest on billing" in blob
     assert "CHARLIE-newer" in blob
     assert "A" * 50 not in blob
@@ -631,9 +651,7 @@ async def test_fit_chat_request_skips_count_tokens_when_under_char_budget() -> N
     from app.llm.chat import fit_chat_request
 
     client = MagicMock()
-    client.messages.count_tokens = AsyncMock(
-        return_value=MagicMock(input_tokens=12)
-    )
+    client.messages.count_tokens = AsyncMock(return_value=MagicMock(input_tokens=12))
     messages = [{"role": "user", "content": "billing disputes waiting on review"}]
     fitted = await fit_chat_request(
         client=client,
@@ -896,3 +914,112 @@ async def test_multiple_tool_calls_in_one_turn_execute_sequentially() -> None:
 
     assert max_in_flight == 1  # never more than one tool call in flight
     assert result.answer == "Found the overdue billing packet."
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_exhaustion_synthesizes_instead_of_empty_answer() -> None:
+    """H20: five tool turns with hits must still produce a readable answer."""
+    from app.llm.chat import run_chat_agent
+    from app.llm.chat_tools import MAX_CHAT_TOOL_ITERATIONS
+    from app.services.chat_tools import ChatToolExecution
+
+    assert MAX_CHAT_TOOL_ITERATIONS == 5
+    hit = _hit()
+    tool_resp = _tool_use(
+        name="search_mail",
+        tool_use_id="tu1",
+        tool_input={"query": "billing disputes"},
+    )
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=tool_resp)
+    client.messages.stream.side_effect = [
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _FakeAnswerStream("The Invoice dispute thread still needs the overdue billing packet."),
+    ]
+
+    async def execute(name: str, arguments: dict) -> ChatToolExecution:
+        _ = name, arguments
+        return ChatToolExecution(hits=[hit], status="Searching mail")
+
+    result = await run_chat_agent(
+        client=client,
+        settings=_settings(),
+        question="billing disputes waiting on review",
+        execute_tool=execute,
+    )
+    assert result.hits[0].thread_id == THREAD_A
+    assert "overdue billing packet" in result.answer.lower()
+    assert result.answer != ""
+    assert client.messages.create.await_count == 1
+    assert client.messages.stream.call_count == 5
+    assert client.messages.stream.call_args.kwargs["tool_choice"] == {"type": "none"}
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_exhaustion_falls_back_to_hit_subjects() -> None:
+    """H20: if the final synthesis call fails, list the threads that were found."""
+    from app.llm.chat import run_chat_agent
+    from app.services.chat_tools import ChatToolExecution
+
+    hit = _hit()
+    tool_resp = _tool_use(
+        name="search_mail",
+        tool_use_id="tu1",
+        tool_input={"query": "billing disputes"},
+    )
+    client = MagicMock()
+    client.messages.create = AsyncMock(return_value=tool_resp)
+
+    class _BoomStream:
+        async def __aenter__(self) -> _BoomStream:
+            raise RuntimeError("stream failed")
+
+        async def __aexit__(self, *args: object) -> bool:
+            return False
+
+    client.messages.stream.side_effect = [
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _FakeToolUseStream(tool_resp),
+        _BoomStream(),
+    ]
+
+    async def execute(name: str, arguments: dict) -> ChatToolExecution:
+        _ = name, arguments
+        return ChatToolExecution(hits=[hit], status="Searching mail")
+
+    result = await run_chat_agent(
+        client=client,
+        settings=_settings(),
+        question="billing disputes waiting on review",
+        execute_tool=execute,
+    )
+    assert result.hits[0].thread_id == THREAD_A
+    assert result.answer.startswith("Could not finish; here are the top threads I found:")
+    assert "Invoice dispute — overdue billing" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_fit_chat_request_counts_tokens_near_char_budget() -> None:
+    """H21: dense prompts under 100k chars still go through count_tokens."""
+    from app.llm.chat import TOKEN_COUNT_CHAR_FLOOR, fit_chat_request
+
+    blob = "x" * (TOKEN_COUNT_CHAR_FLOOR + 200)
+    client = MagicMock()
+    client.messages.count_tokens = AsyncMock(return_value=MagicMock(input_tokens=200_000))
+    fitted = await fit_chat_request(
+        client=client,
+        request={"model": "claude-haiku-4-5"},
+        messages=[
+            {"role": "user", "content": blob},
+            {"role": "user", "content": "latest on billing"},
+        ],
+        settings=_settings(),
+    )
+    client.messages.count_tokens.assert_awaited()
+    assert fitted[-1]["content"] == "latest on billing"
+    assert blob not in str(fitted)

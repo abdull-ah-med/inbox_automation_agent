@@ -9,7 +9,7 @@ import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -155,6 +155,40 @@ def _hit_block(hit: SearchHit) -> str:
     )
 
 
+def _exhaustion_fallback_answer(hits: list[SearchHit]) -> str:
+    if not hits:
+        return ""
+    subjects = [(hit.subject or "").strip() or "(no subject)" for hit in hits[:5]]
+    return "Could not finish; here are the top threads I found:\n" + "\n".join(
+        f"- {subject}" for subject in subjects
+    )
+
+
+def _agent_result_event(
+    *,
+    answer: str,
+    hits: list[SearchHit],
+    grounded: bool,
+    tool_used_first: str | None,
+    tool_iterations: int,
+    ttft_ms: int | None,
+    started: float,
+    usage: dict[str, int | None],
+) -> dict[str, Any]:
+    return {
+        "type": "result",
+        "answer": answer,
+        "hits": hits,
+        "grounded": grounded,
+        "tool_used_first": tool_used_first,
+        "tool_iterations": tool_iterations,
+        "ttft_ms": ttft_ms,
+        "total_ms": int((time.perf_counter() - started) * 1000),
+        "evidence_blocks": search_results_from_hits(hits) if hits else [],
+        **usage,
+    }
+
+
 @dataclass(frozen=True)
 class ChatAgentResult:
     answer: str
@@ -168,6 +202,7 @@ class ChatAgentResult:
     output_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
+    evidence_blocks: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _usage_fields(response: object) -> dict[str, int | None]:
@@ -332,6 +367,7 @@ async def _execute_tool_block(
 
 
 CHAT_INPUT_CHAR_BUDGET = 100_000
+TOKEN_COUNT_CHAR_FLOOR = 60_000
 
 
 def _content_chars(content: object) -> int:
@@ -452,9 +488,11 @@ async def fit_chat_request(
     settings: Settings,
 ) -> list[dict[str, Any]]:
     """Prefer Anthropic count_tokens; fall back to the char heuristic."""
-    if _messages_chars(messages) <= CHAT_INPUT_CHAR_BUDGET:
-        return _copy_messages(messages)
     fitted = _copy_messages(messages)
+    # Dense Unicode can be >2× tokens/char; count whenever we are near the
+    # char budget, not only after we already exceeded it.
+    if _messages_chars(fitted) <= TOKEN_COUNT_CHAR_FLOOR:
+        return fitted
     token_cache: dict[int, int] = {}
 
     async def tokens_for(current: list[dict[str, Any]]) -> int:
@@ -594,17 +632,16 @@ async def iter_chat_agent(
                         input_tokens=input_tokens,
                         cache_hit_ratio=cache_hit_ratio,
                     )
-                    yield {
-                        "type": "result",
-                        "answer": answer,
-                        "hits": hits,
-                        "grounded": grounded,
-                        "tool_used_first": tool_used_first,
-                        "tool_iterations": tool_iterations,
-                        "ttft_ms": ttft_ms,
-                        "total_ms": int((time.perf_counter() - started) * 1000),
-                        **usage,
-                    }
+                    yield _agent_result_event(
+                        answer=answer,
+                        hits=hits,
+                        grounded=grounded,
+                        tool_used_first=tool_used_first,
+                        tool_iterations=tool_iterations,
+                        ttft_ms=ttft_ms,
+                        started=started,
+                        usage=usage,
+                    )
                     return
 
                 tool_use_blocks = [
@@ -657,17 +694,53 @@ async def iter_chat_agent(
                 messages.append({"role": "user", "content": tool_results})
 
             hits = list(hits_by_id.values())
-            yield {
-                "type": "result",
-                "answer": "",
-                "hits": hits,
-                "grounded": grounded,
-                "tool_used_first": tool_used_first,
-                "tool_iterations": tool_iterations,
-                "ttft_ms": ttft_ms,
-                "total_ms": int((time.perf_counter() - started) * 1000),
-                **usage,
-            }
+            if hits:
+                request["tool_choice"] = {"type": "none"}
+                request["messages"] = await fit_chat_request(
+                    client=client,
+                    request=request,
+                    messages=messages,
+                    settings=settings,
+                )
+                yield {"type": "retrieved", "hits": hits}
+                streamed = []
+                try:
+                    async with client.messages.stream(**request) as stream:
+                        async for text in smooth_deltas(stream.text_stream):
+                            if not text:
+                                continue
+                            streamed.append(text)
+                            streamed_any = True
+                            if ttft_ms is None:
+                                ttft_ms = int((time.perf_counter() - started) * 1000)
+                            yield {"type": "delta", "text": text}
+                        response = await stream.get_final_message()
+                    usage = _usage_fields(response)
+                    raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
+                    if raw.strip():
+                        yield _agent_result_event(
+                            answer=raw,
+                            hits=hits,
+                            grounded=True,
+                            tool_used_first=tool_used_first,
+                            tool_iterations=tool_iterations,
+                            ttft_ms=ttft_ms,
+                            started=started,
+                            usage=usage,
+                        )
+                        return
+                except Exception:
+                    logger.warning("chat_exhaustion_synthesis_failed")
+            yield _agent_result_event(
+                answer=_exhaustion_fallback_answer(hits),
+                hits=hits,
+                grounded=grounded,
+                tool_used_first=tool_used_first,
+                tool_iterations=tool_iterations,
+                ttft_ms=ttft_ms,
+                started=started,
+                usage=usage,
+            )
             return
         except APIError as exc:
             logger.warning(
@@ -698,6 +771,7 @@ async def run_chat_agent(
     hits: list[SearchHit] = []
     grounded = False
     extra: dict[str, Any] = {}
+    evidence_blocks: list[dict[str, Any]] = []
     async for event in iter_chat_agent(
         client=client,
         settings=settings,
@@ -720,4 +794,13 @@ async def run_chat_agent(
                 "cache_read_tokens": event.get("cache_read_tokens"),
                 "cache_write_tokens": event.get("cache_write_tokens"),
             }
-    return ChatAgentResult(answer=answer, hits=hits, grounded=grounded, **extra)
+            evidence_blocks = list(event.get("evidence_blocks") or [])
+    if not evidence_blocks and hits:
+        evidence_blocks = search_results_from_hits(hits)
+    return ChatAgentResult(
+        answer=answer,
+        hits=hits,
+        grounded=grounded,
+        evidence_blocks=evidence_blocks,
+        **extra,
+    )
