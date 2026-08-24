@@ -48,16 +48,20 @@ async def find_semantic_hit(
     if row is None:
         return None
     cache_row, score = row
-    await session.execute(
-        update(ChatResponseCache)
-        .where(ChatResponseCache.id == cache_row.id)
-        .values(hits=ChatResponseCache.hits + 1)
-    )
     return ChatCacheHit(
         id=cache_row.id,
         response_json=dict(cache_row.response_json),
         similarity=float(score),
         citation_thread_ids=list(cache_row.citation_thread_ids or []),
+    )
+
+
+async def record_semantic_hit(session: AsyncSession, cache_id: uuid.UUID) -> None:
+    """Increment ``hits`` off the lookup path so a SELECT never takes a row lock."""
+    await session.execute(
+        update(ChatResponseCache)
+        .where(ChatResponseCache.id == cache_id)
+        .values(hits=ChatResponseCache.hits + 1)
     )
 
 

@@ -18,7 +18,7 @@ from app.llm.prompts import GROUNDEDNESS_SYSTEM_PROMPT
 
 logger = structlog.get_logger(__name__)
 
-GroundednessVerdict = Literal["SUPPORTED", "UNSUPPORTED"]
+GroundednessVerdict = Literal["SUPPORTED", "UNSUPPORTED", "UNKNOWN"]
 
 GROUNDEDNESS_TIMEOUT_SEC = 0.8
 GROUNDEDNESS_MAX_TOKENS = 200
@@ -35,6 +35,16 @@ class Groundedness:
 
 def _supported() -> Groundedness:
     return Groundedness(verdict="SUPPORTED", unsupported_spans=[])
+
+
+def _unknown() -> Groundedness:
+    """H2: fail-closed. The verifier never actually ran (timeout, malformed
+    response, or an Anthropic APIError), so we have no evidence either way —
+    that must not be conflated with a real SUPPORTED verdict, or an
+    UNSUPPORTED answer could silently enter the semantic cache and be served
+    to every future asker for the rest of its TTL.
+    """
+    return Groundedness(verdict="UNKNOWN", unsupported_spans=[])
 
 
 def _should_skip(answer: str) -> bool:
@@ -73,7 +83,7 @@ def _parse_payload(raw: str) -> Groundedness:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
         logger.warning("groundedness.parse_failed", raw=stripped[:200])
-        return _supported()
+        return _unknown()
     verdict = str(payload.get("verdict") or "SUPPORTED").upper()
     spans = payload.get("unsupported_spans") or []
     cleaned = [str(span).strip() for span in spans if str(span).strip()]
@@ -124,7 +134,7 @@ async def verify_grounded(
         return await asyncio.wait_for(_call(), timeout=GROUNDEDNESS_TIMEOUT_SEC)
     except TimeoutError:
         logger.warning("groundedness.timeout", timeout_ms=int(GROUNDEDNESS_TIMEOUT_SEC * 1000))
-        return _supported()
+        return _unknown()
     except APIError as exc:
         logger.warning("groundedness.api_error", error=str(exc))
-        return _supported()
+        return _unknown()

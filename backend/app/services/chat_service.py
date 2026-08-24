@@ -283,6 +283,15 @@ def _is_uncacheable_answer(answer: str) -> bool:
     return "no matching threads" in text.lower()
 
 
+def _is_unverified_verdict(verdict: str | None) -> bool:
+    """H2: fail-closed. A cache HIT skips ``verify_grounded`` entirely (that
+    is the point of caching), so an UNSUPPORTED or UNKNOWN (verifier
+    timeout/parse-failure) answer must never enter the cache — it would be
+    served, unverified, to every asker for the rest of its TTL.
+    """
+    return verdict in {"UNSUPPORTED", "UNKNOWN"}
+
+
 def _ttl_seconds(settings: Settings, intent: ChatIntent | None) -> int:
     if intent in {ChatIntent.OVERVIEW, ChatIntent.AGGREGATION}:
         return settings.chat_semantic_cache_ttl_overview_sec
@@ -337,7 +346,21 @@ async def _lookup_semantic_cache(
         return None, embedding
     if hit is None:
         return None, embedding
-    return _response_from_cache(hit), embedding
+    cached_response = _response_from_cache(hit)
+    if _is_unverified_verdict(cached_response.grounded_verifier):
+        # Defense in depth: a row with this verdict should never have been
+        # written (see _store_semantic_cache), but if one exists anyway
+        # (legacy row, race), serving it as a HIT would bypass
+        # verify_grounded for the rest of its TTL. Treat as a miss instead.
+        logger.warning("chat_cache_hit_unverified_verdict", mailbox=mailbox)
+        return None, embedding
+    try:
+        await chat_cache_repo.record_semantic_hit(session, hit.id)
+        await _commit_session(session)
+    except Exception:
+        logger.warning("chat_cache_hit_count_failed", mailbox=mailbox)
+        await _rollback_session(session)
+    return cached_response, embedding
 
 
 async def _rollback_session(session: AsyncSession) -> None:
@@ -345,6 +368,21 @@ async def _rollback_session(session: AsyncSession) -> None:
         await session.rollback()
     except Exception:
         return
+
+
+async def _commit_session(session: AsyncSession) -> None:
+    """`get_db_session` never auto-commits; callers must commit explicitly.
+
+    Every write path in this module (session-turn persistence, semantic
+    cache store) shares the request-scoped session. A commit failure here
+    must not surface as a user-facing chat error — the answer was already
+    computed — so we log and roll back instead of raising.
+    """
+    try:
+        await session.commit()
+    except Exception:
+        logger.warning("chat_cache_commit_failed")
+        await _rollback_session(session)
 
 
 async def _store_semantic_cache(
@@ -366,6 +404,7 @@ async def _store_semantic_cache(
         or not (user_key or "").strip()
         or response.refused_write
         or _is_uncacheable_answer(response.answer)
+        or _is_unverified_verdict(response.grounded_verifier)
     ):
         return
     try:
@@ -595,6 +634,7 @@ async def ask(
         intent=plan.intent,
         bypass_cache=bypass_cache,
     )
+    await _commit_session(session)
     _log_chat_ask(
         hit_count=count,
         mailbox=mailbox,
@@ -662,7 +702,7 @@ async def iter_ask_events(
             refused_write=True,
         )
         yield {"type": "delta", "text": _write_refusal_answer(hits)}
-        yield {"type": "done"}
+        yield {"type": "done", "grounded_verifier": "SKIPPED"}
         return
 
     plan = classify_chat_intent(
@@ -678,7 +718,7 @@ async def iter_ask_events(
             refused_write=False,
         )
         yield {"type": "delta", "text": OUT_OF_SCOPE_ANSWER}
-        yield {"type": "done"}
+        yield {"type": "done", "grounded_verifier": "SKIPPED"}
         return
 
     cached: ChatAskResponse | None = None
@@ -854,13 +894,20 @@ async def iter_ask_events(
         hits=hits,
         grounded=grounded_for_verify,
     )
-    yield _meta_event(
-        citations=citations,
-        retrieval_count=count,
-        mailbox=mailbox,
-        refused_write=False,
-        grounded_verifier=verdict,
-    )
+    # H1: the verdict is only known after the agent loop finishes, but a meta
+    # event carrying (possibly identical) citations was already sent eagerly
+    # inside the loop the moment the first delta/retrieved hits arrived — the
+    # client needs that early to render citations before the loop completes.
+    # Do not send a second "meta" here; the terminal "done" event below
+    # already carries grounded_verifier, which is all a second meta would add.
+    if not meta_sent:
+        yield _meta_event(
+            citations=citations,
+            retrieval_count=count,
+            mailbox=mailbox,
+            refused_write=False,
+            grounded_verifier=verdict,
+        )
     await _persist_session_turn(
         session,
         session_id=session_id,
@@ -887,6 +934,7 @@ async def iter_ask_events(
         intent=plan.intent,
         bypass_cache=bypass_cache,
     )
+    await _commit_session(session)
     _log_chat_ask(
         hit_count=count,
         mailbox=mailbox,

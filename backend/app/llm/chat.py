@@ -5,7 +5,6 @@ LLM I/O only. No DB, Redis, Graph, or mail writes. Prompts come from chat_prompt
 
 from __future__ import annotations
 
-import asyncio
 import re
 import time
 import uuid
@@ -581,9 +580,16 @@ async def iter_chat_agent(
                     if status and status not in announced_status:
                         announced_status.add(status)
                         yield {"type": "status", "text": status}
-                executed = await asyncio.gather(
-                    *[_execute_tool_block(block, execute_tool) for block in tool_use_blocks]
-                )
+                # Sequential, not gather(): every tool call shares the one
+                # request-scoped AsyncSession via the execute_tool closure,
+                # and SQLAlchemy's AsyncSession is documented as unsafe for
+                # concurrent use (IllegalStateChangeError / corrupted reads).
+                # Claude issues 1-2 tool calls per turn in practice, so this
+                # is cheap; revisit only if p95 latency traces show otherwise.
+                executed = [
+                    await _execute_tool_block(block, execute_tool)
+                    for block in tool_use_blocks
+                ]
                 tool_results: list[dict[str, Any]] = []
                 for _block, execution in executed:
                     status = str(getattr(execution, "status", "") or "")

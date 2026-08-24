@@ -226,3 +226,85 @@ async def test_cache_invalidates_when_mailbox_ingests_new_mail(db_session) -> No
         similarity_threshold=0.5,
     )
     assert hit is None
+
+
+@pytest.mark.asyncio
+async def test_find_semantic_hit_does_not_dirty_the_session(db_session) -> None:
+    """H5: a cache lookup is a read. Updating hits on the SELECT path
+    forces the request session into RW, takes a row lock, and makes a later
+    rollback surprising. After find_semantic_hit the session must still be
+    clean.
+    """
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_normalized="what should i focus on",
+        query_embedding=_near_query(),
+        response_json=_payload("Focus on the overdue billing packet."),
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    hit = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_embedding=_unit(0),
+        similarity_threshold=0.92,
+    )
+    assert hit is not None
+    assert not db_session.dirty
+    assert not db_session.new
+    assert not db_session.deleted
+
+
+@pytest.mark.asyncio
+async def test_hit_count_incremented_out_of_band(db_session) -> None:
+    """H5: two lookups still record two hits, but via record_semantic_hit
+    rather than a write folded into the SELECT. Independent oracle: read
+    the ``hits`` column directly from Postgres after both increments.
+    """
+    from sqlalchemy import text
+
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    cache_id = await chat_cache_repo.store(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_normalized="what should i focus on",
+        query_embedding=_near_query(),
+        response_json=_payload("Focus on the overdue billing packet."),
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    first = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_embedding=_unit(0),
+        similarity_threshold=0.92,
+    )
+    second = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_embedding=_unit(0),
+        similarity_threshold=0.92,
+    )
+    assert first is not None and second is not None
+    await chat_cache_repo.record_semantic_hit(db_session, first.id)
+    await chat_cache_repo.record_semantic_hit(db_session, second.id)
+    await db_session.commit()
+
+    hits = (
+        await db_session.execute(
+            text("SELECT hits FROM chat_response_cache WHERE id = :id"),
+            {"id": cache_id},
+        )
+    ).scalar_one()
+    assert hits == 2

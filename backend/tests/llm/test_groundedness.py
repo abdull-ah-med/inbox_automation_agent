@@ -6,9 +6,11 @@ classifier. Canned refusals must not call the model.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from anthropic import APIError
 
 from app.core.config import Settings
 from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
@@ -110,6 +112,69 @@ async def test_write_refusal_does_not_call_verifier() -> None:
     assert result.verdict == "SUPPORTED"
     assert result.unsupported_spans == []
     assert client.messages.create.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_timeout_returns_unknown_not_supported() -> None:
+    """H2: a verifier that never answers must not silently claim SUPPORTED —
+    that would let an actually-UNSUPPORTED answer slip into the semantic
+    cache and be served, unverified, to every future asker within its TTL.
+    """
+    from app.llm.groundedness import verify_grounded
+
+    async def hangs(*_args: object, **_kwargs: object) -> None:
+        await asyncio.sleep(10)
+
+    client = MagicMock()
+    client.messages.create = hangs
+    result = await verify_grounded(
+        AUG12_ANSWER,
+        [{"text": CITATION_WITHOUT_DATE}],
+        client=client,
+        settings=_settings(),
+    )
+    assert result.verdict == "UNKNOWN"
+    assert result.verdict != "SUPPORTED"
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_response_returns_unknown_not_supported() -> None:
+    from app.llm.groundedness import verify_grounded
+
+    client = _client("not valid json at all")
+    result = await verify_grounded(
+        AUG12_ANSWER,
+        [{"text": CITATION_WITHOUT_DATE}],
+        client=client,
+        settings=_settings(),
+    )
+    assert result.verdict == "UNKNOWN"
+    assert result.verdict != "SUPPORTED"
+
+
+@pytest.mark.asyncio
+async def test_api_error_returns_unknown_not_supported() -> None:
+    import httpx
+
+    from app.llm.groundedness import verify_grounded
+
+    async def boom(*_args: object, **_kwargs: object) -> None:
+        raise APIError(
+            "overloaded",
+            httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+            body=None,
+        )
+
+    client = MagicMock()
+    client.messages.create = boom
+    result = await verify_grounded(
+        AUG12_ANSWER,
+        [{"text": CITATION_WITHOUT_DATE}],
+        client=client,
+        settings=_settings(),
+    )
+    assert result.verdict == "UNKNOWN"
+    assert result.verdict != "SUPPORTED"
 
 
 @pytest.mark.asyncio
