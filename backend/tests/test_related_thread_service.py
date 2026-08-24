@@ -250,8 +250,8 @@ async def test_confirmed_association_is_packed_unconfirmed_is_not(db_session) ->
     sibling = rows["sibling"]
     invoice = rows["invoice"]
 
-    from app.services import related_thread_service
     from app.repositories import association_review_repo
+    from app.services import related_thread_service
 
     await association_review_repo.upsert_proposed(
         db_session,

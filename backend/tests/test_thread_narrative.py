@@ -86,7 +86,10 @@ def test_recurrence_narrative_mentions_similar_alerts() -> None:
                 "payload": {
                     "human": {
                         "title": "Urgency raised for recurring alert",
-                        "body": "Urgency bumped automatically: 3 similar alerts in 48h (same sender and subject).",
+                        "body": (
+                            "Urgency bumped automatically: 3 similar alerts in 48h "
+                            "(same sender and subject)."
+                        ),
                         "actor_kind": "agent",
                     },
                     "floor": "CRITICAL",
@@ -109,7 +112,10 @@ def test_recurrence_wrong_narrative() -> None:
                 "payload": {
                     "human": {
                         "title": "Automatic urgency bump marked wrong",
-                        "body": "Reverted this thread. This alert fingerprint will not auto-bump again.",
+                        "body": (
+                            "Reverted this thread. This alert fingerprint will not "
+                            "auto-bump again."
+                        ),
                         "actor_kind": "elise",
                     },
                 },

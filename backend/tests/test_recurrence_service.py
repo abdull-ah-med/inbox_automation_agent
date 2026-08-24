@@ -8,7 +8,7 @@ from the locked 2/3 floor, not from the implementation.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import text
@@ -135,7 +135,12 @@ async def test_pg_trgm_disk_90_vs_91_is_near_invoice_is_not(db_session) -> None:
 @pytest.mark.asyncio
 async def test_single_alert_stays_at_assessed_normal(db_session) -> None:
     thread_a = _thread(conversation_id="alert-a", subject=DISK_90, last_message_at=T0)
-    await _persist(db_session, thread_a, _message(thread_a, received_at=T0), _draft(thread_a, created_at=T0))
+    await _persist(
+        db_session,
+        thread_a,
+        _message(thread_a, received_at=T0),
+        _draft(thread_a, created_at=T0),
+    )
     await db_session.commit()
 
     applied = await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
@@ -403,7 +408,12 @@ async def test_mark_as_wrong_reverts_this_thread_and_suppresses_later_floor(
     assert reviews == 1
 
     thread_d = _thread(conversation_id="alert-d", subject=DISK_90, last_message_at=T_D)
-    await _persist(db_session, thread_d, _message(thread_d, received_at=T_D), _draft(thread_d, created_at=T_D))
+    await _persist(
+        db_session,
+        thread_d,
+        _message(thread_d, received_at=T_D),
+        _draft(thread_d, created_at=T_D),
+    )
     await db_session.commit()
     applied_d = await _escalate(db_session, thread_d, assessed="NORMAL", now=T_D)
     await db_session.commit()
@@ -607,7 +617,12 @@ async def test_mark_as_wrong_after_ratchet_reverts_to_pre_recurrence(
 @pytest.mark.asyncio
 async def test_mark_as_wrong_without_escalation_is_rejected(db_session) -> None:
     thread = _thread(conversation_id="alert-a", subject=DISK_90, last_message_at=T0)
-    await _persist(db_session, thread, _message(thread, received_at=T0), _draft(thread, created_at=T0))
+    await _persist(
+        db_session,
+        thread,
+        _message(thread, received_at=T0),
+        _draft(thread, created_at=T0),
+    )
     await db_session.commit()
 
     with pytest.raises(ThreadStateError):
