@@ -47,6 +47,7 @@ from app.services.search_query import (
     format_search_query,
     parse_search_query,
 )
+from app.utils.email_quotes import strip_quoted_reply
 
 logger = structlog.get_logger(__name__)
 
@@ -311,6 +312,7 @@ def build_snippet(*, body: str | None, highlight: str | None = None) -> str:
     ``highlight`` is set, the window centers on the first matching term.
     """
     raw_body = body or ""
+    raw_body = strip_quoted_reply(raw_body).text
     content_type = "html" if "<" in raw_body else "text"
     cleaned_body = clean_email_body(raw_body, content_type=content_type).body_clean
     cleaned_body = _HTML_TAG_RE.sub(" ", cleaned_body)

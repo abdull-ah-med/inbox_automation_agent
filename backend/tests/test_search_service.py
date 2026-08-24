@@ -623,6 +623,14 @@ def test_snippet_strips_html_tags() -> None:
     assert "Please send the packet today" in snippet
 
 
+def test_snippet_strips_quoted_history_before_window() -> None:
+    quoted = "\n".join(f"> invoice 1 line {i}" for i in range(50))
+    body = f"New reply about invoice 42\n\nOn Thu, Aug 14, 2026 at 3:00 PM Alice wrote:\n{quoted}\n"
+    snippet = build_snippet(body=body, highlight="invoice")
+    assert "invoice 42" in snippet
+    assert "invoice 1" not in snippet
+
+
 def _embedding_dim() -> int:
     return 1536
 
