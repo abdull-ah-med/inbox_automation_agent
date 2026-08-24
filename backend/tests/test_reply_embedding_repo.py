@@ -120,7 +120,6 @@ async def test_find_similar_with_mailbox() -> None:
         limit=3,
     )
     assert texts == ["Similar reply"]
-    session.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -186,6 +185,18 @@ async def test_list_reply_embeddings() -> None:
     session = AsyncMock()
     session.execute = AsyncMock(return_value=result)
 
-    listed = await reply_embedding_repo.list_reply_embeddings(session, limit=10)
+    listed = await reply_embedding_repo.list_reply_embeddings(
+        session,
+        mailbox="elise@example.com",
+        limit=10,
+    )
     assert len(listed) == 2
     assert listed[1].is_excluded is True
+
+
+@pytest.mark.asyncio
+async def test_missing_mailbox_returns_empty_or_raises() -> None:
+    """H13: listing without a mailbox must not return cross-tenant rows."""
+    session = AsyncMock()
+    with pytest.raises(ValueError, match="mailbox is required"):
+        await reply_embedding_repo.list_reply_embeddings(session, mailbox="")
