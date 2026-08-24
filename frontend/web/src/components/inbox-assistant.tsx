@@ -166,13 +166,12 @@ export const InboxAssistant = () => {
   })
   const mailboxes: MailboxOverview[] = mailboxesQuery.data ?? []
 
-  useEffect(() => {
-    if (!open) return
-    const frame = window.requestAnimationFrame(() => {
+  const handleOpen = () => {
+    setOpen(true)
+    window.requestAnimationFrame(() => {
       inputRef.current?.focus()
     })
-    return () => window.cancelAnimationFrame(frame)
-  }, [open])
+  }
 
   useEffect(() => {
     return () => {
@@ -223,10 +222,6 @@ export const InboxAssistant = () => {
     writeStoredSessionId(mailbox, created.session_id)
     setSessionId(created.session_id)
     return created.session_id
-  }
-
-  const handleOpen = () => {
-    setOpen(true)
   }
 
   const handleClose = () => {
@@ -533,15 +528,16 @@ export const InboxAssistant = () => {
         </StarBorder>
       </div>
 
-      <aside
+      <dialog
         role="dialog"
-        aria-modal="false"
+        aria-modal={open}
         aria-label="InboxAssistant"
         aria-hidden={!open}
+        open
         inert={!open}
         data-state={open ? "open" : "closed"}
         className={cn(
-          "fixed z-50 flex flex-col overflow-hidden rounded-2xl bg-card shadow-2xl ring-1 ring-foreground/10",
+          "fixed z-50 m-0 flex flex-col overflow-hidden rounded-2xl bg-card p-0 shadow-2xl ring-1 ring-foreground/10",
           PANEL_SIZE_CLASS[panelSize],
           "origin-bottom-right transition-[width,height,transform,opacity] duration-200 ease-out",
           open
@@ -844,6 +840,7 @@ export const InboxAssistant = () => {
                     placeholder="Ask about a thread…"
                     aria-label="Message InboxAssistant"
                     aria-invalid={validation ? true : undefined}
+                    aria-describedby={validation ? "inboxassistant-validation" : undefined}
                     rows={composerRows}
                     className="field-sizing-content max-h-40 min-h-8 flex-1 resize-none overflow-y-auto wrap-anywhere border-0 bg-transparent px-0 py-1.5 leading-6 shadow-none focus-visible:ring-0 dark:bg-transparent"
                   />
@@ -871,7 +868,11 @@ export const InboxAssistant = () => {
               </form>
 
               {validation ? (
-                <p className="text-sm text-red-600 dark:text-red-400">
+                <p
+                  id="inboxassistant-validation"
+                  className="text-sm text-red-600 dark:text-red-400"
+                  role="alert"
+                >
                   {validation}
                 </p>
               ) : (
@@ -887,7 +888,7 @@ export const InboxAssistant = () => {
             </footer>
           </div>
         </MessageScrollerProvider>
-      </aside>
+      </dialog>
     </TooltipProvider>
   )
 }
