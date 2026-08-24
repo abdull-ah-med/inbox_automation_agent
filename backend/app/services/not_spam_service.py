@@ -75,6 +75,13 @@ async def mark_not_spam(
         thread.id,
         state=ThreadStateEnum.NEW.value,
     )
+    try:
+        from app.repositories import chat_cache_repo
+
+        await chat_cache_repo.invalidate_for_threads(session, [thread.id])
+        await chat_cache_repo.invalidate_for_mailbox(session, thread.mailbox.strip().lower())
+    except Exception:
+        logger.warning("not_spam_chat_cache_invalidate_failed", thread_id=str(thread.id))
     await session.commit()
 
     ingest_result = await ingestion_service.build_thread_context_from_db(
