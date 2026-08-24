@@ -674,9 +674,9 @@ export const ThreadTriageSidebar = ({
               {auditLog.length === 0 ? (
                 <li className="text-sm text-gray-500">No audit events.</li>
               ) : (
-                auditLog.map((entry, index) => (
+                auditLog.map((entry) => (
                   <li
-                    key={`${entry.timestamp}-${index}`}
+                    key={`${entry.timestamp}|${entry.event}|${entry.source}|${entry.detail}`}
                     className="rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
                   >
                     <div className="flex justify-between gap-2">
