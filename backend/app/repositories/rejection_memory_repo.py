@@ -11,7 +11,9 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.db.rejection_memory import RejectionMemory
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 _NOTE_DISPLAY_MAX = 240
 
@@ -182,6 +184,7 @@ async def find_similar_constraints(
 ) -> list[str]:
     if limit < 1:
         return []
+    await set_hnsw_session_defaults(session, get_settings())
     distance = RejectionMemory.embedding.cosine_distance(query_embedding)
     stmt = (
         select(

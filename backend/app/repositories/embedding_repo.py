@@ -18,6 +18,7 @@ from app.models.db.thread import Thread
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.models.schemas.search import SearchColumnFilters
 from app.repositories import message_repo
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 
 def _apply_mailbox_scope(
@@ -67,9 +68,7 @@ def _apply_column_filters(
         stmt = stmt.where(
             or_(
                 EmailEmbedding.body_preview.ilike(f"%{_escape_like(term)}%", escape="\\"),
-                EmailEmbedding.search_document.ilike(
-                    f"%{_escape_like(term)}%", escape="\\"
-                ),
+                EmailEmbedding.search_document.ilike(f"%{_escape_like(term)}%", escape="\\"),
             )
         )
     for term in filters.subjects:
@@ -238,10 +237,7 @@ async def search_similar(
     if scoped is None:
         return []
     cfg = settings if settings is not None else get_settings()
-    ef_search = int(cfg.hnsw_ef_search)
-    await session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
-    if cfg.hnsw_iterative_scan_enabled:
-        await session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
+    await set_hnsw_session_defaults(session, cfg)
     stmt = _apply_column_filters(scoped, filters)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
@@ -298,11 +294,7 @@ async def search_fts(
         )
     else:
         rank = literal(1.0).label("rank")
-        stmt = (
-            select(EmailEmbedding, rank)
-            .order_by(EmailEmbedding.sent_at.desc())
-            .limit(top_k)
-        )
+        stmt = select(EmailEmbedding, rank).order_by(EmailEmbedding.sent_at.desc()).limit(top_k)
     scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
     if scoped is None:
         return []

@@ -349,3 +349,28 @@ async def test_hit_count_incremented_out_of_band(db_session) -> None:
         )
     ).scalar_one()
     assert hits == 2
+
+
+@pytest.mark.asyncio
+async def test_lookup_plan_uses_scope_index(db_session) -> None:
+    """H11: mailbox_key + user_key lookup uses ix_chat_response_cache_mailbox_user."""
+    from sqlalchemy import text
+
+    await db_session.execute(text("SET LOCAL enable_seqscan = off"))
+    plan_rows = (
+        (
+            await db_session.execute(
+                text(
+                    "EXPLAIN (FORMAT TEXT) "
+                    "SELECT id FROM chat_response_cache "
+                    "WHERE mailbox_key = :mb AND user_key = :uk"
+                ),
+                {"mb": MAILBOX, "uk": USER},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    plan = "\n".join(plan_rows)
+    assert "ix_chat_response_cache_mailbox_user" in plan, plan
+    assert "Seq Scan" not in plan, plan
