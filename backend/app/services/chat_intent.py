@@ -28,7 +28,8 @@ _OFF_TOPIC_RE = re.compile(
 )
 _MAIL_WORK_RE = re.compile(
     r"\b(mail|email|inbox|mailbox|thread|draft|invoice|billing|dispute|"
-    r"sender|samplelab|screen|urgency|queue)\b",
+    r"sender|samplelab|screen|urgency|queue|freight|shipment|tracking|"
+    r"packet|background)\b",
     re.IGNORECASE,
 )
 

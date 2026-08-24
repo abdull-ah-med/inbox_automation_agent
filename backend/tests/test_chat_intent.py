@@ -90,6 +90,16 @@ def test_poem_is_out_of_scope() -> None:
     assert plan.tool_name is None
 
 
+def test_capital_of_freight_is_mailbox_search() -> None:
+    plan = classify_chat_intent(
+        "capital of freight",
+        history=(),
+        mailbox_emails=MAILBOXES,
+    )
+    assert plan.intent != ChatIntent.OUT_OF_SCOPE
+    assert plan.tool_name == "search_mail"
+
+
 def test_first_one_follow_up_resolves_first_cited_thread() -> None:
     history = (
         ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
