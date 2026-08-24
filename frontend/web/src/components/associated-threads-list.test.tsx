@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { render, screen, waitFor, within, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -60,7 +60,13 @@ const renderList = (items: RelatedThreadItem[]) => {
 describe("AssociatedThreadsList", () => {
   beforeEach(() => {
     reviewMock.mockReset()
-    reviewMock.mockResolvedValue({ status: "confirmed" })
+    reviewMock.mockImplementation(
+      async (
+        _src: string,
+        _relatedId: string,
+        body: { status: "confirmed" | "dismissed" },
+      ) => ({ status: body.status }),
+    )
     detailMock.mockReset()
     detailMock.mockResolvedValue({
       thread: {
@@ -115,8 +121,12 @@ describe("AssociatedThreadsList", () => {
     expect(
       screen.queryByRole("link", { name: /SampleClient follow-up 8\/14/ }),
     ).not.toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Confirm associated thread" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Dismiss associated thread" })).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Confirm associated thread SampleClient follow-up 8/14" }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Dismiss associated thread SampleClient follow-up 8/14" }),
+    ).toBeInTheDocument()
   })
 
   it("opens a preview modal and keeps the source thread on screen", async () => {
@@ -160,17 +170,85 @@ describe("AssociatedThreadsList", () => {
   it("confirm persists confirmed and dismiss persists dismissed", async () => {
     const user = userEvent.setup()
     renderList([item])
-    await user.click(screen.getByRole("button", { name: "Confirm associated thread" }))
+    await user.click(
+      screen.getByRole("button", {
+        name: "Confirm associated thread SampleClient follow-up 8/14",
+      }),
+    )
     await waitFor(() => {
-      expect(reviewMock).toHaveBeenCalledWith("thread-src", "assoc-1", {
-        status: "confirmed",
-      })
+      expect(
+        screen.queryByRole("button", {
+          name: "Confirm associated thread SampleClient follow-up 8/14",
+        }),
+      ).not.toBeInTheDocument()
     })
-    await user.click(screen.getByRole("button", { name: "Dismiss associated thread" }))
+    expect(screen.getByText(/confirmed/)).toBeInTheDocument()
+    await user.click(
+      screen.getByRole("button", {
+        name: "Dismiss associated thread SampleClient follow-up 8/14",
+      }),
+    )
     await waitFor(() => {
-      expect(reviewMock).toHaveBeenCalledWith("thread-src", "assoc-1", {
-        status: "dismissed",
-      })
+      expect(
+        screen.queryByRole("region", { name: "Associated threads" }),
+      ).not.toBeInTheDocument()
     })
+  })
+
+  it("lets two rows review in parallel and shows the latest server status", async () => {
+    const user = userEvent.setup()
+    let releaseA: (value: { status: "confirmed" | "dismissed" }) => void = () => {}
+    const aPromise = new Promise<{ status: "confirmed" | "dismissed" }>((resolve) => {
+      releaseA = resolve
+    })
+    reviewMock.mockImplementation(
+      async (
+        _src: string,
+        relatedId: string,
+        body: { status: "confirmed" | "dismissed" },
+      ) => {
+        if (relatedId === "assoc-1") {
+          return aPromise
+        }
+        return { status: body.status }
+      },
+    )
+    const second: RelatedThreadItem = {
+      ...item,
+      thread_id: "assoc-2",
+      subject: "Invoice packet 8/12",
+    }
+    renderList([item, second])
+    await user.click(
+      screen.getByRole("button", {
+        name: "Confirm associated thread SampleClient follow-up 8/14",
+      }),
+    )
+    await user.click(
+      screen.getByRole("button", {
+        name: "Dismiss associated thread Invoice packet 8/12",
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByText("Invoice packet 8/12")).not.toBeInTheDocument()
+    })
+    expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", {
+        name: "Confirm associated thread SampleClient follow-up 8/14",
+      }),
+    ).toBeDisabled()
+    await act(async () => {
+      releaseA({ status: "confirmed" })
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/confirmed/)).toBeInTheDocument()
+    })
+    expect(
+      screen.queryByRole("button", {
+        name: "Confirm associated thread SampleClient follow-up 8/14",
+      }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
   })
 })

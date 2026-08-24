@@ -63,10 +63,6 @@ function ThreadDetailPageContent() {
     queryKey: ["thread", threadId],
     queryFn: () => api.threads.detail(threadId),
   })
-  const associatedQuery = useQuery({
-    queryKey: ["thread", threadId, "associated"],
-    queryFn: () => api.threads.related(threadId, "associated"),
-  })
   const originQuery = useQuery({
     queryKey: ["thread", originId],
     queryFn: () => api.threads.detail(originId ?? ""),
@@ -112,7 +108,7 @@ function ThreadDetailPageContent() {
 
   const { thread, classification, draft, triage, messages, audit_log, activity, sent_reply, draft_vs_sent_diff, associated_threads } =
     data
-  const associatedItems = associatedQuery.data?.items ?? associated_threads ?? []
+  const associatedItems = associated_threads ?? []
   const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
   const presentation = thread.presentation

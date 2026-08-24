@@ -69,7 +69,6 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
   beforeEach(() => {
     threadDetail.mockReset()
     relatedThreads.mockReset()
-    relatedThreads.mockResolvedValue({ items: [] })
     searchParamsString.mockReturnValue(
       "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
     )
@@ -124,5 +123,40 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
       }),
     ).toBeInTheDocument()
     expect(screen.queryByText(/back to/i)).not.toBeInTheDocument()
+  })
+
+  it("does not fetch associated threads when detail already includes the list", async () => {
+    threadDetail.mockResolvedValue({
+      thread: baseThread,
+      messages: [],
+      classification: null,
+      draft: null,
+      triage: null,
+      audit_log: [],
+      associated_threads: [
+        {
+          thread_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+          mailbox: "cr@example.com",
+          subject: "SampleClient follow-up",
+          sender: "rep@sample-client.example.com",
+          last_message_at: "2026-08-10T14:00:00Z",
+          urgency: "NORMAL",
+          score: 0.8,
+          status: "proposed",
+        },
+      ],
+    })
+
+    renderPage()
+
+    expect(
+      await screen.findByRole("heading", {
+        name: "Invoice dispute — overdue billing",
+      }),
+    ).toBeInTheDocument()
+    expect(
+      await screen.findByText("SampleClient follow-up"),
+    ).toBeInTheDocument()
+    expect(relatedThreads).not.toHaveBeenCalled()
   })
 })
