@@ -34,6 +34,22 @@ def test_suite_tags_partition() -> None:
     assert "simple-no-context" not in {c["id"] for c in cases_for_suite("C")}
 
 
+def test_pipeline_suites_exclude_chat_shaped_v1_fixtures() -> None:
+    """question+hits gold belongs to InboxAssistant, not generate_draft."""
+    chat_shaped = {
+        "cache-paraphrase",
+        "hallucination-bait",
+        "injection-payload",
+        "long-thread-summary-query",
+        "quoted-reply-new-topic",
+    }
+    pipeline_ids = {c["id"] for c in cases_for_suite("B")} | {
+        c["id"] for c in cases_for_suite("C")
+    }
+    assert chat_shaped.isdisjoint(pipeline_ids)
+    assert "courtesy-close-olivia" in {c["id"] for c in cases_for_suite("B")}
+
+
 def test_flow_b_chunks_ranked_and_nonempty() -> None:
     case = load_case(DATASET_V1 / "flow_b_prior_thread.json")
     cross = build_flow_b_context(case)

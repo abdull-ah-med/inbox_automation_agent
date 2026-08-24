@@ -15,8 +15,8 @@ export const CourtesyCloseBanner = ({
       role="status"
       className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100"
     >
-      This looks like it does not need a reply. Use Reject → Wrong action / no
-      reply needed to leave Needs Attention.
+      Courtesy close. No reply needed. Click Reject, then choose Wrong action /
+      no reply needed to mark this done and remove it from Needs Attention.
     </p>
   )
 }

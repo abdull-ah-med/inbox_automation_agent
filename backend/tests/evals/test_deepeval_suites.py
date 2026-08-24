@@ -17,7 +17,11 @@ import pytest
 
 from tests.evals.adapters.contexts import EvalPayload, run_case
 from tests.evals.dataset_io import cases_for_suite, new_run_dir, write_json
-from tests.evals.judge import deepeval_judge_model, require_eval_settings
+from tests.evals.judge import (
+    deepeval_judge_model,
+    measure_metric_scores,
+    require_eval_settings,
+)
 from tests.live_helpers import env_flag
 
 # Permissive until calibrated — records scores without failing on low quality.
@@ -68,25 +72,9 @@ def _deepeval_imports() -> Any:
     }
 
 
-def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
-    """Run metrics via ``measure()`` so scores stick on the metric objects.
-
-    DeepEval ``assert_test`` can leave ``metric.score`` as None afterward even
-    when the case passes, so artifacts must capture scores from ``measure()``.
-    """
-    scores: dict[str, Any] = {}
-    for metric in metrics:
-        metric.measure(test_case)
-        scores[type(metric).__name__] = {
-            "score": metric.score,
-            "reason": getattr(metric, "reason", None),
-            "success": bool(metric.is_successful()),
-        }
-        assert metric.is_successful(), (
-            f"{type(metric).__name__} failed: score={metric.score} "
-            f"reason={getattr(metric, 'reason', None)}"
-        )
-    return scores
+async def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
+    """Capture scores via ``a_measure`` so pytest-asyncio does not deadlock."""
+    return await measure_metric_scores(test_case, metrics)
 
 
 
@@ -158,7 +146,7 @@ async def test_deepeval_suite_a_flow_b_retriever(
             ]
         )
 
-    scores = _measure_scores(test_case, metrics)
+    scores = await _measure_scores(test_case, metrics)
     write_json(
         eval_run_dir / f"suite_a_{payload.case_id}.json",
         {"case_id": payload.case_id, "framework": "deepeval", "suite": "A", "scores": scores},
@@ -191,7 +179,7 @@ async def test_deepeval_suite_b_generator(
             threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
         ),
     ]
-    scores = _measure_scores(test_case, metrics)
+    scores = await _measure_scores(test_case, metrics)
     write_json(
         eval_run_dir / f"suite_b_{payload.case_id}.json",
         {
@@ -229,7 +217,7 @@ async def test_deepeval_suite_c_tools_and_geval(
     tool_metric = de["ToolCorrectnessMetric"](
         threshold=_PERMISSIVE_THRESHOLD, include_reason=True
     )
-    tool_scores = _measure_scores(tool_case, [tool_metric])
+    tool_scores = await _measure_scores(tool_case, [tool_metric])
 
     criteria = payload.metadata.get("geval_criteria") or (
         "Draft quality for shared-inbox reply suggestions."
@@ -255,7 +243,7 @@ async def test_deepeval_suite_c_tools_and_geval(
         actual_output=payload.actual_output,
         retrieval_context=payload.grounding_contexts or None,
     )
-    geval_scores = _measure_scores(geval_case, [geval])
+    geval_scores = await _measure_scores(geval_case, [geval])
 
     # Soft domain checks — informational, do not fail the suite in v1.
     forbidden = [f for f in payload.metadata.get("forbidden_facts", []) if f]

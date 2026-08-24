@@ -16,7 +16,11 @@ import pytest
 from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
 from tests.evals.adapters.chat import run_chat_case
 from tests.evals.dataset_io import chat_cases_for_suite, new_run_dir, write_json
-from tests.evals.judge import deepeval_judge_model, require_eval_settings
+from tests.evals.judge import (
+    deepeval_judge_model,
+    measure_metric_scores,
+    require_eval_settings,
+)
 from tests.live_helpers import env_flag
 
 _PERMISSIVE_THRESHOLD = 0.0
@@ -63,20 +67,8 @@ def _deepeval_imports() -> Any:
     }
 
 
-def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
-    scores: dict[str, Any] = {}
-    for metric in metrics:
-        metric.measure(test_case)
-        scores[type(metric).__name__] = {
-            "score": metric.score,
-            "reason": getattr(metric, "reason", None),
-            "success": bool(metric.is_successful()),
-        }
-        assert metric.is_successful(), (
-            f"{type(metric).__name__} failed: score={metric.score} "
-            f"reason={getattr(metric, 'reason', None)}"
-        )
-    return scores
+async def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
+    return await measure_metric_scores(test_case, metrics)
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +114,7 @@ async def test_deepeval_chat_suite_a_retriever(
             ]
         )
 
-    scores = _measure_scores(test_case, metrics)
+    scores = await _measure_scores(test_case, metrics)
     write_json(
         eval_run_dir / f"suite_a_{payload.case_id}.json",
         {
@@ -161,7 +153,7 @@ async def test_deepeval_chat_suite_b_generator(
             threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
         ),
     ]
-    scores = _measure_scores(test_case, metrics)
+    scores = await _measure_scores(test_case, metrics)
     forbidden = [f for f in payload.metadata.get("forbidden_facts", []) if f]
     forbidden_hits = [f for f in forbidden if f.lower() in payload.actual_output.lower()]
     write_json(
@@ -222,7 +214,7 @@ async def test_deepeval_chat_suite_c_policy(
         actual_output=payload.actual_output,
         retrieval_context=payload.retrieval_contexts or None,
     )
-    scores = _measure_scores(geval_case, [geval])
+    scores = await _measure_scores(geval_case, [geval])
     write_json(
         eval_run_dir / f"suite_c_{payload.case_id}.json",
         {

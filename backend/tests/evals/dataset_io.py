@@ -27,9 +27,18 @@ def list_v1_cases() -> list[dict[str, Any]]:
     return cases
 
 
+def is_draft_eval_case(case: dict[str, Any]) -> bool:
+    """Draft-pipeline gold has a subject + body. Chat gold uses question + hits."""
+    return bool(case.get("subject")) and bool(case.get("body"))
+
+
 def cases_for_suite(suite: str) -> list[dict[str, Any]]:
     tag = suite.upper()
-    return [c for c in list_v1_cases() if tag in {t.upper() for t in c.get("suite_tags", [])}]
+    return [
+        c
+        for c in list_v1_cases()
+        if is_draft_eval_case(c) and tag in {t.upper() for t in c.get("suite_tags", [])}
+    ]
 
 
 def list_chat_v1_cases() -> list[dict[str, Any]]:

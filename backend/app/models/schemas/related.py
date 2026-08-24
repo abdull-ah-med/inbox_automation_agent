@@ -24,6 +24,7 @@ class RelatedThreadItem(BaseModel):
     urgency: str | None = None
     score: float
     status: RelatedReviewStatus = "proposed"
+    match_reasons: list[str] = Field(default_factory=list)
 
 
 class RelatedThreadList(BaseModel):

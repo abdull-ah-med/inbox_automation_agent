@@ -676,6 +676,18 @@ export const api = {
         },
       );
     },
+    urgencyFeedback(
+      id: string,
+      body: { action: "wrong_escalation"; note?: string },
+    ) {
+      return apiFetch<{ state: string; action: string; urgency?: string | null }>(
+        `/api/threads/${id}/urgency-feedback`,
+        {
+          method: "POST",
+          body: JSON.stringify(body),
+        },
+      );
+    },
   },
 
   drafts: {

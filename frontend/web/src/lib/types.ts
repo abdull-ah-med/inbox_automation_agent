@@ -290,6 +290,7 @@ export interface RelatedThreadItem {
   urgency: string | null
   score: number
   status: "proposed" | "confirmed" | "dismissed"
+  match_reasons?: string[]
 }
 
 export interface RelatedThreadList {

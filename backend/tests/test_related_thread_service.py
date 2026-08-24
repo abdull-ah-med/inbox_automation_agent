@@ -13,12 +13,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.config import Settings
+from app.core.exceptions import ThreadStateError
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.email import ThreadStateEnum
 from app.models.schemas.search import SearchHit, SearchResponse
-from app.repositories import thread_repo
+from app.repositories import association_review_repo, thread_repo
 
 pytestmark = pytest.mark.db
 
@@ -250,7 +251,14 @@ async def test_confirmed_association_is_packed_unconfirmed_is_not(db_session) ->
     invoice = rows["invoice"]
 
     from app.services import related_thread_service
+    from app.repositories import association_review_repo
 
+    await association_review_repo.upsert_proposed(
+        db_session,
+        source_thread_id=source.id,
+        related_thread_id=sibling.id,
+        score=0.9,
+    )
     await related_thread_service.review_related(
         db_session,
         _settings(),
@@ -265,3 +273,157 @@ async def test_confirmed_association_is_packed_unconfirmed_is_not(db_session) ->
     assert [ctx.matched_conversation_id for ctx in packed] == [sibling.conversation_id]
     invoice_ids = {ctx.matched_conversation_id for ctx in packed}
     assert invoice.conversation_id not in invoice_ids
+
+
+@pytest.mark.asyncio
+async def test_list_related_keeps_near_subject_alert_from_search_hits(db_session) -> None:
+    """Disk 91 is associated even when hybrid search only supplies cosine 0.50."""
+    from app.services import related_thread_service
+    from app.services.related_match import alert_fingerprint
+
+    alerts = "alerts@ops.example"
+    source = Thread(
+        id=uuid.uuid4(),
+        mailbox=SALES,
+        conversation_id="disk-90",
+        subject="ALERT: Disk 90% on db-1",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=T_SRC,
+        alert_fingerprint=alert_fingerprint(
+            mailbox=SALES, sender=alerts, subject="ALERT: Disk 90% on db-1"
+        ),
+    )
+    sibling = Thread(
+        id=uuid.uuid4(),
+        mailbox=SALES,
+        conversation_id="disk-91",
+        subject="ALERT: Disk 91% on db-1",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=T_SIB,
+        alert_fingerprint=alert_fingerprint(
+            mailbox=SALES, sender=alerts, subject="ALERT: Disk 91% on db-1"
+        ),
+    )
+    db_session.add_all([source, sibling])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            Message(
+                id=uuid.uuid4(),
+                thread_id=source.id,
+                graph_message_id=str(uuid.uuid4()),
+                direction="inbound",
+                sender=alerts,
+                body_text="disk",
+                received_at=T_SRC,
+                to_recipients=[],
+                cc_recipients=[],
+                summary_json={"deadlines": []},
+            ),
+            Message(
+                id=uuid.uuid4(),
+                thread_id=sibling.id,
+                graph_message_id=str(uuid.uuid4()),
+                direction="inbound",
+                sender=alerts,
+                body_text="disk",
+                received_at=T_SIB,
+                to_recipients=[],
+                cc_recipients=[],
+                summary_json={"deadlines": []},
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    fake = SearchResponse(
+        query=f"from:{alerts} ALERT: Disk 90% on db-1",
+        mailbox=None,
+        hits=[_hit(sibling, cosine=0.50)],
+    )
+    with patch(
+        "app.services.related_thread_service.search_service.search_threads",
+        AsyncMock(return_value=fake),
+    ):
+        result = await related_thread_service.list_related(
+            db_session,
+            _settings(),
+            source.id,
+            purpose="associated",
+            openai_client=None,
+        )
+    assert [item.thread_id for item in result.items] == [sibling.id]
+    assert "near_subject" in result.items[0].match_reasons
+
+
+@pytest.mark.asyncio
+async def test_confirm_without_proposal_is_rejected(db_session) -> None:
+    rows = await _seed(db_session)
+    from app.services import related_thread_service
+
+    with pytest.raises(ThreadStateError):
+        await related_thread_service.review_related(
+            db_session,
+            _settings(),
+            rows["source"].id,
+            rows["sibling"].id,
+            status="confirmed",
+            actor="elise@example.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_confirm_self_association_is_rejected(db_session) -> None:
+    rows = await _seed(db_session)
+    from app.services import related_thread_service
+
+    with pytest.raises(ThreadStateError):
+        await related_thread_service.review_related(
+            db_session,
+            _settings(),
+            rows["source"].id,
+            rows["source"].id,
+            status="confirmed",
+            actor="elise@example.com",
+        )
+
+
+@pytest.mark.asyncio
+async def test_dismiss_hides_association_on_both_threads(db_session) -> None:
+    rows = await _seed(db_session)
+    source = rows["source"]
+    sibling = rows["sibling"]
+    from app.services import related_thread_service
+
+    await association_review_repo.upsert_proposed(
+        db_session,
+        source_thread_id=source.id,
+        related_thread_id=sibling.id,
+        score=0.9,
+    )
+    await association_review_repo.upsert_proposed(
+        db_session,
+        source_thread_id=sibling.id,
+        related_thread_id=source.id,
+        score=0.9,
+    )
+    await related_thread_service.review_related(
+        db_session,
+        _settings(),
+        source.id,
+        sibling.id,
+        status="dismissed",
+        actor="elise@example.com",
+    )
+    await db_session.commit()
+
+    from_source = await related_thread_service.list_stored_associations(
+        db_session, source.id
+    )
+    from_sibling = await related_thread_service.list_stored_associations(
+        db_session, sibling.id
+    )
+    assert from_source == []
+    assert from_sibling == []

@@ -44,6 +44,7 @@ class _CacheHit:
     }
     similarity = 0.96
     id = uuid.uuid4()
+    citation_thread_ids: list[uuid.UUID] = []
 
 
 @pytest.mark.asyncio
