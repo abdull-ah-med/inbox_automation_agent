@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, RedisDep, get_db
 from app.core.dependencies_auth import CurrentUser
+from app.core.exceptions import ThreadNotFoundError
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
 from app.models.schemas.feedback import RegenerateDraftSchema
@@ -33,7 +34,6 @@ from app.models.schemas.urgency_hitl import (
     UrgencyHitlFeedbackResponse,
     UrgencyHitlFeedbackSchema,
 )
-from app.core.exceptions import ThreadNotFoundError
 from app.repositories import thread_repo
 from app.services import (
     draft_regeneration_service,

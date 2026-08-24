@@ -302,7 +302,10 @@ def test_alert_fingerprint_is_mailbox_sender_base_subject_for_automated_only() -
 
 def test_deadlines_overlap_is_true_for_shared_friday_and_false_when_missing() -> None:
     assert deadlines_overlap(["Friday 8/28"], ["Friday 8/28"]) is True
-    assert deadlines_overlap(["complete by Friday 8/28"], ["Reminder: complete by Friday 8/28"]) is True
+    assert deadlines_overlap(
+        ["complete by Friday 8/28"],
+        ["Reminder: complete by Friday 8/28"],
+    ) is True
     assert deadlines_overlap(["Friday 8/28"], ["Monday 8/31"]) is False
     assert deadlines_overlap([], ["Friday 8/28"]) is False
     assert deadlines_overlap(["Friday 8/28"], []) is False
