@@ -113,12 +113,36 @@ async def _ping_redis() -> Redis:
     return redis
 
 
+async def _purge_expired_chat_cache() -> None:
+    settings = get_settings()
+    if not settings.chat_semantic_cache_enabled:
+        return
+    from app.repositories import chat_cache_repo
+
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            purged = await chat_cache_repo.purge_expired(session)
+            await session.commit()
+        if purged:
+            logger.info("chat_cache_purged_expired", count=purged)
+    except Exception:
+        logger.warning("chat_cache_purge_expired_failed")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     global _scheduler
     logger.info("app_startup")
 
     settings = get_settings()
+    overlap = settings.overlapping_target_and_reviewer_mailboxes()
+    if overlap:
+        logger.critical("startup_mailbox_lists_overlap", mailboxes=overlap)
+        raise RuntimeError(
+            "Refusing to start: TARGET_MAILBOXES and REVIEWER_MAILBOXES overlap: "
+            + ", ".join(overlap)
+        )
     security_errors = settings.validate_production_security()
     if security_errors:
         for err in security_errors:
@@ -161,6 +185,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         trigger="interval",
         seconds=settings.poll_interval_seconds,
         id="graph_poll_fallback",
+        replace_existing=True,
+    )
+    _scheduler.add_job(
+        _purge_expired_chat_cache,
+        trigger="interval",
+        seconds=60,
+        id="chat_cache_purge_expired",
         replace_existing=True,
     )
     _scheduler.add_job(

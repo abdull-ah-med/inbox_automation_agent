@@ -33,8 +33,6 @@ logger = structlog.get_logger(__name__)
 _TRIAGE_ELIGIBLE = frozenset({"ingested", "retry_triage"})
 # Well-known Graph folder names. Inbound poll covers Inbox + Junk (spam often lands here).
 _POLL_INBOUND_FOLDERS: tuple[str, ...] = ("inbox", "junkemail")
-# Legacy alias kept for imports/tests that referenced the old name.
-_POLL_FOLDERS: tuple[str, ...] = _POLL_INBOUND_FOLDERS
 _POLL_OUTBOUND_FOLDERS: tuple[str, ...] = ("sentitems",)
 PollCursorFolder = Literal["inbox", "sentitems"]
 # Heartbeat interval while polling so the leader lock cannot expire mid-run.
@@ -414,23 +412,8 @@ async def run_poll_all_mailboxes() -> None:
     try:
         await asyncio.gather(
             *(_poll_one(mailbox) for mailbox in settings.mailbox_list),
-            *(
-                _poll_reviewer_sent(mailbox)
-                for mailbox in settings.reviewer_mailbox_list
-            ),
+            *(_poll_reviewer_sent(mailbox) for mailbox in settings.reviewer_mailbox_list),
         )
-        try:
-            if settings.chat_semantic_cache_enabled:
-                from app.repositories import chat_cache_repo
-
-                factory = get_session_factory()
-                async with factory() as session:
-                    purged = await chat_cache_repo.purge_expired(session)
-                    await session.commit()
-                if purged:
-                    logger.info("chat_cache_purged_expired", count=purged)
-        except Exception:
-            logger.warning("chat_cache_purge_expired_failed")
     finally:
         heartbeat_stop.set()
         await heartbeat_task

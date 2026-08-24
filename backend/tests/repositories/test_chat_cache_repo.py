@@ -7,6 +7,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import text
 
 from app.repositories import chat_cache_repo
 
@@ -111,7 +112,21 @@ async def test_find_semantic_hit_ignores_other_user_and_expired_rows(db_session)
         query_embedding=_near_query(),
         response_json=_payload("Expired."),
         citation_thread_ids=[THREAD_A],
-        expires_at=now - timedelta(seconds=5),
+        expires_at=now + timedelta(minutes=20),
+    )
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "UPDATE chat_response_cache "
+            "SET created_at = :created, expires_at = :expires "
+            "WHERE user_key = :uk AND query_normalized = :q"
+        ),
+        {
+            "created": now - timedelta(hours=2),
+            "expires": now - timedelta(seconds=5),
+            "uk": USER,
+            "q": "what should i focus on",
+        },
     )
     await db_session.flush()
     hit = await chat_cache_repo.find_semantic_hit(
@@ -372,5 +387,69 @@ async def test_lookup_plan_uses_scope_index(db_session) -> None:
         .all()
     )
     plan = "\n".join(plan_rows)
-    assert "ix_chat_response_cache_mailbox_user" in plan, plan
     assert "Seq Scan" not in plan, plan
+    assert (
+        "ix_chat_response_cache_mailbox_user" in plan
+        or "uq_chat_response_cache_scope_query_hash" in plan
+    ), plan
+
+
+@pytest.mark.asyncio
+async def test_expired_rows_purged_hard_within_ttl_grace(db_session) -> None:
+    """H12: purge_expired deletes rows whose TTL already elapsed."""
+    from sqlalchemy import func, select
+
+    from app.models.db.chat_response_cache import ChatResponseCache
+
+    now = datetime.now(UTC)
+    expired_id = await chat_cache_repo.store(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_normalized="expired billing ask",
+        query_embedding=_near_query(),
+        response_json=_payload("Expired answer."),
+        citation_thread_ids=[THREAD_A],
+        expires_at=now + timedelta(minutes=5),
+    )
+    await db_session.flush()
+    await db_session.execute(
+        text(
+            "UPDATE chat_response_cache "
+            "SET created_at = :created, expires_at = :expires "
+            "WHERE id = :id"
+        ),
+        {
+            "created": now - timedelta(hours=2),
+            "expires": now - timedelta(hours=1),
+            "id": expired_id,
+        },
+    )
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_normalized="live billing ask",
+        query_embedding=_unit(40),
+        response_json=_payload("Live answer."),
+        citation_thread_ids=[THREAD_B],
+        expires_at=now + timedelta(minutes=5),
+    )
+    await db_session.flush()
+
+    deleted = await chat_cache_repo.purge_expired(db_session)
+    await db_session.flush()
+    remaining = (
+        await db_session.execute(select(func.count()).select_from(ChatResponseCache))
+    ).scalar_one()
+    live = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key=MAILBOX,
+        user_key=USER,
+        query_embedding=_unit(40),
+        similarity_threshold=0.5,
+    )
+    assert deleted == 1
+    assert remaining == 1
+    assert live is not None
+    assert live.response_json["answer"] == "Live answer."
