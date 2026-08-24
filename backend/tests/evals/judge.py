@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from typing import Any
 
 from app.core.config import Settings
 
@@ -33,3 +34,33 @@ def ragas_embedding_model_name() -> str:
         os.environ.get("EVAL_EMBEDDING_MODEL", "text-embedding-3-small").strip()
         or "text-embedding-3-small"
     )
+
+
+async def measure_metric_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
+    """Score metrics without deadlocking pytest-asyncio.
+
+    DeepEval ``measure()`` defaults to ``async_mode=True`` and calls
+    ``loop.run_until_complete(a_measure(...))`` on the already-running test
+    loop. Await ``a_measure`` on that loop instead.
+    """
+    scores: dict[str, Any] = {}
+    for metric in metrics:
+        a_measure = getattr(metric, "a_measure", None)
+        if a_measure is not None:
+            await a_measure(
+                test_case,
+                _show_indicator=False,
+                _log_metric_to_confident=False,
+            )
+        else:
+            metric.measure(test_case)
+        scores[type(metric).__name__] = {
+            "score": metric.score,
+            "reason": getattr(metric, "reason", None),
+            "success": bool(metric.is_successful()),
+        }
+        assert metric.is_successful(), (
+            f"{type(metric).__name__} failed: score={metric.score} "
+            f"reason={getattr(metric, 'reason', None)}"
+        )
+    return scores

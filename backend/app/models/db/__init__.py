@@ -1,3 +1,4 @@
+from app.models.db.alert_fingerprint_feedback import AlertFingerprintFeedback
 from app.models.db.audit_event import AuditEvent
 from app.models.db.base import Base
 from app.models.db.chat_response_cache import ChatResponseCache
@@ -23,6 +24,7 @@ from app.models.db.urgency_feedback import UrgencyFeedback
 from app.models.db.user import User
 
 __all__ = [
+    "AlertFingerprintFeedback",
     "AuditEvent",
     "Base",
     "ChatResponseCache",

@@ -190,6 +190,9 @@ class ThreadSchema(BaseModel):
     category: str | None = None
     last_message_at: datetime | None = None
     last_updated_at: datetime
+    alert_fingerprint: str | None = None
+    alert_signature: str | None = None
+    alert_sender_norm: str | None = None
 
 
 async def get_by_conversation_id(
@@ -242,6 +245,18 @@ async def get_by_id(session: AsyncSession, thread_id: uuid.UUID) -> ThreadSchema
     if thread is None:
         return None
     return ThreadSchema.model_validate(thread)
+
+
+async def list_by_ids(
+    session: AsyncSession,
+    thread_ids: Sequence[uuid.UUID],
+) -> dict[uuid.UUID, ThreadSchema]:
+    """Load many threads in one query, keyed by id."""
+    if not thread_ids:
+        return {}
+    stmt = select(Thread).where(Thread.id.in_(list(thread_ids)))
+    result = await session.execute(stmt)
+    return {row.id: ThreadSchema.model_validate(row) for row in result.scalars().all()}
 
 
 async def list_by_mailbox_conversations(
@@ -390,6 +405,134 @@ async def set_urgency(
         return None
     await session.flush()
     return ThreadSchema.model_validate(thread)
+
+
+_FINISHED_STATES = frozenset(
+    {
+        ThreadStateEnum.RESOLVED.value,
+        ThreadStateEnum.NO_ACTION.value,
+        ThreadStateEnum.SPAM.value,
+    }
+)
+_ALERT_ASSOCIATION_LIMIT = 25
+
+
+async def set_alert_fingerprint(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    fingerprint: str | None,
+    *,
+    signature: str | None = None,
+    sender_norm: str | None = None,
+) -> ThreadSchema | None:
+    stmt = (
+        update(Thread)
+        .where(Thread.id == thread_id)
+        .values(
+            alert_fingerprint=fingerprint,
+            alert_signature=signature,
+            alert_sender_norm=sender_norm,
+        )
+        .returning(Thread)
+    )
+    result = await session.execute(stmt)
+    thread = result.scalar_one_or_none()
+    if thread is None:
+        return None
+    await session.flush()
+    return ThreadSchema.model_validate(thread)
+
+
+def _alert_cluster_filter(
+    *,
+    mailbox: str,
+    fingerprint: str,
+    signature: str | None,
+    sender_norm: str | None,
+    cutoff: datetime,
+    open_only: bool,
+):
+    match = Thread.alert_fingerprint == fingerprint
+    if signature and sender_norm:
+        match = or_(
+            match,
+            and_(
+                Thread.alert_sender_norm == sender_norm,
+                Thread.alert_signature == signature,
+            ),
+        )
+    clauses = [
+        Thread.mailbox == mailbox,
+        Thread.alert_fingerprint.is_not(None),
+        Thread.last_message_at >= cutoff,
+        match,
+    ]
+    if open_only:
+        clauses.append(Thread.state.notin_(_FINISHED_STATES))
+    return and_(*clauses)
+
+
+async def list_open_alert_cluster(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    fingerprint: str,
+    now: datetime,
+    signature: str | None = None,
+    sender_norm: str | None = None,
+    window_hours: int = 48,
+    for_update: bool = False,
+) -> list[ThreadSchema]:
+    cutoff = now - timedelta(hours=window_hours)
+    stmt = (
+        select(Thread)
+        .where(
+            _alert_cluster_filter(
+                mailbox=mailbox,
+                fingerprint=fingerprint,
+                signature=signature,
+                sender_norm=sender_norm,
+                cutoff=cutoff,
+                open_only=True,
+            )
+        )
+        .order_by(Thread.id.asc())
+    )
+    if for_update:
+        stmt = stmt.with_for_update()
+    result = await session.execute(stmt)
+    return [ThreadSchema.model_validate(row) for row in result.scalars().all()]
+
+
+async def list_alert_association_candidates(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    fingerprint: str,
+    now: datetime,
+    signature: str | None = None,
+    sender_norm: str | None = None,
+    window_days: int = 90,
+    limit: int = _ALERT_ASSOCIATION_LIMIT,
+) -> list[ThreadSchema]:
+    cutoff = now - timedelta(days=window_days)
+    stmt = (
+        select(Thread)
+        .where(
+            _alert_cluster_filter(
+                mailbox=mailbox,
+                fingerprint=fingerprint,
+                signature=signature,
+                sender_norm=sender_norm,
+                cutoff=cutoff,
+                open_only=False,
+            )
+        )
+        .order_by(Thread.last_message_at.desc().nullslast(), Thread.id.asc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return [ThreadSchema.model_validate(row) for row in result.scalars().all()]
 
 
 def _encode_cursor(last_message_at: datetime | None, thread_id: uuid.UUID) -> str:

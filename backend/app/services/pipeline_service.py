@@ -181,25 +181,53 @@ async def _apply_draft_outcome_state(
             urgency=urgency,
             urgency_reason=urgency_reason,
         )
-        if state.draft_status == "DRAFTED":
-            from app.services import recurrence_service
+        if state.draft_status in ("DRAFTED", "REQUIRES_HUMAN"):
+            from app.services import recurrence_service, related_thread_service
 
-            applied = await recurrence_service.apply_recurrence_escalation(
-                session,
-                thread_id=thread_id,
-                conversation_id=state.original_email.conversation_id,
-                mailbox=state.original_email.mailbox,
-                assessed_urgency=urgency,
-            )
-            if state.draft is not None and applied and applied != urgency:
+            try:
+                await related_thread_service.propose_alert_associations(
+                    session, thread_id=thread_id
+                )
+            except Exception:
+                logger.warning(
+                    "alert_association_propose_failed",
+                    thread_id=str(thread_id),
+                )
+
+            applied = None
+            try:
+                applied = await recurrence_service.apply_recurrence_escalation(
+                    session,
+                    thread_id=thread_id,
+                    conversation_id=state.original_email.conversation_id,
+                    mailbox=state.original_email.mailbox,
+                    assessed_urgency=urgency,
+                )
+            except Exception:
+                logger.warning(
+                    "recurrence_escalation_failed",
+                    thread_id=str(thread_id),
+                )
+            if (
+                state.draft_status == "DRAFTED"
+                and state.draft is not None
+                and applied
+                and applied != urgency
+            ):
+                thread_row = await thread_repo.get_by_id(session, thread_id)
+                bump_reason = (
+                    thread_row.urgency_reason
+                    if thread_row is not None and thread_row.urgency_reason
+                    else (
+                        f"{urgency_reason}; recurrence floor {applied}"
+                        if urgency_reason
+                        else f"recurrence floor {applied}"
+                    )
+                )
                 state.draft = state.draft.model_copy(
                     update={
                         "urgency": applied,
-                        "urgency_reason": (
-                            f"{urgency_reason}; recurrence floor {applied}"
-                            if urgency_reason
-                            else f"recurrence floor {applied}"
-                        ),
+                        "urgency_reason": bump_reason,
                     }
                 )
         await _invalidate_chat_cache_threads(session, [thread_id])
@@ -972,12 +1000,34 @@ async def _run_phased_post_ingest(
         if thread_id is not None:
             from app.services import recurrence_service
 
-            count = await recurrence_service.count_automated_inbound_48h(
-                session, thread_id
-            )
-            hint = recurrence_service.recurrence_hint(count)
-            if hint:
-                urgency_hints = [hint, *urgency_hints]
+            try:
+                count = await recurrence_service.count_automated_inbound_48h(
+                    session, thread_id
+                )
+                similar = None
+                thread_row = await thread_repo.get_by_id(session, thread_id)
+                if thread_row is not None and thread_row.alert_fingerprint:
+                    from datetime import UTC, datetime
+
+                    cluster = await thread_repo.list_open_alert_cluster(
+                        session,
+                        mailbox=thread_row.mailbox,
+                        fingerprint=thread_row.alert_fingerprint,
+                        signature=thread_row.alert_signature,
+                        sender_norm=thread_row.alert_sender_norm,
+                        now=datetime.now(UTC),
+                    )
+                    similar = len(cluster) if cluster else None
+                hint = recurrence_service.recurrence_hint(
+                    count, similar_thread_count=similar
+                )
+                if hint:
+                    urgency_hints = [hint, *urgency_hints]
+            except Exception:
+                logger.warning(
+                    "recurrence_hint_failed",
+                    thread_id=str(thread_id),
+                )
         await session.commit()
 
     async def _generate_and_persist_draft(

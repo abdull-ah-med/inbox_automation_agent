@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useRef, useState } from "react"
 
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
 import { associatedThreadHref } from "@/components/thread-origin-banner"
@@ -21,6 +21,14 @@ import { formatReviewerDate } from "@/lib/dates"
 import type { RelatedThreadItem } from "@/lib/types"
 import { textLinkClass } from "@/lib/utils"
 
+const MATCH_REASON_LABELS: Record<string, string> = {
+  same_sender: "Same sender",
+  same_subject: "Same subject",
+  near_subject: "Similar subject",
+  shared_deadline: "Shared deadline",
+  cosine: "Similar content",
+}
+
 export const AssociatedThreadsList = ({
   sourceThreadId,
   sourceSubject,
@@ -33,13 +41,15 @@ export const AssociatedThreadsList = ({
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [rows, setRows] = useState(items)
+  const [itemSnapshot, setItemSnapshot] = useState(items)
   const [inflightIds, setInflightIds] = useState<Set<string>>(() => new Set())
   const inflightRef = useRef(new Map<string, AbortController>())
   const [previewId, setPreviewId] = useState<string | null>(null)
 
-  useEffect(() => {
+  if (items !== itemSnapshot) {
+    setItemSnapshot(items)
     setRows(items)
-  }, [items])
+  }
 
   const previewQuery = useQuery({
     queryKey: ["thread", previewId],
@@ -100,38 +110,8 @@ export const AssociatedThreadsList = ({
     }
   }
 
-  const handleConfirmKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    relatedId: string,
-  ) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      void handleReview(relatedId, "confirmed")
-    }
-  }
-
-  const handleDismissKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    relatedId: string,
-  ) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      void handleReview(relatedId, "dismissed")
-    }
-  }
-
   const handlePreview = (relatedId: string) => {
     setPreviewId(relatedId)
-  }
-
-  const handlePreviewKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    relatedId: string,
-  ) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      handlePreview(relatedId)
-    }
   }
 
   const handlePreviewOpenChange = (open: boolean) => {
@@ -142,13 +122,6 @@ export const AssociatedThreadsList = ({
 
   const handleBackToCurrent = () => {
     setPreviewId(null)
-  }
-
-  const handleBackKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      handleBackToCurrent()
-    }
   }
 
   return (
@@ -174,7 +147,6 @@ export const AssociatedThreadsList = ({
                 aria-label={`Preview associated thread ${item.subject}`}
                 className="block max-w-full truncate text-left text-sm font-medium text-blue-700 hover:underline dark:text-blue-400"
                 onClick={() => handlePreview(item.thread_id)}
-                onKeyDown={(event) => handlePreviewKeyDown(event, item.thread_id)}
               >
                 {item.subject}
               </button>
@@ -187,6 +159,22 @@ export const AssociatedThreadsList = ({
                 {" · "}
                 {item.status}
               </p>
+              {item.match_reasons && item.match_reasons.length > 0 ? (
+                <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Match reasons">
+                  {item.match_reasons.map((reason) => {
+                    const label = MATCH_REASON_LABELS[reason]
+                    if (!label) return null
+                    return (
+                      <li
+                        key={reason}
+                        className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                      >
+                        {label}
+                      </li>
+                    )
+                  })}
+                </ul>
+              ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-1">
               {item.status !== "confirmed" ? (
@@ -199,7 +187,6 @@ export const AssociatedThreadsList = ({
                   onClick={() => {
                     void handleReview(item.thread_id, "confirmed")
                   }}
-                  onKeyDown={(event) => handleConfirmKeyDown(event, item.thread_id)}
                 >
                   Confirm
                 </Button>
@@ -214,7 +201,6 @@ export const AssociatedThreadsList = ({
                 onClick={() => {
                   void handleReview(item.thread_id, "dismissed")
                 }}
-                onKeyDown={(event) => handleDismissKeyDown(event, item.thread_id)}
               >
                 <X aria-hidden="true" />
               </Button>
@@ -257,7 +243,6 @@ export const AssociatedThreadsList = ({
               tabIndex={0}
               aria-label="Back to current thread"
               onClick={handleBackToCurrent}
-              onKeyDown={handleBackKeyDown}
             >
               Back to current thread
             </Button>

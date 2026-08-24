@@ -47,6 +47,7 @@ from app.models.schemas.graph import (
     SimulateIngestRequestSchema,
 )
 from app.repositories import message_repo, thread_repo
+from app.services.related_match import alert_cluster_keys
 
 logger = structlog.get_logger(__name__)
 
@@ -97,6 +98,28 @@ def extract_well_known_folder(resource: str) -> str | None:
     if match is None:
         return None
     return match.group("folder").lower()
+
+
+
+async def _maybe_set_alert_fingerprint(
+    session: AsyncSession,
+    *,
+    thread_id,
+    mailbox: str,
+    sender: str,
+    subject: str,
+) -> None:
+    keys = alert_cluster_keys(mailbox=mailbox, sender=sender, subject=subject)
+    if keys is None:
+        return
+    fingerprint, signature, sender_norm = keys
+    await thread_repo.set_alert_fingerprint(
+        session,
+        thread_id,
+        fingerprint,
+        signature=signature,
+        sender_norm=sender_norm,
+    )
 
 
 def _sender_address(message: GraphMessageSchema) -> str:
@@ -385,6 +408,13 @@ async def ingest_graph_message(
             subject=subject,
             last_message_at=received_at,
         )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=mailbox,
+            sender=_sender_address(message),
+            subject=subject,
+        )
 
         thread_messages = await graph_client.list_thread_messages(mailbox, conversation_id)
         # Graph list can lag get_message (replication). Always include the trigger.
@@ -611,6 +641,13 @@ async def handle_outbound_notification(
             subject=subject,
             last_message_at=received_at,
         )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=attach_mailbox,
+            sender=_sender_address(message),
+            subject=subject,
+        )
 
         email_msg = _to_email_message_schema(
             mailbox=mailbox,
@@ -701,6 +738,13 @@ async def ingest_simulated_message(
             conversation_id=payload.conversation_id,
             subject=payload.subject,
             last_message_at=payload.received_at,
+        )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=payload.mailbox,
+            sender=payload.sender,
+            subject=payload.subject,
         )
 
         direction = _direction_for_sender(payload.mailbox, payload.sender)

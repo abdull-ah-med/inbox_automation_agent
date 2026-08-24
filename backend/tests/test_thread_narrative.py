@@ -74,3 +74,47 @@ def test_urgency_recurrence_narrative() -> None:
     )
     assert entries[0].title.startswith("Urgency raised")
     assert "CRITICAL" in entries[0].body
+
+
+
+def test_recurrence_narrative_mentions_similar_alerts() -> None:
+    entries = build_activity(
+        [
+            {
+                "event_type": "thread.urgency.recurrence_escalated",
+                "created_at": datetime(2026, 8, 21, 16, 0, tzinfo=UTC),
+                "payload": {
+                    "human": {
+                        "title": "Urgency raised for recurring alert",
+                        "body": "Urgency bumped automatically: 3 similar alerts in 48h (same sender and subject).",
+                        "actor_kind": "agent",
+                    },
+                    "floor": "CRITICAL",
+                    "count_48h": 3,
+                    "scope": "cross_thread",
+                },
+            }
+        ]
+    )
+    assert entries[0].title.startswith("Urgency raised")
+    assert "similar alerts" in entries[0].body
+
+
+def test_recurrence_wrong_narrative() -> None:
+    entries = build_activity(
+        [
+            {
+                "event_type": "thread.urgency.recurrence_wrong",
+                "created_at": datetime(2026, 8, 21, 16, 5, tzinfo=UTC),
+                "payload": {
+                    "human": {
+                        "title": "Automatic urgency bump marked wrong",
+                        "body": "Reverted this thread. This alert fingerprint will not auto-bump again.",
+                        "actor_kind": "elise",
+                    },
+                },
+            }
+        ]
+    )
+    assert "wrong" in entries[0].title.lower()
+    assert "fingerprint" in entries[0].body.lower() or "alert" in entries[0].body.lower()

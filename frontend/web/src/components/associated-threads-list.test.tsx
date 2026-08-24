@@ -251,4 +251,29 @@ describe("AssociatedThreadsList", () => {
     ).not.toBeInTheDocument()
     expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
   })
+
+  it("shows glanceable match reason chips", () => {
+    renderList([
+      {
+        ...item,
+        match_reasons: ["same_sender", "near_subject", "shared_deadline"],
+      },
+    ])
+    expect(screen.getByText("Same sender")).toBeInTheDocument()
+    expect(screen.getByText("Similar subject")).toBeInTheDocument()
+    expect(screen.getByText("Shared deadline")).toBeInTheDocument()
+  })
+
+  it("labels exact subject matches as same subject", () => {
+    renderList([
+      {
+        ...item,
+        match_reasons: ["same_sender", "same_subject"],
+      },
+    ])
+    expect(screen.getByText("Same subject")).toBeInTheDocument()
+    expect(screen.queryByText("Similar subject")).not.toBeInTheDocument()
+  })
+
 })
+

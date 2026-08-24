@@ -23,6 +23,7 @@ _FALLBACK_TITLES: dict[str, str] = {
     "thread.resolved.reviewer": "Marked resolved",
     "thread.outcome.closing_inbound": "Closed — courtesy inbound",
     "thread.urgency.recurrence_escalated": "Urgency raised for recurring alert",
+    "thread.urgency.recurrence_wrong": "Automatic urgency bump marked wrong",
     "thread.reopened.resolution_feedback": "Reopened after feedback",
     "thread.resolved.wrong_reason": "Resolution reason corrected",
 }
@@ -47,8 +48,15 @@ def _fallback_body(event_type: str, payload: Mapping[str, Any]) -> str:
         floor = payload.get("floor") or "HIGH"
         count = payload.get("count_48h")
         if count is not None:
-            return f"{count}th automated alert in 48h. Urgency raised to {floor}."
+            return (
+                f"Urgency bumped automatically: {count} similar alerts in 48h "
+                f"(same sender and subject). Urgency raised to {floor}."
+            )
         return f"Recurring automated alert. Urgency raised to {floor}."
+    if event_type == "thread.urgency.recurrence_wrong":
+        return (
+            "Reverted this thread. This alert fingerprint will not auto-bump again."
+        )
     title = _FALLBACK_TITLES.get(event_type, event_type.replace(".", " ").title())
     return title
 

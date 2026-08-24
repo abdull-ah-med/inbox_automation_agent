@@ -22,6 +22,9 @@ class Thread(Base):
     urgency_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     category: Mapped[str | None] = mapped_column(String(32), nullable=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    alert_fingerprint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    alert_signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    alert_sender_norm: Mapped[str | None] = mapped_column(String(320), nullable=True)
     last_updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

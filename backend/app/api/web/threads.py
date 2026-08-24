@@ -29,9 +29,16 @@ from app.models.schemas.resolution import (
     ResolveThreadSchema,
 )
 from app.models.schemas.spam import NotSpamResponseSchema
+from app.models.schemas.urgency_hitl import (
+    UrgencyHitlFeedbackResponse,
+    UrgencyHitlFeedbackSchema,
+)
+from app.core.exceptions import ThreadNotFoundError
+from app.repositories import thread_repo
 from app.services import (
     draft_regeneration_service,
     not_spam_service,
+    recurrence_service,
     related_thread_service,
     resolution_service,
     thread_view_service,
@@ -275,6 +282,42 @@ async def resolution_feedback(
     await session.commit()
     return ResolutionFeedbackResponse(state=state, action=body.action)
 
+
+
+
+@router.post(
+    "/{thread_id}/urgency-feedback",
+    response_model=UrgencyHitlFeedbackResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def urgency_feedback(
+    thread_id: uuid.UUID,
+    body: UrgencyHitlFeedbackSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    user: CurrentUser,
+) -> UrgencyHitlFeedbackResponse:
+    """Mark an automatic urgency bump wrong; revert this thread and suppress fingerprint."""
+    _ = request, response
+    thread = await thread_repo.get_by_id(session, thread_id)
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
+        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+    urgency = await recurrence_service.apply_urgency_feedback(
+        session,
+        thread_id=thread_id,
+        action=body.action,
+        actor=user.email,
+        note=body.note,
+    )
+    await session.commit()
+    return UrgencyHitlFeedbackResponse(
+        state=thread.state,
+        action=body.action,
+        urgency=urgency,
+    )
 
 @router.post(
     "/{thread_id}/not-spam",

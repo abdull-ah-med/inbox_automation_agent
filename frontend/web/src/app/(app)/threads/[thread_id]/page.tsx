@@ -10,6 +10,7 @@ import { AssociatedThreadsList } from "@/components/associated-threads-list"
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { ErrorPage } from "@/components/error-page"
 import { PresentationBadges } from "@/components/presentation-badges"
+import { RecurrenceBanner } from "@/components/recurrence-banner"
 import { ResolutionBanner } from "@/components/resolution-banner"
 import { SentReplyPanel } from "@/components/sent-reply-panel"
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
@@ -194,6 +195,7 @@ function ThreadDetailPageContent() {
         urgencyAssessed={presentation?.urgency_assessed ?? thread.urgency}
         activity={activity ?? []}
       />
+      <RecurrenceBanner threadId={threadId} activity={activity ?? []} />
       <CourtesyCloseBanner
         state={thread.state}
         lastInboundBody={lastInbound?.body_text ?? null}
