@@ -96,3 +96,40 @@ async def test_search_similar_returns_five_known_neighbors(db_session) -> None:
     assert missing == [], f"known neighbors missing from top-10: {missing}"
     await db_session.execute(text("TRUNCATE email_embeddings RESTART IDENTITY CASCADE"))
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_apostrophe_folded_matches_o_mason_omason(db_session) -> None:
+    """H6: O'Mason in search_document must match websearch 'omason'.
+
+    Independent oracle: insert a literal apostrophe name, query with the
+    unapostrophized token, count matching rows with raw SQL — not the
+    migration's own regex.
+    """
+    row_id = uuid.uuid4()
+    db_session.add(
+        EmailEmbedding(
+            id=row_id,
+            mailbox=MAILBOX,
+            conversation_id="conv-omason",
+            sender_email="ashley@sample-materials.example.com",
+            recipient_emails=["elise@example.com"],
+            cc_emails=[],
+            embedding=_unit(0),
+            sent_at=datetime(2026, 8, 14, tzinfo=UTC),
+            body_preview="Please set up O'Mason Timber.",
+            search_document="Please set up O'Mason Timber.",
+        )
+    )
+    await db_session.commit()
+    hits = (
+        await db_session.execute(
+            text(
+                "SELECT COUNT(*) FROM email_embeddings "
+                "WHERE search_vector @@ websearch_to_tsquery('english', 'omason')"
+            )
+        )
+    ).scalar_one()
+    assert hits == 1
+    await db_session.execute(text("TRUNCATE email_embeddings RESTART IDENTITY CASCADE"))
+    await db_session.commit()
