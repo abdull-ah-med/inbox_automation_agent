@@ -31,6 +31,30 @@ describe("parseChatStreamEvent", () => {
     expect(parseChatStreamEvent("data: not-json")).toBeNull()
   })
 
+  it("reads the H2 fail-closed UNKNOWN verdict off the terminal done event", () => {
+    // H2: verify_grounded timeouts / parse failures now return UNKNOWN
+    // instead of a silent SUPPORTED — the client must be able to parse it.
+    expect(
+      parseChatStreamEvent('data: {"type":"done","grounded_verifier":"UNKNOWN"}'),
+    ).toEqual({ type: "done", grounded_verifier: "UNKNOWN" })
+  })
+
+  it("reads grounded_verifier off the terminal done event", () => {
+    // H1: the backend now sends the verdict once, on "done", instead of a
+    // second "meta" event — the client must read it from here.
+    expect(
+      parseChatStreamEvent(
+        'data: {"type":"done","grounded_verifier":"UNSUPPORTED"}',
+      ),
+    ).toEqual({ type: "done", grounded_verifier: "UNSUPPORTED" })
+  })
+
+  it("drops an invalid grounded_verifier value on done instead of trusting it", () => {
+    expect(
+      parseChatStreamEvent('data: {"type":"done","grounded_verifier":"bogus"}'),
+    ).toEqual({ type: "done" })
+  })
+
   it("reads a tool status line", () => {
     expect(parseChatStreamEvent('data: {"type":"status","text":"Searching mail"}')).toEqual(
       { type: "status", text: "Searching mail" },
@@ -47,5 +71,21 @@ describe("parseChatStreamEvent", () => {
     expect(result).toBe("continue")
     expect(onStatus).toHaveBeenCalledWith("Searching mail")
     expect(onDone).not.toHaveBeenCalled()
+  })
+
+  it("passes the done event's grounded_verifier through to onDone", () => {
+    const onDone = vi.fn()
+    const result = dispatchChatStreamBlock(
+      'data: {"type":"done","grounded_verifier":"SUPPORTED"}',
+      { onDone },
+    )
+    expect(result).toBe("done")
+    expect(onDone).toHaveBeenCalledWith("SUPPORTED")
+  })
+
+  it("passes undefined to onDone when the done event carries no verdict", () => {
+    const onDone = vi.fn()
+    dispatchChatStreamBlock('data: {"type":"done"}', { onDone })
+    expect(onDone).toHaveBeenCalledWith(undefined)
   })
 })

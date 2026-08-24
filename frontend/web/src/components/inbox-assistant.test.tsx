@@ -58,6 +58,8 @@ const groundedResponse = {
   refused_write: false,
 }
 
+type GroundedVerifier = "SUPPORTED" | "UNSUPPORTED" | "SKIPPED" | "UNKNOWN"
+
 const deliverStream = (
   handlers: {
     onMeta?: (meta: {
@@ -66,28 +68,31 @@ const deliverStream = (
       mailbox: string | null
       refused_write: boolean
       cached?: boolean
-      grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+      grounded_verifier?: GroundedVerifier
     }) => void
     onDelta?: (text: string) => void
-    onDone?: () => void
+    onDone?: (groundedVerifier?: GroundedVerifier) => void
     onStatus?: (text: string) => void
   },
   answer = groundedResponse.answer,
   extra: Partial<typeof groundedResponse> & {
     cached?: boolean
-    grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+    grounded_verifier?: GroundedVerifier
   } = {},
 ) => {
+  // H1: the backend now sends the eager meta with a placeholder verdict and
+  // carries the real, post-verification verdict on the terminal "done" event
+  // instead of a second "meta" — mirror that wire shape here.
   handlers.onMeta?.({
     citations: extra.citations ?? groundedResponse.citations,
     retrieval_count: extra.retrieval_count ?? 1,
     mailbox: extra.mailbox ?? null,
     refused_write: extra.refused_write ?? false,
     cached: extra.cached,
-    grounded_verifier: extra.grounded_verifier,
+    grounded_verifier: "SKIPPED",
   })
   handlers.onDelta?.(answer)
-  handlers.onDone?.()
+  handlers.onDone?.(extra.grounded_verifier)
 }
 
 const renderBot = () => {
@@ -161,6 +166,32 @@ describe("InboxAssistant", () => {
     ).toHaveAttribute("href", `/threads/${THREAD_ID}`)
     expect(screen.getByRole("log")).toBeInTheDocument()
     expect(screen.queryByText("Ask about the inbox")).not.toBeInTheDocument()
+  })
+
+  it("aborts the in-flight ask when the panel unmounts mid-stream", async () => {
+    let capturedSignal: AbortSignal | undefined
+    askChat.mockImplementation(
+      (_body: unknown, _handlers: unknown, signal?: AbortSignal) => {
+        capturedSignal = signal
+        return new Promise(() => {
+          // Never resolves — simulates a still-open SSE connection at unmount time.
+        })
+      },
+    )
+    const user = userEvent.setup()
+    const { unmount } = renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    await waitFor(() => expect(askChat).toHaveBeenCalled())
+    expect(capturedSignal?.aborted).toBe(false)
+
+    unmount()
+
+    expect(capturedSignal?.aborted).toBe(true)
   })
 
   it("sends prior turns as history on a follow-up", async () => {
@@ -784,6 +815,36 @@ describe("InboxAssistant", () => {
     ).toBeInTheDocument()
     expect(
       screen.getByLabelText(/could not be confirmed from the cited threads/i),
+    ).toBeInTheDocument()
+  })
+
+  it("dims an answer with an unverified (UNKNOWN) groundedness verdict", async () => {
+    // H2: verify_grounded now fails closed to UNKNOWN (timeout/parse-failure)
+    // instead of silently claiming SUPPORTED — the client must surface this
+    // distinctly from a real UNSUPPORTED verdict.
+    const user = userEvent.setup()
+    askChat.mockImplementation(
+      async (
+        _body: unknown,
+        handlers: Parameters<typeof deliverStream>[0],
+      ) => {
+        deliverStream(handlers, groundedResponse.answer, {
+          grounded_verifier: "UNKNOWN",
+        })
+      },
+    )
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "when did Ashley sign",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText(/could not be verified in time/i),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByLabelText(/could not be verified in time/i),
     ).toBeInTheDocument()
   })
 

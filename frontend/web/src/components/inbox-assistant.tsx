@@ -61,6 +61,7 @@ import { api } from "@/lib/api-client"
 import { getErrorMessage } from "@/lib/error-messages"
 import { sanitizeUserText } from "@/lib/sanitize"
 import type { ChatAskRequest, ChatCitation, ChatHistoryTurn, MailboxOverview } from "@/lib/types"
+import type { ChatGroundedVerifier } from "@/lib/chat-stream"
 import { toChatHistoryPayload } from "@/lib/chat-history"
 import {
   clearStoredSessionId,
@@ -99,7 +100,7 @@ type ChatTurn = {
   streaming?: boolean
   error?: boolean
   cached?: boolean
-  groundedVerifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+  groundedVerifier?: ChatGroundedVerifier
   lastQuestion?: string
 }
 
@@ -107,7 +108,7 @@ type PendingAskMeta = {
   citations: ChatCitation[]
   refusedWrite: boolean
   cached: boolean
-  groundedVerifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+  groundedVerifier?: ChatGroundedVerifier
 }
 
 const EXAMPLE_ASKS = [
@@ -172,6 +173,12 @@ export const InboxAssistant = () => {
     })
     return () => window.cancelAnimationFrame(frame)
   }, [open])
+
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort()
+    }
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -383,7 +390,7 @@ export const InboxAssistant = () => {
           if (text) receivedAnswer = true
           deltaBatcher.push(text)
         },
-        onDone: () => {
+        onDone: (verdict) => {
           const trailing = deltaBatcher.drain()
           const pending = pendingMetaRef.current
           pendingMetaRef.current = null
@@ -391,7 +398,11 @@ export const InboxAssistant = () => {
           const citations = pending?.citations ?? []
           const refusedWrite = pending?.refusedWrite ?? false
           const cached = pending?.cached ?? false
-          const groundedVerifier = pending?.groundedVerifier
+          // H1: the backend now sends the real, post-verification verdict on
+          // "done" (the eager "meta" only ever carries the placeholder
+          // "SKIPPED" before the answer finishes). Fall back to whatever meta
+          // carried only for older/alternate code paths that might omit it.
+          const groundedVerifier = verdict ?? pending?.groundedVerifier
           setTurns((current) => {
             const existing = current.find((turn) => turn.id === assistantId)
             if (existing) {
@@ -699,11 +710,13 @@ export const InboxAssistant = () => {
                               <div
                                 className={cn(
                                   "wrap-anywhere rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 ring-1 ring-foreground/10",
-                                  turn.groundedVerifier === "UNSUPPORTED" &&
+                                  (turn.groundedVerifier === "UNSUPPORTED" ||
+                                    turn.groundedVerifier === "UNKNOWN") &&
                                     "opacity-70",
                                 )}
                                 aria-describedby={
-                                  turn.groundedVerifier === "UNSUPPORTED"
+                                  turn.groundedVerifier === "UNSUPPORTED" ||
+                                  turn.groundedVerifier === "UNKNOWN"
                                     ? `${turn.id}-groundedness`
                                     : undefined
                                 }
@@ -733,6 +746,17 @@ export const InboxAssistant = () => {
                                     Some claims in this answer could not be
                                     confirmed from the cited threads. Review the
                                     source threads to verify.
+                                  </p>
+                                ) : turn.groundedVerifier === "UNKNOWN" ? (
+                                  <p
+                                    id={`${turn.id}-groundedness`}
+                                    className="mb-2 text-xs text-muted-foreground"
+                                    tabIndex={0}
+                                    aria-label="This answer could not be verified in time. Review the source threads to confirm the details."
+                                  >
+                                    This answer could not be verified in time.
+                                    Review the source threads to confirm the
+                                    details.
                                   </p>
                                 ) : null}
                                 <StreamingEmailBody

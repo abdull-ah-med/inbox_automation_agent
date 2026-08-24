@@ -106,4 +106,65 @@ describe("api.chat.askStream abort", () => {
     ).rejects.toMatchObject({ status: 502 })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it("cancels the response reader exactly once when the caller aborts mid-stream", async () => {
+    const controller = new AbortController()
+    let cancelCalls = 0
+    const stream = new ReadableStream({
+      start(streamController) {
+        streamController.enqueue(
+          new TextEncoder().encode('data: {"type":"delta","text":"Hi"}\n\n'),
+        )
+        // Deliberately never enqueue "done" or close — simulates an in-flight SSE body.
+      },
+      cancel() {
+        cancelCalls += 1
+      },
+    })
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    const pending = api.chat.askStream(
+      { message: "billing disputes waiting on review" },
+      {},
+      controller.signal,
+    ).catch(() => {
+      // Aborting rejects the call; the cancellation side effect is what this test verifies.
+    })
+
+    await vi.waitFor(() => expect(cancelCalls).toBe(0))
+    controller.abort()
+    await pending
+
+    expect(cancelCalls).toBe(1)
+  })
+
+  it("wakes the retry backoff immediately when aborted instead of waiting out the jitter", async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      const signal = init?.signal as AbortSignal | undefined
+      if (signal?.aborted) {
+        return Promise.reject(new DOMException("aborted", "AbortError"))
+      }
+      return Promise.reject(new TypeError("network"))
+    })
+    vi.stubGlobal("fetch", fetchMock)
+
+    const started = Date.now()
+    const pending = api.chat.askStream(
+      { message: "billing disputes" },
+      {},
+      controller.signal,
+    )
+    // Abort well before the ~80-320ms jitter window would naturally elapse.
+    setTimeout(() => controller.abort(), 5)
+
+    await expect(pending).rejects.toBeTruthy()
+    expect(Date.now() - started).toBeLessThan(60)
+  })
 })
