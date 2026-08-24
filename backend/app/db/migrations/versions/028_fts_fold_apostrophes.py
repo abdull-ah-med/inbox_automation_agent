@@ -53,7 +53,23 @@ def upgrade() -> None:
     existing = {c["name"] for c in sa.inspect(op.get_bind()).get_columns("email_embeddings")}
     if "search_vector" not in existing:
         return
-    _recreate_search_vector(_FOLDED)
+    # Already-folded catalogs (this revision applied historically) must not
+    # DROP+ADD again — that takes ACCESS EXCLUSIVE and rewrites the heap.
+    # Remaining unfolder catalogs are rewritten online in 035_fts_apostrophe_online.
+    bind = op.get_bind()
+    folded = bind.execute(
+        sa.text(
+            "SELECT pg_get_expr(ad.adbin, ad.adrelid) "
+            "FROM pg_attrdef ad "
+            "JOIN pg_attribute a ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum "
+            "WHERE ad.adrelid = 'email_embeddings'::regclass "
+            "AND a.attname = 'search_vector'"
+        )
+    ).scalar()
+    if folded and "translate" in str(folded):
+        return
+    # Pre-028 catalogs: skip the blocking rewrite; 035 performs the fold.
+    return
 
 
 def downgrade() -> None:
