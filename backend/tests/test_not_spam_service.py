@@ -222,7 +222,76 @@ async def test_mark_not_spam_rejects_non_spam_thread(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_mark_not_spam_unknown_thread_is_not_found(db_session) -> None:
+async def test_mark_not_spam_invalidates_chat_cache_for_thread(db_session) -> None:
+    """H22: un-hiding spam must drop cache rows that cited the thread."""
+    from datetime import timedelta
+
+    from app.repositories import chat_cache_repo
+
+    thread = _thread(mailbox=ELISE, state=ThreadStateEnum.SPAM.value, conversation_id="c-cache")
+    db_session.add(thread)
+    await db_session.flush()
+    db_session.add(_message(thread, sender=SAMPLELAB))
+    await db_session.commit()
+
+    vec = [0.0] * 1536
+    vec[0] = 1.0
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key=ELISE,
+        user_key="reviewer-a",
+        query_normalized="samplelab invoice",
+        query_embedding=vec,
+        response_json={"answer": "Cached spam thread.", "citations": [], "retrieval_count": 1},
+        citation_thread_ids=[thread.id],
+        expires_at=datetime.now(UTC) + timedelta(minutes=20),
+    )
+    await db_session.commit()
+
+    async def _noop_pipeline(**_kwargs: object) -> EmailTriageState:
+        return EmailTriageState.model_validate(
+            {
+                "original_email": {
+                    "message_id": "m-cache",
+                    "conversation_id": "c-cache",
+                    "mailbox": ELISE,
+                    "sender": SAMPLELAB,
+                    "subject": "SampleLab invoice",
+                    "body_text": "Please confirm",
+                    "received_at": T_NOW,
+                },
+                "thread_context": {
+                    "conversation_id": "c-cache",
+                    "mailbox": ELISE,
+                    "subject": "SampleLab invoice",
+                    "messages": [],
+                },
+                "draft_status": "SKIPPED",
+            }
+        )
+
+    with patch(
+        "app.services.not_spam_service.pipeline_service.run_phased_after_ingest",
+        new=AsyncMock(side_effect=_noop_pipeline),
+    ):
+        await not_spam_service.mark_not_spam(
+            db_session,
+            settings=_settings(),
+            thread_id=thread.id,
+            actor="elise@sample-site.example.com",
+            redis=AsyncMock(),
+            client=AsyncMock(),
+            openai_client=None,
+        )
+
+    hit = await chat_cache_repo.find_semantic_hit(
+        db_session,
+        mailbox_key=ELISE,
+        user_key="reviewer-a",
+        query_embedding=vec,
+        similarity_threshold=0.5,
+    )
+    assert hit is None
     with pytest.raises(ThreadNotFoundError):
         await not_spam_service.mark_not_spam(
             db_session,
