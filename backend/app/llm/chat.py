@@ -92,6 +92,54 @@ def sanitize_chat_answer(
     return text.strip()
 
 
+_INCOMPLETE_UUID_TAIL = re.compile(
+    r"(?<![0-9a-fA-F])[0-9a-fA-F][0-9a-fA-F-]{7,35}$",
+    re.IGNORECASE,
+)
+
+
+class ChatDeltaScrubber:
+    """Strip thread-id UUIDs from streamed tokens, not only the terminal answer.
+
+    Normal prose is forwarded unchanged so token boundaries stay intact. A
+    completed UUID in the buffer is sanitized before yield; an incomplete
+    UUID-shaped tail is held (capped at 256 chars) until the next token or flush.
+    """
+
+    _MAX_PENDING = 256
+
+    def __init__(self, *, known_thread_ids: set[uuid.UUID] | None = None) -> None:
+        self.known_thread_ids = known_thread_ids
+        self._pending = ""
+
+    def feed(self, piece: str) -> str:
+        self._pending += piece
+        if _UUID_LIKE.search(self._pending) or _ID_CLAUSE.search(self._pending):
+            return self._release(sanitize=True)
+        if len(self._pending) > self._MAX_PENDING:
+            return self._release(sanitize=True)
+        tail = _INCOMPLETE_UUID_TAIL.search(self._pending)
+        if tail:
+            emit = self._pending[: tail.start()]
+            self._pending = tail.group()
+            return emit
+        return self._release()
+
+    def flush(self) -> str:
+        if not self._pending:
+            return ""
+        return self._release(sanitize=True)
+
+    def _release(self, *, sanitize: bool = False) -> str:
+        text = self._pending
+        self._pending = ""
+        if not text:
+            return ""
+        if sanitize:
+            return sanitize_chat_answer(text, known_thread_ids=self.known_thread_ids)
+        return text
+
+
 def _hit_block(hit: SearchHit) -> str:
     snippet = scrub_text(hit.snippet or "")
     subject = scrub_text(hit.subject or "") or "(no subject)"
@@ -265,9 +313,7 @@ def _wrap_retrieved_blocks(blocks: list[dict[str, Any]], tag: str) -> list[dict[
         items = []
         for item in block.get("content") or []:
             if isinstance(item, dict) and item.get("type") == "text":
-                items.append(
-                    {**item, "text": wrap_untrusted(tag, str(item.get("text") or ""))}
-                )
+                items.append({**item, "text": wrap_untrusted(tag, str(item.get("text") or ""))})
             else:
                 items.append(item)
         wrapped.append({**block, "content": items})
@@ -587,8 +633,7 @@ async def iter_chat_agent(
                 # Claude issues 1-2 tool calls per turn in practice, so this
                 # is cheap; revisit only if p95 latency traces show otherwise.
                 executed = [
-                    await _execute_tool_block(block, execute_tool)
-                    for block in tool_use_blocks
+                    await _execute_tool_block(block, execute_tool) for block in tool_use_blocks
                 ]
                 tool_results: list[dict[str, Any]] = []
                 for _block, execution in executed:
