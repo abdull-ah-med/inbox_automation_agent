@@ -1,5 +1,7 @@
 "use client"
 
+import { Suspense } from "react"
+
 import { useQuery } from "@tanstack/react-query"
 import { useParams, useSearchParams } from "next/navigation"
 
@@ -20,7 +22,37 @@ import { inboxColor, inboxLabel } from "@/lib/design-tokens"
 import { formatThreadHeaderMeta } from "@/lib/thread-header-meta"
 import { cn, textLinkClass } from "@/lib/utils"
 
+// `useSearchParams` opts the client-component tree up to the nearest
+// Suspense boundary into CSR during prerendering (Next.js docs: "Missing
+// Suspense boundary with useSearchParams"). Isolate it in a child so the
+// route can still prerender a static shell instead of bailing whole-page.
+function ThreadDetailPageSkeleton() {
+  return (
+    <div className="space-y-4" aria-busy="true" aria-live="polite">
+      <Breadcrumbs
+        items={[
+          { label: "Overview", href: "/dashboard" },
+          { label: "…" },
+        ]}
+      />
+      <Skeleton className="h-16 w-full rounded-lg" />
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <Skeleton className="h-[32rem] rounded-lg lg:col-span-2" />
+        <Skeleton className="h-[32rem] rounded-lg lg:col-span-3" />
+      </div>
+    </div>
+  )
+}
+
 export default function ThreadDetailPage() {
+  return (
+    <Suspense fallback={<ThreadDetailPageSkeleton />}>
+      <ThreadDetailPageContent />
+    </Suspense>
+  )
+}
+
+function ThreadDetailPageContent() {
   const params = useParams<{ thread_id: string }>()
   const searchParams = useSearchParams()
   const threadId = params.thread_id
