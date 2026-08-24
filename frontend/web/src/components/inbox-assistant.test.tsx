@@ -948,4 +948,18 @@ describe("InboxAssistant", () => {
       expect(screen.queryByLabelText("Generating answer")).not.toBeInTheDocument()
     })
   })
+
+  it("links the empty-question validation to the composer", async () => {
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    const alert = await screen.findByRole("alert")
+    expect(alert).toHaveTextContent("Enter a question")
+    expect(alert).toHaveAttribute("id", "inboxassistant-validation")
+    expect(screen.getByRole("textbox", { name: /message inboxassistant/i })).toHaveAttribute(
+      "aria-describedby",
+      "inboxassistant-validation",
+    )
+  })
 })
