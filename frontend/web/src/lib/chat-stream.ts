@@ -1,5 +1,7 @@
 import type { ChatCitation } from "@/lib/types"
 
+export type ChatGroundedVerifier = "SUPPORTED" | "UNSUPPORTED" | "SKIPPED" | "UNKNOWN"
+
 export type ChatStreamMeta = {
   type: "meta"
   citations: ChatCitation[]
@@ -8,23 +10,31 @@ export type ChatStreamMeta = {
   refused_write: boolean
   cached?: boolean
   cache_similarity?: number | null
-  grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
+  grounded_verifier?: ChatGroundedVerifier
 }
 
 export type ChatStreamEvent =
   | ChatStreamMeta
   | { type: "delta"; text: string }
-  | { type: "done" }
+  | { type: "done"; grounded_verifier?: ChatGroundedVerifier }
   | { type: "error"; message: string; partial?: boolean }
   | { type: "status"; text: string }
 
 export type ChatStreamHandlers = {
   onMeta?: (meta: ChatStreamMeta) => void
   onDelta?: (text: string) => void
-  onDone?: () => void
+  onDone?: (groundedVerifier?: ChatGroundedVerifier) => void
   onError?: (message: string) => void
   onStatus?: (text: string) => void
 }
+
+const asGroundedVerifier = (value: unknown): ChatGroundedVerifier | undefined =>
+  value === "SUPPORTED" ||
+  value === "UNSUPPORTED" ||
+  value === "SKIPPED" ||
+  value === "UNKNOWN"
+    ? value
+    : undefined
 
 export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
   const data = block
@@ -41,7 +51,12 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
       return { type: "delta", text }
     }
     if (parsed.type === "done") {
-      return { type: "done" }
+      const groundedVerifier = asGroundedVerifier(
+        (parsed as { grounded_verifier?: unknown }).grounded_verifier,
+      )
+      return groundedVerifier
+        ? { type: "done", grounded_verifier: groundedVerifier }
+        : { type: "done" }
     }
     if (parsed.type === "error") {
       const message = (parsed as { message?: unknown }).message
@@ -70,12 +85,7 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
         cached: Boolean(meta.cached),
         cache_similarity:
           typeof meta.cache_similarity === "number" ? meta.cache_similarity : null,
-        grounded_verifier:
-          meta.grounded_verifier === "SUPPORTED" ||
-          meta.grounded_verifier === "UNSUPPORTED" ||
-          meta.grounded_verifier === "SKIPPED"
-            ? meta.grounded_verifier
-            : undefined,
+        grounded_verifier: asGroundedVerifier(meta.grounded_verifier),
       }
     }
     return null
@@ -106,6 +116,6 @@ export const dispatchChatStreamBlock = (
     handlers.onStatus?.(event.text)
     return "continue"
   }
-  handlers.onDone?.()
+  handlers.onDone?.(event.grounded_verifier)
   return "done"
 }

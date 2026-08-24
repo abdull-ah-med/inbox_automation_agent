@@ -515,18 +515,27 @@ export const api = {
               handlers.onError?.(message)
             },
           }
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buffer += decoder.decode(value, { stream: true })
-            const parts = buffer.split("\n\n")
-            buffer = parts.pop() ?? ""
-            for (const part of parts) {
-              const status = dispatchChatStreamBlock(part, wrapped)
-              if (status === "error") {
-                throw new ApiError("Claude chat failed", 502)
+          const onAbort = () => {
+            void reader.cancel().catch(() => {})
+          }
+          signal?.addEventListener("abort", onAbort)
+          try {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              buffer += decoder.decode(value, { stream: true })
+              const parts = buffer.split("\n\n")
+              buffer = parts.pop() ?? ""
+              for (const part of parts) {
+                const status = dispatchChatStreamBlock(part, wrapped)
+                if (status === "error") {
+                  throw new ApiError("Claude chat failed", 502)
+                }
               }
             }
+          } finally {
+            signal?.removeEventListener("abort", onAbort)
+            await reader.cancel().catch(() => {})
           }
           if (buffer.trim()) {
             const status = dispatchChatStreamBlock(buffer, wrapped)
@@ -551,8 +560,14 @@ export const api = {
           if (aborted || sawDelta || streamFinished || attempt === 2) {
             throw error
           }
-          await new Promise((resolve) => {
-            window.setTimeout(resolve, jitter(attempt))
+          await new Promise<void>((resolve) => {
+            const timer = window.setTimeout(resolve, jitter(attempt))
+            if (!signal) return
+            const wakeEarly = () => {
+              window.clearTimeout(timer)
+              resolve()
+            }
+            signal.addEventListener("abort", wakeEarly, { once: true })
           })
         }
       }
