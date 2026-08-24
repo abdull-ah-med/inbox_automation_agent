@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from app.core.config import Settings
 from app.core.rate_limit import client_ip_key
@@ -15,6 +19,7 @@ def _request(*, headers: dict[str, str], peer: str = "10.0.0.1") -> MagicMock:
     request.headers.get = lambda key, default=None: lowered.get(key.lower(), default)
     request.client = MagicMock()
     request.client.host = peer
+    request.state = SimpleNamespace()
     return request
 
 
@@ -105,7 +110,10 @@ def test_chat_rate_limit_key_uses_access_token_sub() -> None:
     user_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
     token, _expires = create_access_token(user_id, settings, token_version=0)
     request = _request(headers={"Authorization": f"Bearer {token}"}, peer="10.0.0.1")
-    with patch("app.core.rate_limit.get_settings", return_value=settings):
+    with (
+        patch("app.core.rate_limit.get_settings", return_value=settings),
+        patch("app.core.rate_limit._load_user_auth", lambda uid: (True, 0)),
+    ):
         assert chat_rate_limit_key(request) == f"user:{user_id}"
 
 
@@ -115,3 +123,62 @@ def test_chat_rate_limit_key_falls_back_to_ip_without_bearer() -> None:
     request = _request(headers={}, peer="10.0.0.1")
     with patch("app.core.rate_limit.get_settings", return_value=settings):
         assert chat_rate_limit_key(request) == "10.0.0.1"
+
+
+def test_chat_key_reuses_request_state_when_present() -> None:
+    """H4: CurrentUser already validated this principal — do not decode again."""
+    from app.core.rate_limit import chat_rate_limit_key
+
+    user_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    request = _request(
+        headers={"Authorization": "Bearer definitely-not-a-jwt"},
+        peer="10.0.0.1",
+    )
+    request.state.user_id = user_id
+    with patch(
+        "app.core.rate_limit.decode_access_token",
+        side_effect=AssertionError("must not decode when request.state.user_id is set"),
+    ):
+        assert chat_rate_limit_key(request) == f"user:{user_id}"
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_chat_key_ignores_revoked_token(db_session) -> None:
+    """H4: a stolen JWT whose token_version no longer matches the user row
+    must not burn the victim's per-user chat quota. Independent oracle: the
+    key is the client IP, never ``user:{sub}``.
+    """
+    from app.core.rate_limit import chat_rate_limit_key
+    from app.core.security.tokens import create_access_token
+    from app.models.db.user import User
+
+    user_id = uuid.uuid4()
+    settings = Settings(environment="local", jwt_secret="c" * 64, trust_x_forwarded_for=False)
+    user = User(
+        id=user_id,
+        email=f"revoked-{user_id.hex[:8]}@example.com",
+        password_hash="hashed",
+        role="user",
+        is_active=True,
+        token_version=2,
+    )
+    db_session.add(user)
+    await db_session.commit()
+
+    token, _expires = create_access_token(user_id, settings, token_version=1)
+    request = _request(headers={"Authorization": f"Bearer {token}"}, peer="10.0.0.1")
+
+    def load_from_fixture(uid: uuid.UUID) -> tuple[bool, int] | None:
+        # Independent oracle: the row we just committed has token_version=2.
+        if uid != user_id:
+            return None
+        return (True, 2)
+
+    with (
+        patch("app.core.rate_limit.get_settings", return_value=settings),
+        patch("app.core.rate_limit._load_user_auth", load_from_fixture),
+    ):
+        key = chat_rate_limit_key(request)
+    assert key == "10.0.0.1"
+    assert key != f"user:{user_id}"

@@ -122,4 +122,7 @@ async def bump_token_version(session: AsyncSession, user_id: uuid.UUID) -> int:
     )
     result = await session.execute(stmt)
     value = result.scalar_one()
+    from app.core.rate_limit import invalidate_user_auth_cache
+
+    invalidate_user_auth_cache(user_id)
     return int(value)
