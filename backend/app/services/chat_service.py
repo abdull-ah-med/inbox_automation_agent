@@ -6,6 +6,7 @@ tool hits, never from model-invented thread ids.
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -14,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -31,7 +33,10 @@ from app.llm.chat_prompts import (
     WRITE_REFUSAL_ANSWER,
     no_match_answer,
 )
+from app.llm.chat_tools import search_results_from_hits
 from app.llm.groundedness import verify_grounded
+from app.llm.pii_redact import scrub_text
+from app.models.db.thread import Thread
 from app.models.schemas.chat import (
     CHAT_DEFAULT_LIMIT,
     ChatAskResponse,
@@ -67,14 +72,22 @@ _WRITE_PHRASES: tuple[str, ...] = (
     "mark this as spam",
 )
 
+_WRITE_RE = re.compile(
+    r"^(?:please\s+|can you\s+|could you\s+)?("
+    + "|".join(re.escape(phrase) for phrase in _WRITE_PHRASES)
+    + r")\b",
+    re.IGNORECASE,
+)
+
+
 STATUS_SEARCHING = "Searching your inbox…"
 STATUS_DRAFTING = "Drafting answer…"
 
 
 def detect_write_intent(message: str) -> bool:
-    """Light phrase match for send/approve/reject/delete/move-to-junk asks."""
+    """Command-shaped send/approve/reject/delete/junk asks, not mid-sentence mentions."""
     lowered = " ".join((message or "").lower().split())
-    return any(phrase in lowered for phrase in _WRITE_PHRASES)
+    return _WRITE_RE.search(lowered) is not None
 
 
 def _merge_history(
@@ -170,7 +183,10 @@ def _cleaned_history(
 ) -> list[ChatHistoryTurn]:
     cleaned: list[ChatHistoryTurn] = []
     for turn in history or []:
-        text = sanitize_user_text(turn.content)
+        if turn.role == "assistant":
+            text = scrub_text(sanitize_user_text(turn.content))
+        else:
+            text = sanitize_user_text(turn.content)
         if not text:
             continue
         cleaned.append(
@@ -207,12 +223,20 @@ async def _groundedness_verdict(
     answer: str,
     hits: list[SearchHit],
     grounded: bool,
+    evidence: list[object] | None = None,
 ) -> str:
     if not settings.chat_groundedness_enabled or not grounded:
         return "SKIPPED"
+    citations: list[object]
+    if evidence:
+        citations = list(evidence)
+    elif hits:
+        citations = search_results_from_hits(hits)
+    else:
+        citations = []
     result = await verify_grounded(
         answer,
-        [{"text": hit.snippet or ""} for hit in hits],
+        citations,
         client=client,
         settings=settings,
     )
@@ -222,6 +246,39 @@ async def _groundedness_verdict(
             unsupported_spans=result.unsupported_spans,
         )
     return result.verdict
+
+
+_STALE_CACHE_STATES = frozenset({"SPAM"})
+
+
+async def _citations_still_current(
+    session: AsyncSession,
+    hit: chat_cache_repo.ChatCacheHit,
+    *,
+    mailbox: str | None,
+    settings: Settings,
+) -> bool:
+    ids = list(hit.citation_thread_ids or [])
+    if not ids:
+        return True
+    result = await session.execute(
+        select(Thread.id, Thread.mailbox, Thread.state).where(Thread.id.in_(ids))
+    )
+    found = {row.id: row for row in result.all()}
+    if len(found) != len(set(ids)):
+        return False
+    allowed = {item.strip().lower() for item in settings.mailbox_list}
+    scoped = (mailbox or "").strip().lower()
+    for thread_id in ids:
+        row = found[thread_id]
+        if row.state in _STALE_CACHE_STATES:
+            return False
+        box = (row.mailbox or "").strip().lower()
+        if scoped and box != scoped:
+            return False
+        if allowed and box not in allowed:
+            return False
+    return True
 
 
 def _mailbox_cache_key(mailbox: str | None, settings: Settings) -> str:
@@ -356,6 +413,17 @@ async def _lookup_semantic_cache(
         # (legacy row, race), serving it as a HIT would bypass
         # verify_grounded for the rest of its TTL. Treat as a miss instead.
         logger.warning("chat_cache_hit_unverified_verdict", mailbox=mailbox)
+        return None, embedding
+    if not await _citations_still_current(session, hit, mailbox=mailbox, settings=settings):
+        logger.info("chat_cache_hit_stale_citations", mailbox=mailbox)
+        try:
+            await chat_cache_repo.invalidate_for_threads(
+                session, list(hit.citation_thread_ids or [])
+            )
+            await _commit_session(session)
+        except Exception:
+            logger.warning("chat_cache_stale_citation_invalidate_failed", mailbox=mailbox)
+            await _rollback_session(session)
         return None, embedding
     try:
         await chat_cache_repo.record_semantic_hit(session, hit.id)
@@ -609,6 +677,7 @@ async def ask(
         answer=answer,
         hits=result.hits,
         grounded=grounded,
+        evidence=result.evidence_blocks,
     )
     response = ChatAskResponse(
         answer=answer,
@@ -785,6 +854,7 @@ async def iter_ask_events(
     answer = ""
     hits: list[SearchHit] = []
     grounded = False
+    evidence_blocks: list[object] = []
     forwarded_delta = False
     meta_sent = False
     drafting_sent = False
@@ -851,6 +921,7 @@ async def iter_ask_events(
                 answer = str(event.get("answer") or "")
                 hits = list(event.get("hits") or [])
                 grounded = bool(event.get("grounded"))
+                evidence_blocks = list(event.get("evidence_blocks") or [])
                 tool_used_first = event.get("tool_used_first") or plan.tool_name
                 tool_iterations = int(event.get("tool_iterations") or 0)
                 if event.get("ttft_ms") is not None:
@@ -912,6 +983,7 @@ async def iter_ask_events(
         answer=text,
         hits=hits,
         grounded=grounded_for_verify,
+        evidence=evidence_blocks,
     )
     # H1: the verdict is only known after the agent loop finishes, but a meta
     # event carrying (possibly identical) citations was already sent eagerly

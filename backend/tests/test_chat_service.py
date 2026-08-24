@@ -84,6 +84,25 @@ def test_detect_write_intent_ignores_read_only_asks() -> None:
     assert detect_write_intent("billing disputes waiting on review") is False
     assert detect_write_intent("what did we send last week?") is False
     assert detect_write_intent("show me threads about SampleLab") is False
+    assert detect_write_intent("tell me about the delete this clause") is False
+
+
+def test_assistant_history_scrubs_pii_before_reprompt() -> None:
+    from app.models.schemas.chat import ChatHistoryTurn
+    from app.services.chat_service import _cleaned_history
+
+    cleaned = _cleaned_history(
+        [
+            ChatHistoryTurn(role="user", content="what is on the form"),
+            ChatHistoryTurn(
+                role="assistant",
+                content="SSN 123-45-6789 is listed on the packet.",
+            ),
+        ]
+    )
+    assert cleaned[1].role == "assistant"
+    assert "123-45-6789" not in cleaned[1].content
+    assert "[REDACTED_SSN]" in cleaned[1].content
 
 
 def test_chat_ask_accepts_twenty_history_turns() -> None:
@@ -175,9 +194,7 @@ def test_chat_system_prompt_is_read_only_and_grounded() -> None:
     assert "uuid" in lowered
     assert "subject" in lowered
     assert (
-        "[1]" in CHAT_SYSTEM_PROMPT
-        or "citation marker" in lowered
-        or "[n]" in CHAT_SYSTEM_PROMPT
+        "[1]" in CHAT_SYSTEM_PROMPT or "citation marker" in lowered or "[n]" in CHAT_SYSTEM_PROMPT
     )
     assert "review ui" not in lowered
     assert "triage labels" in lowered
