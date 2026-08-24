@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     chat_semantic_cache_enabled: bool = True
     chat_semantic_cache_threshold: float = Field(default=0.92, ge=0.5, le=0.999)
     chat_semantic_cache_ttl_overview_sec: int = Field(default=300, ge=30, le=86_400)
-    chat_semantic_cache_ttl_search_sec: int = Field(default=1200, ge=30, le=86_400)
+    chat_semantic_cache_ttl_search_sec: int = Field(default=300, ge=30, le=86_400)
     chat_max_input_tokens: int = Field(default=160_000, ge=4_096, le=200_000)
     chat_rate_limit_per_minute: int = Field(default=60, ge=1, le=10_000)
 
@@ -174,9 +174,7 @@ class Settings(BaseSettings):
         if not self.internal_domains.strip():
             return []
         return [
-            d.strip().lower().lstrip("@")
-            for d in self.internal_domains.split(",")
-            if d.strip()
+            d.strip().lower().lstrip("@") for d in self.internal_domains.split(",") if d.strip()
         ]
 
     @property
@@ -211,17 +209,21 @@ class Settings(BaseSettings):
             if m.strip() and m.strip().lower() not in targets
         ]
 
+    def overlapping_target_and_reviewer_mailboxes(self) -> list[str]:
+        """Addresses listed in both TARGET_MAILBOXES and REVIEWER_MAILBOXES."""
+        targets = {item.strip().lower() for item in self.mailbox_list}
+        reviewers = {
+            item.strip().lower() for item in self.reviewer_mailboxes.split(",") if item.strip()
+        }
+        return sorted(targets & reviewers)
+
     def is_reviewer_address(self, address: str) -> bool:
         from app.core.internal_mail import extract_email_address
 
         needle = extract_email_address(address) or address.strip().lower()
         if not needle:
             return False
-        allowed = {
-            m.strip().lower()
-            for m in self.reviewer_mailboxes.split(",")
-            if m.strip()
-        }
+        allowed = {m.strip().lower() for m in self.reviewer_mailboxes.split(",") if m.strip()}
         return needle in allowed
 
     def mailbox_allowed(self, mailbox: str) -> bool:

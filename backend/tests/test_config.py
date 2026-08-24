@@ -25,9 +25,26 @@ def test_embedding_settings_defaults() -> None:
     assert settings.chat_semantic_cache_enabled is True
     assert settings.chat_semantic_cache_threshold == 0.92
     assert settings.chat_semantic_cache_ttl_overview_sec == 300
-    assert settings.chat_semantic_cache_ttl_search_sec == 1200
+    assert settings.chat_semantic_cache_ttl_search_sec == 300
     assert settings.chat_max_input_tokens == 160_000
     assert settings.chat_rate_limit_per_minute == 60
+
+
+def test_overlapping_target_and_reviewer_mailboxes() -> None:
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com,cr@example.com",
+        reviewer_mailboxes="elise@example.com,sales@example.com",
+        _env_file=None,
+    )
+    assert settings.overlapping_target_and_reviewer_mailboxes() == ["sales@example.com"]
+    disjoint = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        reviewer_mailboxes="elise@example.com",
+        _env_file=None,
+    )
+    assert disjoint.overlapping_target_and_reviewer_mailboxes() == []
 
 
 def test_ops_report_settings_defaults() -> None:
