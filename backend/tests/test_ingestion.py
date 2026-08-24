@@ -60,7 +60,7 @@ def sample_message() -> GraphMessageSchema:
 async def test_thread_context_from_db_includes_recipients() -> None:
     """retry_triage rebuild must restore To/CC/BCC for Haiku PoI rules and UI."""
     from app.repositories.message_repo import MessageSchema
-    from app.services.ingestion_service import _thread_context_from_db
+    from app.services.ingestion_service import build_thread_context_from_db
 
     thread_id = uuid.uuid4()
     message_id = "msg-1"
@@ -105,7 +105,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
             AsyncMock(return_value=[msg_row]),
         ),
     ):
-        result = await _thread_context_from_db(
+        result = await build_thread_context_from_db(
             session, mailbox="user@example.com", message_id=message_id
         )
 
