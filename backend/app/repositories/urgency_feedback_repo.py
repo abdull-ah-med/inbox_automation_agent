@@ -9,7 +9,9 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.db.urgency_feedback import UrgencyFeedback
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 _REASON_DISPLAY_MAX = 240
 
@@ -81,6 +83,7 @@ async def find_similar(
     """
     if limit < 1:
         return []
+    await set_hnsw_session_defaults(session, get_settings())
     max_distance = 1.0 - min_similarity
     distance = UrgencyFeedback.embedding.cosine_distance(query_embedding)
     stmt = (

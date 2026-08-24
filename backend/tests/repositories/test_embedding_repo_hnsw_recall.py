@@ -228,3 +228,48 @@ async def test_contains_filter_uses_trgm_index(db_session) -> None:
     assert "Seq Scan" not in plan, plan
     await db_session.execute(text("TRUNCATE email_embeddings RESTART IDENTITY CASCADE"))
     await db_session.commit()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_recency_fallback_uses_composite_index(db_session) -> None:
+    """H15: empty-query FTS recency path uses (mailbox, sent_at DESC)."""
+    from sqlalchemy import text
+
+    now = datetime(2026, 8, 14, tzinfo=UTC)
+    for i in range(40):
+        db_session.add(
+            EmailEmbedding(
+                mailbox=MAILBOX if i % 2 == 0 else "other@example.com",
+                conversation_id=f"recency-{i}",
+                sender_email="vendor@example.com",
+                recipient_emails=["elise@example.com"],
+                cc_emails=[],
+                embedding=_unit(i),
+                sent_at=now,
+                body_preview=f"preview {i}",
+                search_document=f"doc {i}",
+            )
+        )
+    await db_session.commit()
+    await db_session.execute(text("SET LOCAL enable_seqscan = off"))
+    plan_rows = (
+        (
+            await db_session.execute(
+                text(
+                    "EXPLAIN (FORMAT TEXT) "
+                    "SELECT id FROM email_embeddings "
+                    "WHERE mailbox = :mailbox "
+                    "ORDER BY sent_at DESC "
+                    "LIMIT 10"
+                ),
+                {"mailbox": MAILBOX},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    plan = "\n".join(plan_rows)
+    assert "ix_email_embeddings_mailbox_sent_at" in plan, plan
+    await db_session.execute(text("TRUNCATE email_embeddings RESTART IDENTITY CASCADE"))
+    await db_session.commit()

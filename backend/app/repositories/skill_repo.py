@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.core.exceptions import (
     SkillBudgetExceededError,
     SkillNameConflictError,
@@ -28,6 +29,7 @@ from app.models.schemas.skill import (
     SkillUpdateSchema,
 )
 from app.repositories import skill_files_repo
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 # Caps how many standing instructions can be injected into every draft LLM call.
 MAX_ACTIVE_SKILLS = 20
@@ -397,6 +399,7 @@ async def find_similar(
     """
     if limit < 1:
         return []
+    await set_hnsw_session_defaults(session, get_settings())
     max_distance = 1.0 - threshold
     distance = Skill.embedding.cosine_distance(embedding)
     similarity = (1 - distance).label("similarity")
@@ -431,6 +434,7 @@ async def rank_by_cosine(
     """Return skills ordered by cosine distance (closest first)."""
     if not skill_ids or limit < 1:
         return []
+    await set_hnsw_session_defaults(session, get_settings())
     distance = Skill.embedding.cosine_distance(query_embedding)
     stmt = (
         select(Skill)

@@ -11,7 +11,9 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.models.db.chat_response_cache import ChatResponseCache
+from app.repositories._vector_common import set_hnsw_session_defaults
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +51,10 @@ async def find_semantic_hit(
     user_key: str,
     query_embedding: list[float],
     similarity_threshold: float,
+    settings: Settings | None = None,
 ) -> ChatCacheHit | None:
+    cfg = settings if settings is not None else get_settings()
+    await set_hnsw_session_defaults(session, cfg)
     now = datetime.now(UTC)
     distance = ChatResponseCache.query_embedding.cosine_distance(query_embedding)
     similarity = (1 - distance).label("similarity_score")

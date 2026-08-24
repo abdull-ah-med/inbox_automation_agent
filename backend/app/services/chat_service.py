@@ -341,6 +341,7 @@ async def _lookup_semantic_cache(
             user_key=user_key or "",
             query_embedding=embedding,
             similarity_threshold=settings.chat_semantic_cache_threshold,
+            settings=settings,
         )
     except Exception:
         logger.warning("chat_cache_lookup_failed", mailbox=mailbox)
