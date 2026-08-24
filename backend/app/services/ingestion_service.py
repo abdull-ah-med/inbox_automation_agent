@@ -266,7 +266,7 @@ async def release_triage_lock(
     await release_lock(redis, triage_lock_key(mailbox, message_id), token)
 
 
-async def _thread_context_from_db(
+async def build_thread_context_from_db(
     session: AsyncSession,
     *,
     mailbox: str,
@@ -356,7 +356,7 @@ async def ingest_graph_message(
         logger.info("ingestion_duplicate", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="duplicate")
     if claim == "in_flight":
-        retry = await _thread_context_from_db(session, mailbox=mailbox, message_id=message_id)
+        retry = await build_thread_context_from_db(session, mailbox=mailbox, message_id=message_id)
         if retry is not None:
             logger.info(
                 "ingestion_retry_triage",
@@ -435,6 +435,13 @@ async def ingest_graph_message(
                 conversation_id=conversation_id,
                 mailbox=mailbox,
             )
+            # No further pipeline step runs for status="outbound" (it's not
+            # in _TRIAGE_ELIGIBLE), so no caller ever reaches its own
+            # complete_ingest_dedup call for this message. Resolve it here,
+            # same as handle_outbound_notification does for Sent Items —
+            # otherwise the dedup key stays "processing" until its TTL
+            # expires and the next poll window re-resolves this message.
+            await complete_ingest_dedup(redis, mailbox, message_id)
             logger.info(
                 "ingestion_reviewer_copy_resolved",
                 mailbox=mailbox,
@@ -680,7 +687,7 @@ async def ingest_simulated_message(
         )
         return IngestResultSchema(message_id=payload.message_id, status="duplicate")
     if claim == "in_flight":
-        retry = await _thread_context_from_db(
+        retry = await build_thread_context_from_db(
             session, mailbox=payload.mailbox, message_id=payload.message_id
         )
         if retry is not None:

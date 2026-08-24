@@ -77,7 +77,7 @@ async def mark_not_spam(
     )
     await session.commit()
 
-    ingest_result = await ingestion_service._thread_context_from_db(
+    ingest_result = await ingestion_service.build_thread_context_from_db(
         session,
         mailbox=thread.mailbox,
         message_id=inbound.graph_message_id,

@@ -139,6 +139,67 @@ async def test_mark_not_spam_unhides_thread_and_allowlists_sender(db_session) ->
 
 
 @pytest.mark.asyncio
+async def test_not_spam_calls_public_context_builder(db_session) -> None:
+    """H3: not-spam rebuilds triage context through the public ingestion API.
+
+    Independent oracle (worked example): after Elise un-hides the SampleLab
+    billing thread, the response reports NEW (or any non-SPAM) and the
+    allowlisted sender is orders@sample-lab.example.com. The rebuild helper must be
+    importable as ``build_thread_context_from_db`` — a leading-underscore
+    name is private and will break when ingestion refactors.
+    """
+    from app.services.ingestion_service import build_thread_context_from_db
+
+    assert callable(build_thread_context_from_db)
+
+    thread = _thread(mailbox=ELISE, state=ThreadStateEnum.SPAM.value, conversation_id="c-public")
+    db_session.add(thread)
+    await db_session.flush()
+    db_session.add(_message(thread, sender=SAMPLELAB))
+    await db_session.commit()
+
+    async def _noop_pipeline(**_kwargs: object) -> EmailTriageState:
+        return EmailTriageState.model_validate(
+            {
+                "original_email": {
+                    "message_id": "m-public",
+                    "conversation_id": "c-public",
+                    "mailbox": ELISE,
+                    "sender": SAMPLELAB,
+                    "subject": "SampleLab invoice",
+                    "body_text": "Please confirm",
+                    "received_at": T_NOW,
+                },
+                "thread_context": {
+                    "conversation_id": "c-public",
+                    "mailbox": ELISE,
+                    "subject": "SampleLab invoice",
+                    "messages": [],
+                },
+                "draft_status": "SKIPPED",
+            }
+        )
+
+    with patch(
+        "app.services.not_spam_service.pipeline_service.run_phased_after_ingest",
+        new=AsyncMock(side_effect=_noop_pipeline),
+    ):
+        result = await not_spam_service.mark_not_spam(
+            db_session,
+            settings=_settings(),
+            thread_id=thread.id,
+            actor="elise@sample-site.example.com",
+            redis=AsyncMock(),
+            client=AsyncMock(),
+            openai_client=None,
+        )
+
+    assert result.state != ThreadStateEnum.SPAM.value
+    assert result.sender_address == SAMPLELAB
+    assert result.is_spam is False
+
+
+@pytest.mark.asyncio
 async def test_mark_not_spam_rejects_non_spam_thread(db_session) -> None:
     thread = _thread(
         mailbox=ELISE,
