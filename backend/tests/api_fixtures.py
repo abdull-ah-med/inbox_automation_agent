@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
