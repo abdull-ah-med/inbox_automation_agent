@@ -23,7 +23,6 @@ from tests.evals.judge import (
     require_eval_settings,
 )
 
-
 # Permissive until calibrated — records scores without failing on low quality.
 _PERMISSIVE_THRESHOLD = 0.0
 
