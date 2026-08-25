@@ -20,7 +20,6 @@ from tests.evals.judge import (
     ragas_judge_model_name,
     require_eval_settings,
 )
-from tests.live_helpers import env_flag
 
 # Cap grounding context size so Faithfulness NLI verdicts fit judge max_tokens.
 _MAX_CONTEXT_CHARS = 12_000
@@ -29,11 +28,6 @@ pytestmark = [
     pytest.mark.llm_eval,
     pytest.mark.asyncio,
 ]
-
-
-def _skip_unless_live() -> None:
-    if not env_flag("RUN_LLM_EVAL"):
-        pytest.skip("Set RUN_LLM_EVAL=1")
 
 
 def _truncate_contexts(contexts: list[str], *, max_chars: int = _MAX_CONTEXT_CHARS) -> list[str]:
@@ -120,7 +114,6 @@ def _name_level_tool_score(
 
 @pytest.fixture(scope="module")
 def eval_run_dir():
-    _skip_unless_live()
     require_eval_settings()
     return new_run_dir("ragas")
 

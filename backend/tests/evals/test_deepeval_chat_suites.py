@@ -21,7 +21,6 @@ from tests.evals.judge import (
     measure_metric_scores,
     require_eval_settings,
 )
-from tests.live_helpers import env_flag
 
 _PERMISSIVE_THRESHOLD = 0.0
 
@@ -29,11 +28,6 @@ pytestmark = [
     pytest.mark.llm_eval,
     pytest.mark.asyncio,
 ]
-
-
-def _skip_unless_live() -> None:
-    if not env_flag("RUN_LLM_EVAL"):
-        pytest.skip("Set RUN_LLM_EVAL=1")
 
 
 def _deepeval_imports() -> Any:
@@ -73,7 +67,6 @@ async def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def eval_run_dir():
-    _skip_unless_live()
     require_eval_settings()
     return new_run_dir("deepeval-chat")
 

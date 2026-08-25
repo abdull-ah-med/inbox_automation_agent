@@ -22,7 +22,7 @@ from tests.evals.judge import (
     measure_metric_scores,
     require_eval_settings,
 )
-from tests.live_helpers import env_flag
+
 
 # Permissive until calibrated — records scores without failing on low quality.
 _PERMISSIVE_THRESHOLD = 0.0
@@ -31,11 +31,6 @@ pytestmark = [
     pytest.mark.llm_eval,
     pytest.mark.asyncio,
 ]
-
-
-def _skip_unless_live() -> None:
-    if not env_flag("RUN_LLM_EVAL"):
-        pytest.skip("Set RUN_LLM_EVAL=1")
 
 
 def _deepeval_imports() -> Any:
@@ -104,7 +99,6 @@ def _expected_tool_calls(payload: EvalPayload, ToolCall: Any) -> list[Any]:
 
 @pytest.fixture(scope="module")
 def eval_run_dir():
-    _skip_unless_live()
     require_eval_settings()
     return new_run_dir("deepeval")
 

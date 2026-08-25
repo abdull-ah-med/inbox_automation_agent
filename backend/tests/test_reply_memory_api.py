@@ -4,31 +4,18 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.core.config import Settings, get_settings
 from app.core.dependencies import get_db
-from app.core.dependencies_auth import get_current_user
-from app.main import create_app
-from app.models.schemas.auth import UserMe
 from app.repositories.reply_embedding_repo import ReplyEmbeddingSchema
 
 
 @pytest.fixture
-def local_settings() -> Settings:
-    return Settings(
-        environment="local",
-        jwt_secret="c" * 64,
-        frontend_origin="http://localhost:3000",
-        cookie_secure=False,
-        enable_dev_routes=False,
-        target_mailboxes="sales@example.com,clientrelations@example.com",
-        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
-        redis_url="redis://localhost:6379/15",
-    )
+def api_user_role() -> str:
+    return "admin"
 
 
 def _reply(**overrides: object) -> ReplyEmbeddingSchema:
@@ -43,43 +30,6 @@ def _reply(**overrides: object) -> ReplyEmbeddingSchema:
     }
     base.update(overrides)
     return ReplyEmbeddingSchema.model_validate(base)
-
-
-@pytest.fixture
-def app(local_settings: Settings):
-    get_settings.cache_clear()
-    with (
-        patch("app.main.get_settings", return_value=local_settings),
-        patch("app.main._ping_redis", AsyncMock()),
-        patch("app.main.get_slack_app", return_value=None),
-        patch("app.main.run_subscription_reconcile", AsyncMock()),
-        patch("app.main.AsyncIOScheduler") as sched,
-    ):
-        sched.return_value.start = lambda: None
-        sched.return_value.shutdown = lambda wait=False: None
-        application = create_app()
-        application.dependency_overrides[get_settings] = lambda: local_settings
-
-        async def fake_user() -> UserMe:
-            return UserMe(
-                id=uuid.uuid4(),
-                email="elise@example.com",
-                role="admin",
-                created_at=datetime.now(UTC),
-            )
-
-        application.dependency_overrides[get_current_user] = fake_user
-
-        mock_session = MagicMock()
-        mock_session.commit = AsyncMock()
-
-        async def fake_db():
-            yield mock_session
-
-        application.dependency_overrides[get_db] = fake_db
-        yield application
-        application.dependency_overrides.clear()
-    get_settings.cache_clear()
 
 
 @pytest.mark.asyncio

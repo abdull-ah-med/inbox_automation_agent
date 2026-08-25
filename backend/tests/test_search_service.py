@@ -206,26 +206,15 @@ def _patch_retrieval():
 
 
 @pytest.mark.asyncio
-async def test_blank_query_raises() -> None:
+@pytest.mark.parametrize("query", ["", "   "])
+async def test_empty_or_blank_query_raises(query: str) -> None:
     session = AsyncMock()
     with pytest.raises(EmptySearchQueryError):
         await search_service.search_threads(
             session,
             _settings(),
             openai_client=None,
-            query="   ",
-        )
-
-
-@pytest.mark.asyncio
-async def test_empty_query_raises() -> None:
-    session = AsyncMock()
-    with pytest.raises(EmptySearchQueryError):
-        await search_service.search_threads(
-            session,
-            _settings(),
-            openai_client=None,
-            query="",
+            query=query,
         )
 
 

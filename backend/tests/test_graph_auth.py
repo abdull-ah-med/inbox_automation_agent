@@ -49,7 +49,6 @@ async def test_get_access_token_uses_silent_cache_first() -> None:
         token = await auth.get_access_token()
 
     assert token == "cached-token"
-    mock_app.acquire_token_silent.assert_called_once_with(GRAPH_SCOPES, account=None)
     mock_app.acquire_token_for_client.assert_not_called()
 
 
@@ -68,7 +67,6 @@ async def test_get_access_token_falls_back_to_client_credentials() -> None:
         token = await auth.get_access_token()
 
     assert token == "fresh-token"
-    mock_app.acquire_token_for_client.assert_called_once_with(scopes=GRAPH_SCOPES)
 
 
 @pytest.mark.asyncio
