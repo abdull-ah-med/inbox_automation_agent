@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { api } from "@/lib/api-client"
+import { getMutationErrorMessage } from "@/lib/error-messages"
 import type { ActivityEntry, ThreadPresentation } from "@/lib/types"
 
 type FeedbackOutcome = "reopened" | "wrong_reason"
@@ -63,7 +64,7 @@ export const ResolutionBanner = ({
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] })
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : "Could not update resolution.")
+      setError(getMutationErrorMessage(err, "Could not update resolution."))
     },
   })
 

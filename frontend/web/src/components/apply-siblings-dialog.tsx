@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api-client"
 import { formatReviewerDate } from "@/lib/dates"
+import { getMutationErrorMessage } from "@/lib/error-messages"
 import type { RelatedThreadItem } from "@/lib/types"
 
 export const ApplySiblingsDialog = ({
@@ -74,7 +75,7 @@ export const ApplySiblingsDialog = ({
       await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
       onOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not skip related threads.")
+      setError(getMutationErrorMessage(err, "Could not skip related threads."))
     } finally {
       setBusy(false)
     }

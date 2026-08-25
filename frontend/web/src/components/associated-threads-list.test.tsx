@@ -275,5 +275,33 @@ describe("AssociatedThreadsList", () => {
     expect(screen.queryByText("Similar subject")).not.toBeInTheDocument()
   })
 
+  it("replaces the list when items prop changes", () => {
+    const { rerender } = renderList([item])
+    expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
+    rerender(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+          })
+        }
+      >
+        <AssociatedThreadsList
+          sourceThreadId="thread-src"
+          sourceSubject={SOURCE_SUBJECT}
+          items={[
+            {
+              ...item,
+              thread_id: "assoc-2",
+              subject: "Vendor invoice 9/1",
+            },
+          ]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByText("SampleClient follow-up 8/14")).not.toBeInTheDocument()
+    expect(screen.getByText("Vendor invoice 9/1")).toBeInTheDocument()
+  })
+
 })
 
