@@ -166,11 +166,32 @@ export const InboxAssistant = () => {
   })
   const mailboxes: MailboxOverview[] = mailboxesQuery.data ?? []
 
+  const resumeStoredSessionIfEmpty = async () => {
+    if (turns.length > 0) return
+    const stored = readStoredSessionId(mailbox)
+    if (!stored) return
+    try {
+      const session = await api.chat.getSession(stored)
+      setSessionId((current) => current ?? session.session_id)
+      setTurns((current) => {
+        if (current.length > 0) return current
+        return session.messages.map((item, index) => ({
+          id: `restored-${session.session_id}-${index}`,
+          role: item.role,
+          text: item.content,
+        }))
+      })
+    } catch {
+      clearStoredSessionId(mailbox)
+    }
+  }
+
   const handleOpen = () => {
     setOpen(true)
     window.requestAnimationFrame(() => {
       inputRef.current?.focus()
     })
+    void resumeStoredSessionIfEmpty()
   }
 
   useEffect(() => {
@@ -178,41 +199,6 @@ export const InboxAssistant = () => {
       abortRef.current?.abort()
     }
   }, [])
-
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    const resume = async () => {
-      const stored = readStoredSessionId(mailbox)
-      if (!stored) {
-        if (!cancelled) {
-          setSessionId(null)
-          setTurns([])
-        }
-        return
-      }
-      try {
-        const session = await api.chat.getSession(stored)
-        if (cancelled) return
-        setSessionId(session.session_id)
-        const restored: ChatTurn[] = session.messages.map((item, index) => ({
-          id: `restored-${session.session_id}-${index}`,
-          role: item.role,
-          text: item.content,
-        }))
-        setTurns(restored)
-      } catch {
-        if (cancelled) return
-        clearStoredSessionId(mailbox)
-        setSessionId(null)
-        setTurns([])
-      }
-    }
-    void resume()
-    return () => {
-      cancelled = true
-    }
-  }, [open, mailbox])
 
   const ensureSessionId = async (): Promise<string> => {
     if (sessionId) return sessionId
@@ -537,7 +523,7 @@ export const InboxAssistant = () => {
         inert={!open}
         data-state={open ? "open" : "closed"}
         className={cn(
-          "fixed z-50 m-0 flex flex-col overflow-hidden rounded-2xl bg-card p-0 shadow-2xl ring-1 ring-foreground/10",
+          "fixed top-auto left-auto start-auto z-50 m-0 flex flex-col overflow-hidden rounded-2xl bg-card p-0 shadow-2xl ring-1 ring-foreground/10",
           PANEL_SIZE_CLASS[panelSize],
           "origin-bottom-right transition-[width,height,transform,opacity] duration-200 ease-out",
           open

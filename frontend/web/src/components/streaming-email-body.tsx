@@ -12,6 +12,15 @@ type StreamingEmailBodyProps = {
   citations?: ChatCitation[]
 }
 
+const OPENING_FENCE = /^```[\w+-]*[ \t]*\r?\n?/
+const CLOSING_FENCE = /\r?\n?```[ \t]*\s*$/
+
+const unwrapWrappingFence = (text: string): string => {
+  const stripped = text.trimStart()
+  if (!stripped.startsWith("```")) return text
+  return stripped.replace(OPENING_FENCE, "").replace(CLOSING_FENCE, "")
+}
+
 /**
  * Renders an InboxAssistant answer with ChatGPT-style smooth character reveal
  * while tokens are still arriving (or catching up after the stream ends).
@@ -23,7 +32,10 @@ export const StreamingEmailBody = ({
   className,
   citations,
 }: StreamingEmailBodyProps) => {
-  const { visible, animating } = useSmoothStreamText(text, streaming)
+  const { visible, animating } = useSmoothStreamText(
+    unwrapWrappingFence(text),
+    streaming,
+  )
 
   return (
     <EmailBody
