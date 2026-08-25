@@ -70,3 +70,4 @@ skills-lock.json
 # DeepEval local telemetry
 .deepeval/
 **/.deepeval/
+package-lock.json

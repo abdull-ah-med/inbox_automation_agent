@@ -695,7 +695,11 @@ async def list_recent_for_mailboxes(
     per_mailbox: int = 3,
     stale_after_hours: int = 24,
 ) -> dict[str, list[ThreadSummary]]:
-    """Top ``per_mailbox`` recent threads per mailbox in a single capped query."""
+    """Top ``per_mailbox`` awaiting-action threads per mailbox.
+
+    Ranked independently per mailbox so a busy inbox cannot starve the
+    others on the home-page cards.
+    """
     _ = stale_after_hours  # reserved for future stale filtering parity
     if not mailbox_emails or per_mailbox < 1:
         return {email: [] for email in mailbox_emails}
@@ -703,6 +707,27 @@ async def list_recent_for_mailboxes(
     now = datetime.now(UTC)
     msg_count = func.count(Message.id).label("message_count")
     latest_msg = _latest_message_ranked()
+    latest_draft = _latest_draft_ranked()
+    ranked = (
+        select(
+            Thread.id.label("tid"),
+            func.row_number()
+            .over(
+                partition_by=Thread.mailbox,
+                order_by=(Thread.last_message_at.desc().nullslast(), Thread.id.desc()),
+            )
+            .label("rn"),
+        )
+        .outerjoin(
+            latest_draft,
+            (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
+        )
+        .where(
+            Thread.mailbox.in_(mailbox_emails),
+            _needs_elise_action(latest_draft),
+        )
+        .subquery()
+    )
 
     stmt = (
         select(
@@ -714,15 +739,13 @@ async def list_recent_for_mailboxes(
             latest_msg.c.preview,
             latest_msg.c.graph_message_id,
         )
+        .join(ranked, ranked.c.tid == Thread.id)
         .outerjoin(Message, Message.thread_id == Thread.id)
         .outerjoin(
             latest_msg,
             (latest_msg.c.tid == Thread.id) & (latest_msg.c.rn == 1),
         )
-        .where(
-            Thread.mailbox.in_(mailbox_emails),
-            Thread.state.notin_(_FILTERED_STATES),
-        )
+        .where(ranked.c.rn <= per_mailbox)
         .group_by(
             Thread.id,
             latest_msg.c.sender,
@@ -731,8 +754,7 @@ async def list_recent_for_mailboxes(
             latest_msg.c.preview,
             latest_msg.c.graph_message_id,
         )
-        .order_by(Thread.mailbox, Thread.last_message_at.desc().nullslast())
-        .limit(len(mailbox_emails) * per_mailbox * 2)
+        .order_by(Thread.mailbox, Thread.last_message_at.desc().nullslast(), Thread.id.desc())
     )
     result = await session.execute(stmt)
     rows = result.all()
