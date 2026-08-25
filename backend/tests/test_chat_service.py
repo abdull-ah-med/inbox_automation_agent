@@ -342,6 +342,20 @@ def test_sanitize_chat_answer_keeps_numbered_citation_markers() -> None:
     assert sanitize_chat_answer(prose) == prose
 
 
+def test_sanitize_chat_answer_unwraps_a_wrapping_markdown_fence() -> None:
+    from app.llm.chat import sanitize_chat_answer
+
+    raw = "```markdown\nBonnie is waiting on the overdue invoice [1].\n```"
+    assert sanitize_chat_answer(raw) == "Bonnie is waiting on the overdue invoice [1]."
+
+
+def test_sanitize_chat_answer_leaves_an_inline_fence_snippet() -> None:
+    from app.llm.chat import sanitize_chat_answer
+
+    prose = "Use this snippet:\n```\nselect * from threads\n```"
+    assert sanitize_chat_answer(prose) == prose
+
+
 def test_unknown_thread_ids_in_answer_are_ids_not_in_hits() -> None:
     from app.llm.chat import unknown_thread_ids_in_answer
 

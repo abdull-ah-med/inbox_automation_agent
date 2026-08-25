@@ -371,6 +371,120 @@ describe("InboxAssistant", () => {
     expect(panel.className).toMatch(/max-h-\[70dvh\]/)
   })
 
+  it("anchors the open panel to the bottom-right with the launcher", async () => {
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    const panel = screen.getByRole("dialog", { name: /inboxassistant/i })
+    // Native <dialog> UA sheets set left/inset-inline-start to 0; those must
+    // be auto so the explicit right/bottom classes actually win.
+    expect(panel.className).toMatch(/\bleft-auto\b/)
+    expect(panel.className).toMatch(/\bstart-auto\b/)
+    expect(panel.className).toMatch(/\bright-3\b/)
+    expect(panel.className).toMatch(/\bbottom-3\b/)
+    expect(panel.className).not.toMatch(/\bleft-0\b/)
+    expect(panel.className).not.toMatch(/\bleft-3\b/)
+  })
+
+  it("keeps the transcript after close and reopen until Reset", async () => {
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: /close inboxassistant/i }))
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("billing disputes waiting on review"),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Ask about the inbox")).not.toBeInTheDocument()
+  })
+
+  it("keeps the transcript when the mailbox filter changes", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole("combobox", { name: "Mailbox" }))
+    await user.click(await screen.findByRole("option", { name: "Sales" }))
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    })
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Ask about the inbox")).not.toBeInTheDocument()
+  })
+
+  it("restores a stored session when InboxAssistant opens on an empty chat", async () => {
+    window.localStorage.setItem(
+      "inboxassistant_session_all",
+      "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    )
+    getSession.mockResolvedValue({
+      session_id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      mailbox: null,
+      messages: [
+        { role: "user", content: "billing disputes waiting on review" },
+        {
+          role: "assistant",
+          content: "The overdue billing dispute is waiting on review.",
+        },
+      ],
+    })
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText("billing disputes waiting on review"),
+    ).toBeInTheDocument()
+  })
+
+  it("shows a whole-answer markdown fence as prose, not backticks", async () => {
+    askChat.mockImplementation(
+      async (
+        _body: unknown,
+        handlers: Parameters<typeof deliverStream>[0],
+      ) => {
+        deliverStream(
+          handlers,
+          "```markdown\nThe overdue billing dispute is waiting on review.\n```",
+        )
+      },
+    )
+    const user = userEvent.setup()
+    renderBot()
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/```/)).toBeNull()
+  })
+
   it("keeps the closed panel in the document so it can animate shut", async () => {
     const user = userEvent.setup()
     renderBot()

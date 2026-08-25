@@ -44,4 +44,16 @@ describe("StreamingEmailBody", () => {
       expect(screen.queryByLabelText("Generating answer")).not.toBeInTheDocument()
     })
   })
+
+  it("unwraps a wrapping markdown fence so the reviewer sees prose", () => {
+    render(
+      <StreamingEmailBody
+        text={"```markdown\nBonnie is waiting on review.\n```"}
+        streaming={false}
+      />,
+    )
+
+    expect(screen.getByText("Bonnie is waiting on review.")).toBeInTheDocument()
+    expect(screen.queryByText(/```/)).toBeNull()
+  })
 })

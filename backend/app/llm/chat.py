@@ -27,7 +27,6 @@ from app.llm.chat_tools import (
     search_results_from_hits,
     search_results_from_overview,
 )
-from app.llm.pii_redact import scrub_text
 from app.llm.prompts import salted_untrusted_tag, wrap_untrusted
 from app.llm.smooth_deltas import smooth_deltas
 from app.models.schemas.chat import ChatHistoryTurn
@@ -73,16 +72,29 @@ def unknown_thread_ids_in_answer(
     return found
 
 
+_OPENING_FENCE = re.compile(r"^```[\w+-]*[ \t]*\r?\n?")
+_CLOSING_FENCE = re.compile(r"\r?\n?```[ \t]*\s*$")
+
+
+def _unwrap_wrapping_fence(text: str) -> str:
+    stripped = text.lstrip()
+    if not stripped.startswith("```"):
+        return text
+    inner = _OPENING_FENCE.sub("", stripped, count=1)
+    return _CLOSING_FENCE.sub("", inner, count=1)
+
+
 def sanitize_chat_answer(
     answer: str,
     *,
     known_thread_ids: set[uuid.UUID] | None = None,
 ) -> str:
     """Strip thread ids from answer text. Citations are attached by the app."""
+    text = _unwrap_wrapping_fence(answer)
     if known_thread_ids is not None:
-        for token in unknown_thread_ids_in_answer(answer, known_thread_ids=known_thread_ids):
+        for token in unknown_thread_ids_in_answer(text, known_thread_ids=known_thread_ids):
             logger.warning("chat.unknown_thread_id", thread_id=token)
-    text = _ID_CLAUSE.sub("", answer)
+    text = _ID_CLAUSE.sub("", text)
     text = _UUID_LIKE.sub("", text)
     text = re.sub(r"\(\s*\)", "", text)
     text = re.sub(r"\[\s*\]", "", text)
@@ -138,21 +150,6 @@ class ChatDeltaScrubber:
         if sanitize:
             return sanitize_chat_answer(text, known_thread_ids=self.known_thread_ids)
         return text
-
-
-def _hit_block(hit: SearchHit) -> str:
-    snippet = scrub_text(hit.snippet or "")
-    subject = scrub_text(hit.subject or "") or "(no subject)"
-    when = hit.last_message_at.isoformat() if hit.last_message_at else "(none)"
-    return (
-        f"mailbox: {hit.mailbox}\n"
-        f"subject: {subject}\n"
-        f"sender: {hit.sender or '(none)'}\n"
-        f"state: {hit.state}\n"
-        f"urgency: {hit.urgency or '(none)'}\n"
-        f"last_message_at: {when}\n"
-        f"snippet:\n{snippet}\n"
-    )
 
 
 def _exhaustion_fallback_answer(hits: list[SearchHit]) -> str:
