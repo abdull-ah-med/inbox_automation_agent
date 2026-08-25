@@ -61,8 +61,9 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import InvalidDateRangeError, UnknownMailboxError
-from app.core.mailbox_keys import infer_mailbox_key, resolve_mailbox_email
+from app.core.exceptions import InvalidDateRangeError
+from app.core.mailbox_keys import infer_mailbox_key
+from app.core.mailbox_keys import scoped_mailboxes as scope_allowed_mailboxes
 from app.models.schemas.ops_report import (
     MailboxVolume,
     OpsMetricsResponse,
@@ -163,13 +164,7 @@ def validate_window(date_from: datetime, date_to: datetime) -> tuple[datetime, d
 
 def scoped_mailboxes(settings: Settings, mailbox: str | None) -> list[str]:
     """Restrict to ``settings.mailbox_list``; optional single-mailbox filter."""
-    allowed = list(settings.mailbox_list)
-    if mailbox is None or not mailbox.strip():
-        return allowed
-    email = resolve_mailbox_email(mailbox.strip(), allowed)
-    if email is None or not settings.mailbox_allowed(email):
-        raise UnknownMailboxError("Mailbox not found")
-    return [email]
+    return scope_allowed_mailboxes(settings, mailbox)
 
 
 async def get_metrics(

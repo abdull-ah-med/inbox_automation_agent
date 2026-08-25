@@ -172,6 +172,14 @@ def test_scoped_mailboxes_unknown_raises() -> None:
         ops_metrics_service.scoped_mailboxes(_settings(), "other@example.com")
 
 
+def test_scoped_mailboxes_strips_control_chars_from_key() -> None:
+    """NUL in a mailbox key must still resolve, matching search_service sanitization."""
+    settings = _settings()
+    assert ops_metrics_service.scoped_mailboxes(settings, "sales\x00") == [
+        "sales@example.com"
+    ]
+
+
 @pytest.mark.asyncio
 async def test_approval_rate_is_zero_when_nothing_was_decided() -> None:
     session = AsyncMock()

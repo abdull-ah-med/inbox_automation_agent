@@ -106,23 +106,3 @@ async def update_password_hash_only(
         )
     )
     await session.execute(stmt)
-
-
-async def bump_token_version(session: AsyncSession, user_id: uuid.UUID) -> int:
-    """Increment token_version; return the new value."""
-    now = datetime.now(UTC)
-    stmt = (
-        update(User)
-        .where(User.id == user_id)
-        .values(
-            token_version=User.token_version + 1,
-            updated_at=now,
-        )
-        .returning(User.token_version)
-    )
-    result = await session.execute(stmt)
-    value = result.scalar_one()
-    from app.core.rate_limit import invalidate_user_auth_cache
-
-    invalidate_user_auth_cache(user_id)
-    return int(value)

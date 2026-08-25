@@ -85,9 +85,7 @@ async def regenerate_draft(
     + audit run in a short write transaction afterward.
     """
     thread = await thread_repo.get_by_id(session, thread_id)
-    if thread is None:
-        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
-    if not settings.mailbox_allowed(thread.mailbox):
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
 
     messages = await message_repo.list_by_thread(session, thread_id)

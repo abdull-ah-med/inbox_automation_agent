@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.tone_profile import ToneProfile
 from app.models.schemas.tone_profile import ToneProfileResponseSchema, ToneProfileSchema
+from app.repositories._vector_common import cap_limit
 
 
 def _to_response(row: ToneProfile) -> ToneProfileResponseSchema:
@@ -50,7 +51,7 @@ async def list_profiles(
     mailbox: str | None = None,
     limit: int = 100,
 ) -> list[ToneProfileResponseSchema]:
-    capped = max(1, min(limit, 500))
+    capped = cap_limit(limit, maximum=500)
     stmt = select(ToneProfile).order_by(ToneProfile.built_at.desc()).limit(capped)
     if mailbox is not None:
         stmt = stmt.where(ToneProfile.mailbox == mailbox)

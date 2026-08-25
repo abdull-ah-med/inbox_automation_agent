@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete as sa_delete
@@ -30,6 +30,10 @@ from app.models.schemas.skill import (
 )
 from app.repositories import skill_files_repo
 from app.repositories._vector_common import set_hnsw_session_defaults
+
+
+def _raise_name_conflict(exc: IntegrityError, name: object) -> NoReturn:
+    raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
 
 # Caps how many standing instructions can be injected into every draft LLM call.
 MAX_ACTIVE_SKILLS = 20
@@ -149,12 +153,6 @@ async def get_by_id(
     return _to_response(row)
 
 
-async def get_orm_by_id(session: AsyncSession, skill_id: uuid.UUID) -> Skill | None:
-    stmt = select(Skill).where(Skill.id == skill_id)
-    result = await session.execute(stmt)
-    return result.scalar_one_or_none()
-
-
 async def get_by_name(session: AsyncSession, name: str) -> SkillResponseSchema | None:
     stmt = select(Skill).options(selectinload(Skill.files)).where(Skill.name == name)
     result = await session.execute(stmt)
@@ -234,7 +232,7 @@ async def create(
     try:
         await session.flush()
     except IntegrityError as exc:
-        raise SkillNameConflictError(f"Skill name already exists: {data.name}") from exc
+        _raise_name_conflict(exc, data.name)
     await session.refresh(row, attribute_names=["files"])
     return _to_response(row)
 
@@ -289,7 +287,7 @@ async def upsert_imported(
         try:
             await session.flush()
         except IntegrityError as exc:
-            raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
+            _raise_name_conflict(exc, name)
         await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
         refreshed = await get_by_id(session, row.id)
         assert refreshed is not None
@@ -312,7 +310,7 @@ async def upsert_imported(
     try:
         result = await session.execute(stmt)
     except IntegrityError as exc:
-        raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
+        _raise_name_conflict(exc, name)
     row = result.scalar_one()
     await session.flush()
     await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
@@ -355,7 +353,7 @@ async def update_skill(
     try:
         result = await session.execute(stmt)
     except IntegrityError as exc:
-        raise SkillNameConflictError(f"Skill name already exists: {values.get('name')}") from exc
+        _raise_name_conflict(exc, values.get("name"))
     row = result.scalar_one_or_none()
     if row is None:
         return None
@@ -422,32 +420,6 @@ async def find_similar(
         )
         for row in result.all()
     ]
-
-
-async def rank_by_cosine(
-    session: AsyncSession,
-    *,
-    query_embedding: list[float],
-    skill_ids: list[uuid.UUID],
-    limit: int = 8,
-) -> list[SkillSelectionRow]:
-    """Return skills ordered by cosine distance (closest first)."""
-    if not skill_ids or limit < 1:
-        return []
-    await set_hnsw_session_defaults(session, get_settings())
-    distance = Skill.embedding.cosine_distance(query_embedding)
-    stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
-        .where(
-            Skill.id.in_(skill_ids),
-            Skill.embedding.is_not(None),
-        )
-        .order_by(distance)
-        .limit(limit)
-    )
-    result = await session.execute(stmt)
-    return [_to_selection(row) for row in result.scalars().all()]
 
 
 async def delete_skill(session: AsyncSession, skill_id: uuid.UUID) -> bool:

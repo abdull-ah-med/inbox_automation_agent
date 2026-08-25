@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.db.urgency_feedback import UrgencyFeedback
 from app.repositories._vector_common import set_hnsw_session_defaults
+from app.utils.text import truncate_display
 
 _REASON_DISPLAY_MAX = 240
 
@@ -32,9 +33,7 @@ class UrgencyFeedbackSchema(BaseModel):
 
 
 def format_urgency_hint(*, new_urgency: str, reason: str) -> str:
-    text = reason.strip()
-    if len(text) > _REASON_DISPLAY_MAX:
-        text = text[: _REASON_DISPLAY_MAX - 1] + "…"
+    text = truncate_display(reason.strip(), _REASON_DISPLAY_MAX)
     return f"[{new_urgency}] {text}"
 
 

@@ -36,6 +36,7 @@ from app.repositories import (
 )
 from app.services import related_thread_service
 from app.services.thread_narrative import build_activity
+from app.utils.email_quotes import find_quote_boundary
 
 
 def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
@@ -100,17 +101,18 @@ def _reply_only(text: str) -> str:
     Original Message separators, underscore rules, From/Sent header blocks, and
     ``On … wrote:`` markers.
     """
-    patterns = (
-        re.compile(r"(^|\n)[-\s]*Original Message[-\s]*\s*\n", re.IGNORECASE),
+    extra_patterns = (
         re.compile(r"(^|\n)_{10,}\s*\n"),
         re.compile(
             r"(^|\n)From:\s.+\nSent:\s.+(?:\n(?:To|Cc|Bcc|Subject):.*)*\n",
             re.IGNORECASE,
         ),
-        re.compile(r"(^|\n)On .+ wrote:\s*\n", re.IGNORECASE),
     )
     candidates: list[int] = []
-    for pattern in patterns:
+    shared = find_quote_boundary(text)
+    if shared is not None and shared > 0:
+        candidates.append(shared)
+    for pattern in extra_patterns:
         match = pattern.search(text)
         if match is None:
             continue

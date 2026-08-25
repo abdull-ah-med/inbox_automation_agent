@@ -20,6 +20,7 @@ from app.models.schemas.draft import (
     SuggestedActionSchema,
     SuggestedRecipientSchema,
 )
+from app.repositories._vector_common import cap_limit
 
 Urgency = Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
 _VALID_URGENCY = frozenset({"CRITICAL", "HIGH", "NORMAL", "LOW"})
@@ -434,20 +435,6 @@ async def set_urgency(
     return _to_response(row)
 
 
-async def get_approved_drafts(
-    session: AsyncSession,
-    *,
-    mailbox: str | None = None,
-    limit: int = 100,
-) -> list[DraftResponseSchema]:
-    stmt = select(Draft).where(Draft.approved_at.is_not(None))
-    if mailbox is not None:
-        stmt = stmt.join(Thread, Thread.id == Draft.thread_id).where(Thread.mailbox == mailbox)
-    stmt = stmt.order_by(Draft.approved_at.desc()).limit(limit)
-    result = await session.execute(stmt)
-    return [_to_response(row) for row in result.scalars().all()]
-
-
 async def count_approvals(
     session: AsyncSession,
     *,
@@ -482,7 +469,7 @@ async def list_recent_approved_bodies(
     limit: int = 20,
 ) -> list[str]:
     """Return recent approved reply bodies (edited_body ?? body), newest first."""
-    capped = max(1, min(limit, 50))
+    capped = cap_limit(limit, maximum=50)
     stmt = (
         select(Draft.edited_body, Draft.body)
         .join(Thread, Thread.id == Draft.thread_id)

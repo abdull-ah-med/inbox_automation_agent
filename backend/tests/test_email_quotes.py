@@ -10,7 +10,11 @@ from datetime import UTC, datetime
 
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
 from app.services import embedding_service
-from app.utils.email_quotes import EMBED_CLEAN_VERSION, strip_quoted_reply
+from app.utils.email_quotes import (
+    EMBED_CLEAN_VERSION,
+    find_quote_boundary,
+    strip_quoted_reply,
+)
 
 
 def _gmail_thread_newest_reply() -> str:
@@ -33,6 +37,33 @@ def test_gmail_on_wrote_keeps_only_newest_reply() -> None:
     assert "invoice 1" not in result.text
     assert "wrote:" not in result.text.lower()
     assert result.quotes_stripped is True
+
+
+def test_find_quote_boundary_gmail_marker_index() -> None:
+    prefix = "Please send invoice 42 today.\n\n"
+    body = (
+        prefix
+        + "On Thu, Aug 14, 2026 at 3:00 PM Alice <alice@example.com> wrote:\n"
+        + "> invoice 1 from last week\n"
+    )
+    at = find_quote_boundary(body)
+    assert at is not None
+    assert "On Thu," in body[at:]
+    assert body[:at].rstrip() == "Please send invoice 42 today."
+
+
+def test_find_quote_boundary_outlook_marker_index() -> None:
+    prefix = "Confirm the screen for Ashley Cantrell.\n\n"
+    body = (
+        prefix
+        + "-----Original Message-----\n"
+        + "From: bob@example.com\n"
+        + "Quoted history about invoice 1 that should vanish\n"
+    )
+    at = find_quote_boundary(body)
+    assert at is not None
+    assert "Original Message" in body[at:]
+    assert body[:at].rstrip() == "Confirm the screen for Ashley Cantrell."
 
 
 def test_outlook_original_message_stripped() -> None:

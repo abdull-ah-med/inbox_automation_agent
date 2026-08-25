@@ -21,6 +21,18 @@ _RFC_SIGNATURE_RE = re.compile(r"(?m)^-- $")
 _QUOTE_LINE_RE = re.compile(r"(?m)^>.*(?:\n|$)")
 
 
+def find_quote_boundary(text: str) -> int | None:
+    """Return the earliest index of a Gmail/Outlook quote block, or None."""
+    cut_at: int | None = None
+    for pattern in (_GMAIL_ON_WROTE_RE, _OUTLOOK_ORIGINAL_RE):
+        match = pattern.search(text)
+        if match is None:
+            continue
+        if cut_at is None or match.start() < cut_at:
+            cut_at = match.start()
+    return cut_at
+
+
 @dataclass(frozen=True)
 class QuoteStrippedBody:
     text: str
@@ -45,14 +57,7 @@ def strip_quoted_reply(body: str) -> QuoteStrippedBody:
     quotes_stripped = False
     signature_stripped = False
 
-    cut_at: int | None = None
-    gmail = _GMAIL_ON_WROTE_RE.search(working)
-    outlook = _OUTLOOK_ORIGINAL_RE.search(working)
-    for match in (gmail, outlook):
-        if match is None:
-            continue
-        if cut_at is None or match.start() < cut_at:
-            cut_at = match.start()
+    cut_at = find_quote_boundary(working)
     if cut_at is not None:
         removed.append(working[cut_at:])
         working = working[:cut_at].rstrip()

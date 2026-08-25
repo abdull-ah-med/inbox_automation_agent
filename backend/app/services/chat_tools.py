@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import SearchError, UnknownMailboxError
-from app.core.mailbox_keys import resolve_mailbox_email
+from app.core.mailbox_keys import resolve_allowed_mailbox
 from app.core.sanitize import sanitize_user_text
 from app.llm.chat_tools import ChatToolExecution
 from app.llm.email_clean import clean_email_body
@@ -291,8 +291,5 @@ async def _enrich_hits_with_bodies(
     return enriched
 
 
-def _scope_email(settings: Settings, mailbox: str) -> str | None:
-    email = resolve_mailbox_email(sanitize_user_text(mailbox), list(settings.mailbox_list))
-    if email is None or not settings.mailbox_allowed(email):
-        raise UnknownMailboxError("Mailbox not found")
-    return email
+def _scope_email(settings: Settings, mailbox: str) -> str:
+    return resolve_allowed_mailbox(settings, mailbox)

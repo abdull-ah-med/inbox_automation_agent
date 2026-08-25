@@ -18,6 +18,7 @@ from app.core.internal_mail import is_internal_sender
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.llm.prompts import PROMPT_VERSION
+from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
@@ -79,9 +80,9 @@ async def _allowlisted_senders(session: object, mailbox: str) -> frozenset[str]:
     return await spam_allowlist_repo.addresses_for_mailbox(session, mailbox)
 
 _OUTCOME_EVENT_TYPES = {
-    "spam_discarded": "triage.spam_discarded",
-    "no_action_discarded": "triage.no_action_discarded",
-    "action_needed": "triage.action_needed",
+    "spam_discarded": TriageAuditEvent.SPAM_DISCARDED,
+    "no_action_discarded": TriageAuditEvent.NO_ACTION_DISCARDED,
+    "action_needed": TriageAuditEvent.ACTION_NEEDED,
 }
 
 # Terminal triage outcomes that write straight to ``threads.state`` — the
@@ -281,7 +282,7 @@ def _select_original_email(
 
 def _audit_event_type(state: EmailTriageState) -> str:
     if state.triage is None:
-        return "triage.failed"
+        return TriageAuditEvent.FAILED
     outcome, _ = decide_triage_outcome(state.triage)
     return _OUTCOME_EVENT_TYPES[outcome]
 
