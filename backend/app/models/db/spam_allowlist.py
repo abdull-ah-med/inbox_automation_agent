@@ -17,7 +17,7 @@ class SpamAllowlist(Base):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    mailbox: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    mailbox: Mapped[str] = mapped_column(String(320), nullable=False)
     sender_address: Mapped[str] = mapped_column(String(320), nullable=False)
     thread_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
