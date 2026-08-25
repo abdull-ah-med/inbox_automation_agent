@@ -156,3 +156,6 @@ export const friendlyErrorFromUnknown = (error: unknown): FriendlyError => {
 export const getErrorMessage = (error: unknown): string => {
   return friendlyErrorFromUnknown(error).description
 }
+
+export const getMutationErrorMessage = (err: unknown, fallback: string): string =>
+  err instanceof Error ? err.message : fallback
