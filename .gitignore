@@ -66,3 +66,7 @@ skills-lock.json
 /changes.md
 /pdf.md
 /DEPLOYMENT_BLOCKERS.md
+
+# DeepEval local telemetry
+.deepeval/
+**/.deepeval/
