@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { RecurrenceBanner } from "@/components/recurrence-banner"
 import type { ActivityEntry } from "@/lib/types"
+import { renderWithProviders } from "@/test/render"
 
 const urgencyFeedbackMock = vi.fn()
 
@@ -34,16 +34,10 @@ const markedWrong: ActivityEntry = {
   timestamp: "2026-08-21T16:05:00Z",
 }
 
-const renderBanner = (activity: ActivityEntry[]) => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
-  return render(
-    <QueryClientProvider client={client}>
-      <RecurrenceBanner threadId={THREAD_ID} activity={activity} />
-    </QueryClientProvider>,
+const renderBanner = (activity: ActivityEntry[]) =>
+  renderWithProviders(
+    <RecurrenceBanner threadId={THREAD_ID} activity={activity} />,
   )
-}
 
 describe("RecurrenceBanner", () => {
   beforeEach(() => {

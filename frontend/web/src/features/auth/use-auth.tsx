@@ -4,7 +4,6 @@ import {
   QueryClient,
   QueryClientProvider,
   useMutation,
-  useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
@@ -13,7 +12,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -95,11 +93,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", onFocus);
   }, []);
 
-  const value = useMemo(() => ({ bootstrapped }), [bootstrapped]);
-
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthBootstrapContext.Provider value={value}>
+      <AuthBootstrapContext.Provider value={{ bootstrapped }}>
         {children}
       </AuthBootstrapContext.Provider>
     </QueryClientProvider>
@@ -114,15 +110,6 @@ export function useAuthState() {
   return useSyncExternalStore(subscribeAuth, getAuthState, getAuthState);
 }
 
-export function useCurrentUser() {
-  const auth = useAuthState();
-  return useQuery({
-    queryKey: ["auth", "me"],
-    queryFn: () => api.me(),
-    enabled: Boolean(auth.accessToken),
-    initialData: auth.user ?? undefined,
-  });
-}
 
 export function useLogin() {
   const queryClient = useQueryClient();

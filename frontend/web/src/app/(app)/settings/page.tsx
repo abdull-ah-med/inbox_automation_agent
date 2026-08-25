@@ -40,6 +40,7 @@ import { useAuthState } from "@/features/auth/use-auth"
 import { api, type ImportSkillOptions } from "@/lib/api-client"
 import { replaceToLogin } from "@/lib/auth-navigation"
 import { ROUTING_CATEGORIES, type RoutingCategory } from "@/lib/routing"
+import { formatReviewerDateTime } from "@/lib/dates"
 import type {
   ReplyMemoryResponse,
   SkillCandidateResponse,
@@ -63,17 +64,6 @@ const ROUTING_CATEGORY_ITEMS = ROUTING_CATEGORIES.map((category) => ({
   label: category,
   value: category,
 }))
-
-const formatApprovedAt = (iso: string): string => {
-  try {
-    return new Date(iso).toLocaleString(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    })
-  } catch {
-    return iso
-  }
-}
 
 export default function SettingsPage() {
   const auth = useAuthState()
@@ -811,7 +801,7 @@ export default function SettingsPage() {
                       />
                       <StatusBadge label={item.mailbox} tone="neutral" />
                       <span className="text-xs text-gray-500">
-                        Approved {formatApprovedAt(item.created_at)}
+                        Approved {formatReviewerDateTime(item.created_at)}
                       </span>
                     </div>
                     {item.original_email_preview ? (

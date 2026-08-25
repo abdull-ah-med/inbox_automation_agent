@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { NotSpamButton } from "@/components/not-spam-button"
+import { renderWithProviders } from "@/test/render"
 
 const markNotSpamMock = vi.fn()
 
@@ -15,19 +15,13 @@ vi.mock("@/lib/api-client", () => ({
   },
 }))
 
-const renderButton = () => {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  })
-  return render(
-    <QueryClientProvider client={client}>
-      <NotSpamButton
-        threadId="e25cc63b-9db9-4c2d-af45-e598a639eaec"
-        sender="orders@sample-lab.example.com"
-      />
-    </QueryClientProvider>,
+const renderButton = () =>
+  renderWithProviders(
+    <NotSpamButton
+      threadId="e25cc63b-9db9-4c2d-af45-e598a639eaec"
+      sender="orders@sample-lab.example.com"
+    />,
   )
-}
 
 describe("NotSpamButton", () => {
   beforeEach(() => {

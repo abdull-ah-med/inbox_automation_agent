@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api-client"
+import { getMutationErrorMessage } from "@/lib/error-messages"
 import { formatReviewerDate } from "@/lib/dates"
 import type { RelatedThreadItem } from "@/lib/types"
 import { textLinkClass } from "@/lib/utils"
@@ -40,16 +41,20 @@ export const AssociatedThreadsList = ({
 }) => {
   const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
-  const [rows, setRows] = useState(items)
-  const [itemSnapshot, setItemSnapshot] = useState(items)
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set())
+  const [statusById, setStatusById] = useState<
+    Partial<Record<string, RelatedThreadItem["status"]>>
+  >({})
   const [inflightIds, setInflightIds] = useState<Set<string>>(() => new Set())
   const inflightRef = useRef(new Map<string, AbortController>())
   const [previewId, setPreviewId] = useState<string | null>(null)
 
-  if (items !== itemSnapshot) {
-    setItemSnapshot(items)
-    setRows(items)
-  }
+  const rows = items
+    .filter((item) => !dismissedIds.has(item.thread_id))
+    .map((item) => {
+      const status = statusById[item.thread_id]
+      return status ? { ...item, status } : item
+    })
 
   const previewQuery = useQuery({
     queryKey: ["thread", previewId],
@@ -87,14 +92,15 @@ export const AssociatedThreadsList = ({
       inflightRef.current.delete(relatedId)
       setInflightIds(new Set(inflightRef.current.keys()))
       const nextStatus = result.status
-      setRows((current) => {
-        if (nextStatus === "dismissed") {
-          return current.filter((item) => item.thread_id !== relatedId)
-        }
-        return current.map((item) =>
-          item.thread_id === relatedId ? { ...item, status: nextStatus } : item,
-        )
-      })
+      if (nextStatus === "dismissed") {
+        setDismissedIds((current) => {
+          const next = new Set(current)
+          next.add(relatedId)
+          return next
+        })
+      } else {
+        setStatusById((current) => ({ ...current, [relatedId]: nextStatus }))
+      }
       void queryClient.invalidateQueries({ queryKey: ["thread", sourceThreadId] })
       if (nextStatus === "dismissed" && previewId === relatedId) {
         setPreviewId(null)
@@ -103,7 +109,7 @@ export const AssociatedThreadsList = ({
       if (controller.signal.aborted) {
         return
       }
-      setError(err instanceof Error ? err.message : "Could not update association.")
+      setError(getMutationErrorMessage(err, "Could not update association."))
     } finally {
       inflightRef.current.delete(relatedId)
       setInflightIds(new Set(inflightRef.current.keys()))

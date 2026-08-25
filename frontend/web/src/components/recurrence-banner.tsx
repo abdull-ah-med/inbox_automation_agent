@@ -4,6 +4,7 @@ import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 
 import { api } from "@/lib/api-client"
+import { getMutationErrorMessage } from "@/lib/error-messages"
 import type { ActivityEntry } from "@/lib/types"
 
 const shouldShowBanner = (activity: ActivityEntry[] | undefined): ActivityEntry | null => {
@@ -60,7 +61,7 @@ export const RecurrenceBanner = ({
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] })
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : "Could not update urgency feedback.")
+      setError(getMutationErrorMessage(err, "Could not update urgency feedback."))
     },
   })
 

@@ -71,21 +71,7 @@ function ThreadDetailPageContent() {
   })
 
   if (isLoading) {
-    return (
-      <div className="space-y-4" aria-busy="true" aria-live="polite">
-        <Breadcrumbs
-          items={[
-            { label: "Overview", href: "/dashboard" },
-            { label: "…" },
-          ]}
-        />
-        <Skeleton className="h-16 w-full rounded-lg" />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-          <Skeleton className="h-[32rem] rounded-lg lg:col-span-2" />
-          <Skeleton className="h-[32rem] rounded-lg lg:col-span-3" />
-        </div>
-      </div>
-    )
+    return <ThreadDetailPageSkeleton />
   }
 
   if (isError || !data) {
