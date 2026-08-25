@@ -32,10 +32,10 @@ export interface BadgeNow {
   label: string
 }
 
-export interface TriageHistory {
-  has_action_items: boolean | null
-  needs_context: boolean | null
-  is_spam: boolean | null
+export type TriageHistory = Pick<
+  TriageFlags,
+  "has_action_items" | "needs_context" | "is_spam"
+> & {
   action_items_summary?: string | null
   context_reason?: string | null
   spam_reason?: string | null
@@ -221,6 +221,19 @@ export interface ImportSkillResult {
   overwritten: boolean
 }
 
+export interface ImportSkillOptions {
+  overwrite?: boolean
+  overwriteSkillId?: string
+  nameOverride?: string
+  category?: string
+}
+
+export interface SkillDuplicateCandidate {
+  id: string
+  name: string
+  similarity: number
+}
+
 export interface SkillCreate {
   name: string
   description?: string
@@ -310,6 +323,14 @@ export interface ThreadDetail {
   associated_threads?: RelatedThreadItem[]
 }
 
+export interface MarkNotSpamResponse {
+  thread_id: string
+  state: string
+  is_spam: boolean
+  sender_address: string
+  outlook_unchanged: boolean
+}
+
 export interface SentReplyView {
   id: string
   thread_id: string
@@ -361,28 +382,13 @@ export interface ChatSessionCreateResponse {
   mailbox: string | null
 }
 
-export interface ChatSessionMessage {
-  role: "user" | "assistant"
-  content: string
-  citations?: ChatCitedThread[]
-}
+export type ChatSessionMessage = ChatHistoryTurn
 
 export interface ChatSessionResponse {
   session_id: string
   mailbox: string | null
   messages: ChatSessionMessage[]
   summary: string
-}
-
-export interface ChatAskResponse {
-  answer: string
-  citations: ChatCitation[]
-  retrieval_count: number
-  mailbox: string | null
-  refused_write: boolean
-  cached?: boolean
-  cache_similarity?: number | null
-  grounded_verifier?: "SUPPORTED" | "UNSUPPORTED" | "SKIPPED"
 }
 
 export interface SearchHit {

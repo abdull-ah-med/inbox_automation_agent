@@ -15,18 +15,20 @@ import {
 } from "@/lib/chat-stream";
 import type {
   ChatAskRequest,
-  ChatAskResponse,
   ChatSessionCreateResponse,
   ChatSessionResponse,
   DashboardOverview,
   DraftView,
+  ImportSkillOptions,
   ImportSkillResult,
   MailboxOverview,
+  MarkNotSpamResponse,
   RelatedThreadList,
   ReplyMemoryResponse,
   SearchResponse,
   SkillCandidateResponse,
   SkillCreate,
+  SkillDuplicateCandidate,
   SkillFileMeta,
   SkillResponse,
   SkillUpdate,
@@ -37,12 +39,39 @@ import type {
   UserMe,
 } from "@/lib/types";
 
+export type {
+  ImportSkillOptions,
+  SkillDuplicateCandidate,
+};
+
 // Empty = same-origin (local Next rewrites / production nginx). Cross-origin
 // only when NEXT_PUBLIC_API_BASE_URL is set explicitly.
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
 
 const CSRF_COOKIE = "itr_csrf";
 const CSRF_HEADER = "X-CSRF-Token";
+
+const AUTH_EXEMPT_PATHS = [
+  "/auth/login",
+  "/auth/refresh",
+  "/auth/logout",
+  "/auth/change-password",
+] as const;
+
+const isAuthExemptPath = (path: string) =>
+  AUTH_EXEMPT_PATHS.some((prefix) => path.startsWith(prefix));
+
+const buildAuthHeaders = (init?: HeadersInit, contentType?: string) => {
+  const headers = new Headers(init);
+  if (contentType && !headers.has("Content-Type")) {
+    headers.set("Content-Type", contentType);
+  }
+  const token = getAccessToken();
+  if (token) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  return headers;
+};
 
 function readCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -131,12 +160,6 @@ function detailFromErrorBody(body: unknown): string | null {
   return null;
 }
 
-export type SkillDuplicateCandidate = {
-  id: string;
-  name: string;
-  similarity: number;
-};
-
 export class SkillDuplicateCandidatesError extends ApiError {
   candidates: SkillDuplicateCandidate[];
 
@@ -182,28 +205,17 @@ const parseDuplicateCandidates = (
   return candidates;
 };
 
-export type ImportSkillOptions = {
-  overwrite?: boolean;
-  overwriteSkillId?: string;
-  nameOverride?: string;
-  category?: string;
-};
-
 async function apiFetch<T>(
   path: string,
   init: RequestInit = {},
   retried = false,
 ): Promise<T> {
-  const headers = new Headers(init.headers);
   const isFormData =
     typeof FormData !== "undefined" && init.body instanceof FormData;
-  if (!headers.has("Content-Type") && init.body && !isFormData) {
-    headers.set("Content-Type", "application/json");
-  }
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  const headers = buildAuthHeaders(
+    init.headers,
+    !isFormData && init.body ? "application/json" : undefined,
+  );
 
   const resp = await fetch(`${API_BASE}${path}`, {
     ...init,
@@ -211,14 +223,7 @@ async function apiFetch<T>(
     credentials: "include",
   });
 
-  if (
-    resp.status === 401 &&
-    !retried &&
-    !path.startsWith("/auth/login") &&
-    !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout") &&
-    !path.startsWith("/auth/change-password")
-  ) {
+  if (resp.status === 401 && !retried && !isAuthExemptPath(path)) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetch<T>(path, init, true);
   }
@@ -246,11 +251,7 @@ async function apiFetchMultipart<T>(
   form: FormData,
   retried = false,
 ): Promise<T> {
-  const headers = new Headers();
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  const headers = buildAuthHeaders();
 
   const resp = await fetch(`${API_BASE}${path}`, {
     method: "POST",
@@ -259,14 +260,7 @@ async function apiFetchMultipart<T>(
     credentials: "include",
   });
 
-  if (
-    resp.status === 401 &&
-    !retried &&
-    !path.startsWith("/auth/login") &&
-    !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout") &&
-    !path.startsWith("/auth/change-password")
-  ) {
+  if (resp.status === 401 && !retried && !isAuthExemptPath(path)) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetchMultipart<T>(path, form, true);
   }
@@ -317,11 +311,7 @@ async function apiFetchBytes(
   path: string,
   retried = false,
 ): Promise<{ blob: Blob; contentType: string; filename: string | null }> {
-  const headers = new Headers();
-  const token = getAccessToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
+  const headers = buildAuthHeaders();
 
   const resp = await fetch(`${API_BASE}${path}`, {
     method: "GET",
@@ -329,14 +319,7 @@ async function apiFetchBytes(
     credentials: "include",
   });
 
-  if (
-    resp.status === 401 &&
-    !retried &&
-    !path.startsWith("/auth/login") &&
-    !path.startsWith("/auth/refresh") &&
-    !path.startsWith("/auth/logout") &&
-    !path.startsWith("/auth/change-password")
-  ) {
+  if (resp.status === 401 && !retried && !isAuthExemptPath(path)) {
     const ok = await refreshAccessToken();
     if (ok) return apiFetchBytes(path, true);
   }
@@ -436,24 +419,13 @@ export const api = {
     getSession(sessionId: string) {
       return apiFetch<ChatSessionResponse>(`/api/chat/session/${sessionId}`)
     },
-    ask(body: ChatAskRequest) {
-      return apiFetch<ChatAskResponse>("/api/chat/ask", {
-        method: "POST",
-        body: JSON.stringify(body),
-      })
-    },
     async askStream(
       body: ChatAskRequest,
       handlers: ChatStreamHandlers,
       signal?: AbortSignal,
     ) {
-      const headers = new Headers()
-      headers.set("Content-Type", "application/json")
+      const headers = buildAuthHeaders(undefined, "application/json")
       headers.set("Accept", "text/event-stream")
-      const token = getAccessToken()
-      if (token) {
-        headers.set("Authorization", `Bearer ${token}`)
-      }
       const post = (requestHeaders: Headers) =>
         fetch(`${API_BASE}/api/chat/ask/stream`, {
           method: "POST",
@@ -648,13 +620,7 @@ export const api = {
       );
     },
     markNotSpam(id: string) {
-      return apiFetch<{
-        thread_id: string;
-        state: string;
-        is_spam: boolean;
-        sender_address: string;
-        outlook_unchanged: boolean;
-      }>(`/api/threads/${id}/not-spam`, {
+      return apiFetch<MarkNotSpamResponse>(`/api/threads/${id}/not-spam`, {
         method: "POST",
       });
     },
@@ -715,15 +681,6 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       });
-    },
-    regenerate(threadId: string, body: { instruction: string }) {
-      return apiFetch<DraftView>(
-        `/api/threads/${threadId}/regenerate-draft`,
-        {
-          method: "POST",
-          body: JSON.stringify(body),
-        },
-      );
     },
     editUrgency(
       id: string,
@@ -846,4 +803,3 @@ export const api = {
   },
 };
 
-export { API_BASE };
