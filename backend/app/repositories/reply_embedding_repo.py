@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.models.db.reply_embedding import ReplyEmbedding
-from app.repositories._vector_common import set_hnsw_session_defaults
+from app.repositories._vector_common import cap_limit, set_hnsw_session_defaults
 
 
 class ReplyEmbeddingSchema(BaseModel):
@@ -79,7 +79,7 @@ async def list_reply_embeddings(
     """List approved replies newest-first for Settings (includes excluded)."""
     if not (mailbox or "").strip():
         raise ValueError("mailbox is required")
-    capped = max(1, min(limit, 500))
+    capped = cap_limit(limit, maximum=500)
     stmt = (
         select(ReplyEmbedding)
         .where(ReplyEmbedding.mailbox == mailbox)
@@ -100,7 +100,7 @@ async def list_all_reply_embeddings_admin(
     allowed = [item.strip() for item in mailboxes if item and item.strip()]
     if not allowed:
         return []
-    capped = max(1, min(limit, 500))
+    capped = cap_limit(limit, maximum=500)
     stmt = (
         select(ReplyEmbedding)
         .where(ReplyEmbedding.mailbox.in_(allowed))
@@ -109,27 +109,6 @@ async def list_all_reply_embeddings_admin(
     )
     result = await session.execute(stmt)
     return [ReplyEmbeddingSchema.model_validate(row) for row in result.scalars().all()]
-
-
-async def list_recent_replies(
-    session: AsyncSession,
-    *,
-    mailbox: str,
-    limit: int = 3,
-) -> list[str]:
-    """Newest non-excluded reply texts for a mailbox (few-shot examples)."""
-    capped = max(1, min(limit, 20))
-    stmt = (
-        select(ReplyEmbedding.reply_text)
-        .where(
-            ReplyEmbedding.mailbox == mailbox,
-            ReplyEmbedding.is_excluded.is_(False),
-        )
-        .order_by(ReplyEmbedding.created_at.desc())
-        .limit(capped)
-    )
-    result = await session.execute(stmt)
-    return [text for text in result.scalars().all() if text]
 
 
 async def set_excluded(

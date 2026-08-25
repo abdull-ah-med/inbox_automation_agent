@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.audit_event import AuditEvent
 from app.models.schemas.audit import AuditEventSchema
+from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.dashboard import AuditEntry, TriageFlags
 
 _TRIAGE_EVENTS = (
-    "triage.action_needed",
-    "triage.no_action_discarded",
-    "triage.spam_discarded",
-    "triage.failed",
+    TriageAuditEvent.ACTION_NEEDED,
+    TriageAuditEvent.NO_ACTION_DISCARDED,
+    TriageAuditEvent.SPAM_DISCARDED,
+    TriageAuditEvent.FAILED,
 )
 
 

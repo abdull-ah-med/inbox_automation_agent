@@ -17,6 +17,7 @@ from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.sent_reply import SentReply
 from app.models.db.thread import Thread
+from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.email import EmailDirectionEnum, ThreadStateEnum
 from app.models.schemas.ops_report import (
     CategoryCount,
@@ -40,8 +41,8 @@ _FILTERED_STATES = (
 )
 
 _SPAM_EVENTS: tuple[str, ...] = (
-    "triage.spam_discarded",
-    "triage.no_action_discarded",
+    TriageAuditEvent.SPAM_DISCARDED,
+    TriageAuditEvent.NO_ACTION_DISCARDED,
 )
 
 _INBOUND = EmailDirectionEnum.INBOUND.value

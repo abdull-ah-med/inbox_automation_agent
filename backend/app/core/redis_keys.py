@@ -10,7 +10,6 @@ DEDUP_VALUE_COMPLETED = "completed"
 # Separate from ingest dedup so webhook/poll retries cannot overlap Haiku calls.
 TRIAGE_LOCK_TTL_SECONDS = 15 * 60
 
-POLL_INTERVAL_SECONDS = 300
 SUBSCRIPTION_RENEW_BEFORE_SECONDS = 12 * 3600  # renew if <12h left
 DEFAULT_POLL_LOOKBACK_SECONDS = 15 * 60
 MISSED_POLL_LOOKBACK_SECONDS = 2 * 3600
@@ -31,6 +30,10 @@ SCHEDULER_RECONCILE_LOCK_KEY = "scheduler:lock:reconcile"
 RECONCILE_LOCK_TTL_SECONDS = 600
 
 WEBHOOK_VALIDATION_PENDING_KEY = "graph:webhook:validation_pending"
+
+
+def _normalize_folder(folder: str) -> str:
+    return folder.strip().lower().replace(" ", "")
 
 
 def dedup_key(mailbox: str, message_id: str) -> str:
@@ -56,7 +59,7 @@ def subscription_key(mailbox: str, folder: str = "inbox") -> str:
     ``folder`` still resolve to inbox. The pre-folder key ``graph:sub:{mailbox}``
     is read as a one-shot fallback in ``subscription_service``.
     """
-    normalized = folder.strip().lower().replace(" ", "")
+    normalized = _normalize_folder(folder)
     if normalized == "sentitems":
         return sent_items_subscription_key(mailbox)
     return inbox_subscription_key(mailbox)
@@ -74,7 +77,7 @@ def poll_cursor_key(mailbox: str, folder: str = "inbox") -> str:
     Sent Items uses a separate key so outbound catch-up cannot move the inbound
     watermark (and vice versa).
     """
-    normalized = folder.strip().lower().replace(" ", "")
+    normalized = _normalize_folder(folder)
     if normalized == "sentitems":
         return f"graph:poll:last_checked:sentitems:{mailbox}"
     return f"graph:poll:last_checked:{mailbox}"

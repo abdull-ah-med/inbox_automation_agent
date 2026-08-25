@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.skill_candidate import SkillCandidate
 from app.models.schemas.skill_candidate import SkillCandidateResponseSchema
+from app.repositories._vector_common import cap_limit
 
 
 def _to_response(row: SkillCandidate) -> SkillCandidateResponseSchema:
@@ -40,7 +41,7 @@ async def list_candidates(
     mailbox: str | None = None,
     limit: int = 100,
 ) -> list[SkillCandidateResponseSchema]:
-    capped = max(1, min(limit, 500))
+    capped = cap_limit(limit, maximum=500)
     stmt = select(SkillCandidate).order_by(SkillCandidate.created_at.desc()).limit(capped)
     if status is not None:
         stmt = stmt.where(SkillCandidate.status == status)

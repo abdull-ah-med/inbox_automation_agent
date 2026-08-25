@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import EmptySearchQueryError, SearchError, UnknownMailboxError
-from app.core.mailbox_keys import resolve_mailbox_email
+from app.core.mailbox_keys import resolve_mailbox_email, scoped_mailboxes
 from app.core.sanitize import sanitize_user_text
 from app.llm.email_clean import clean_email_body
 from app.models.schemas.embedding import EmbeddingMatchSchema
@@ -360,23 +360,13 @@ def build_snippet(*, body: str | None, highlight: str | None = None) -> str:
     return text[:budget].rstrip() + ellipsis
 
 
-def _scoped_mailboxes(settings: Settings, mailbox: str | None) -> list[str]:
-    allowed = list(settings.mailbox_list)
-    if mailbox is None or not mailbox.strip():
-        return allowed
-    email = resolve_mailbox_email(sanitize_user_text(mailbox.strip()), allowed)
-    if email is None or not settings.mailbox_allowed(email):
-        raise UnknownMailboxError("Mailbox not found")
-    return [email]
-
-
 def _mailboxes_for_search(
     settings: Settings,
     *,
     mailbox: str | None,
     mailbox_tokens: tuple[str, ...],
 ) -> list[str]:
-    scoped = _scoped_mailboxes(settings, mailbox)
+    scoped = scoped_mailboxes(settings, mailbox)
     if not mailbox_tokens:
         return scoped
     wanted: list[str] = []

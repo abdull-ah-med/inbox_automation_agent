@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -41,6 +40,7 @@ from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema
+from app.services.skill_reference_service import SkillReferenceLoader
 
 logger = structlog.get_logger(__name__)
 
@@ -75,9 +75,6 @@ READ_SKILL_REFERENCE_TOOL: dict[str, Any] = {
         "additionalProperties": False,
     },
 }
-
-SkillReferenceLoader = Callable[[uuid.UUID, str], Awaitable[dict[str, Any]]]
-
 
 @dataclass(frozen=True, slots=True)
 class DraftCallResult:

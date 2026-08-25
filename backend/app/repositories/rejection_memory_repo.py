@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.db.rejection_memory import RejectionMemory
 from app.repositories._vector_common import set_hnsw_session_defaults
+from app.utils.text import truncate_display
 
 _NOTE_DISPLAY_MAX = 240
 
@@ -32,9 +33,7 @@ class RejectionMemorySchema(BaseModel):
 
 
 def format_constraint_line(*, reason_code: str, note: str) -> str:
-    text = note.strip()
-    if len(text) > _NOTE_DISPLAY_MAX:
-        text = text[: _NOTE_DISPLAY_MAX - 1] + "…"
+    text = truncate_display(note.strip(), _NOTE_DISPLAY_MAX)
     return f"[{reason_code}] {text}"
 
 

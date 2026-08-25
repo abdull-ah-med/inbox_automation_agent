@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 
 
+def cap_limit(limit: int, *, maximum: int, minimum: int = 1) -> int:
+    return max(minimum, min(limit, maximum))
+
+
 async def set_hnsw_session_defaults(session: AsyncSession, settings: Settings) -> None:
     """SET LOCAL hnsw.ef_search (and iterative_scan when enabled) for this txn."""
     ef_search = int(settings.hnsw_ef_search)
