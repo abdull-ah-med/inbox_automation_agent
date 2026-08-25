@@ -14,7 +14,7 @@ class Thread(Base):
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()
-    mailbox: Mapped[str] = mapped_column(String(320), nullable=False, index=True)
+    mailbox: Mapped[str] = mapped_column(String(320), nullable=False)
     conversation_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject: Mapped[str] = mapped_column(String(998), nullable=False)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="NEW")
