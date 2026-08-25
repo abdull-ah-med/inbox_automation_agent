@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from structlog.testing import capture_logs
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
@@ -132,9 +133,10 @@ async def test_store_urgency_feedback_memory_best_effort_on_embed_failure() -> N
         patch(
             "app.services.urgency_feedback_service.get_session_factory",
             AsyncMock(),
-        ) as factory_mock,
+        ),
+        capture_logs() as entries,
     ):
-        await urgency_feedback_service.store_urgency_feedback_memory(
+        result = await urgency_feedback_service.store_urgency_feedback_memory(
             draft_id=uuid.uuid4(),
             thread_id=uuid.uuid4(),
             mailbox="elise@example.com",
@@ -146,4 +148,5 @@ async def test_store_urgency_feedback_memory_best_effort_on_embed_failure() -> N
             settings=_settings(),
             openai_client=AsyncMock(),
         )
-    factory_mock.assert_not_called()
+    assert result is None
+    assert any(entry.get("event") == "urgency_feedback_embed_failed" for entry in entries)

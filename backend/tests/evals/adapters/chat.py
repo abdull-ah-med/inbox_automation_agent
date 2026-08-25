@@ -15,8 +15,9 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.config import Settings
 from app.core.dependencies import anthropic_client_from_settings
-from app.llm.chat import ChatAgentResult, _hit_block, run_chat_agent
+from app.llm.chat import ChatAgentResult, run_chat_agent
 from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
+from app.llm.pii_redact import scrub_text
 from app.models.schemas.search import SearchHit, SearchResponse
 from app.services import chat_service
 from app.services.chat_service import detect_write_intent
@@ -63,6 +64,22 @@ def hits_from_case(case: dict[str, Any]) -> list[SearchHit]:
             )
         )
     return hits
+
+
+def _hit_block(hit: SearchHit) -> str:
+    """Mirror of former app.llm.chat._hit_block — keep eval contexts identical."""
+    snippet = scrub_text(hit.snippet or "")
+    subject = scrub_text(hit.subject or "") or "(no subject)"
+    when = hit.last_message_at.isoformat() if hit.last_message_at else "(none)"
+    return (
+        f"mailbox: {hit.mailbox}\n"
+        f"subject: {subject}\n"
+        f"sender: {hit.sender or '(none)'}\n"
+        f"state: {hit.state}\n"
+        f"urgency: {hit.urgency or '(none)'}\n"
+        f"last_message_at: {when}\n"
+        f"snippet:\n{snippet}\n"
+    )
 
 
 def retrieval_contexts_from_hits(hits: list[SearchHit]) -> list[str]:

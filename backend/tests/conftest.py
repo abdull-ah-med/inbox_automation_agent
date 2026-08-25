@@ -9,7 +9,7 @@ import pytest
 from app.core.config import Settings
 from app.models.schemas.graph import GraphMessageSchema
 
-pytest_plugins = ["tests.ops_metrics_fixtures"]
+pytest_plugins = ["tests.ops_metrics_fixtures", "tests.api_fixtures"]
 
 
 @pytest.hookimpl(hookwrapper=True)
