@@ -151,6 +151,134 @@ async def test_refresh_with_csrf(app, local_settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_login_records_nginx_x_real_ip_when_proxy_trusted() -> None:
+    """Behind nginx, persist X-Real-IP ($remote_addr), not the Uvicorn peer.
+
+    https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header
+    https://fastapi.tiangolo.com/advanced/behind-a-proxy/
+    """
+    settings = Settings(
+        environment="local",
+        jwt_secret="b" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        enable_dev_routes=False,
+        trust_x_forwarded_for=True,
+        refresh_cookie_name="itr_refresh",
+        csrf_cookie_name="itr_csrf",
+        csrf_header_name="X-CSRF-Token",
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+    result = _token_result()
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    get_settings.cache_clear()
+    with (
+        patch("app.main.get_settings", return_value=settings),
+        patch("app.main._ping_redis", AsyncMock()),
+        patch("app.main.get_slack_app", return_value=None),
+        patch("app.main.run_subscription_reconcile", AsyncMock()),
+        patch("app.main.AsyncIOScheduler") as sched,
+        patch(
+            "app.api.auth.routes.auth_service.login",
+            AsyncMock(return_value=result),
+        ) as login_mock,
+    ):
+        sched.return_value.start = lambda: None
+        sched.return_value.shutdown = lambda wait=False: None
+        application = create_app()
+        application.dependency_overrides[get_settings] = lambda: settings
+        application.dependency_overrides[get_redis] = lambda: AsyncMock()
+        application.dependency_overrides[get_db] = fake_db
+        transport = ASGITransport(app=application)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/auth/login",
+                json={"email": "elise@example.com", "password": "CorrectHorseBattery1!"},
+                headers={
+                    **_origin_headers(settings),
+                    "X-Real-IP": "203.0.113.50",
+                },
+            )
+        application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+    assert resp.status_code == 200
+    assert login_mock.await_args.kwargs["ip"] == "203.0.113.50"
+
+
+@pytest.mark.asyncio
+async def test_refresh_records_nginx_x_real_ip_when_proxy_trusted() -> None:
+    """Refresh rotation must store the same proxy-resolved client IP as login."""
+    settings = Settings(
+        environment="local",
+        jwt_secret="b" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        enable_dev_routes=False,
+        trust_x_forwarded_for=True,
+        refresh_cookie_name="itr_refresh",
+        csrf_cookie_name="itr_csrf",
+        csrf_header_name="X-CSRF-Token",
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+    )
+    result = _token_result()
+    csrf = mint_csrf(settings.jwt_secret)
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    get_settings.cache_clear()
+    with (
+        patch("app.main.get_settings", return_value=settings),
+        patch("app.main._ping_redis", AsyncMock()),
+        patch("app.main.get_slack_app", return_value=None),
+        patch("app.main.run_subscription_reconcile", AsyncMock()),
+        patch("app.main.AsyncIOScheduler") as sched,
+        patch(
+            "app.api.auth.routes.auth_service.refresh", AsyncMock(return_value=result)
+        ) as refresh_mock,
+    ):
+        sched.return_value.start = lambda: None
+        sched.return_value.shutdown = lambda wait=False: None
+        application = create_app()
+        application.dependency_overrides[get_settings] = lambda: settings
+        application.dependency_overrides[get_redis] = lambda: AsyncMock()
+        application.dependency_overrides[get_db] = fake_db
+        transport = ASGITransport(app=application)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(settings.refresh_cookie_name, "opaque", path="/auth")
+            client.cookies.set(settings.csrf_cookie_name, csrf, path="/")
+            resp = await client.post(
+                "/auth/refresh",
+                headers={
+                    **_origin_headers(settings),
+                    settings.csrf_header_name: csrf,
+                    "X-Real-IP": "203.0.113.50",
+                },
+            )
+        application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+    assert resp.status_code == 200
+    assert refresh_mock.await_args.kwargs["ip"] == "203.0.113.50"
+
+
+@pytest.mark.asyncio
 async def test_login_rejects_wrong_origin(app, local_settings: Settings) -> None:
     """Cookie-mutating auth routes reject a foreign Origin."""
     transport = ASGITransport(app=app)

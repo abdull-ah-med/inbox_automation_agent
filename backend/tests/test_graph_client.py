@@ -116,15 +116,117 @@ async def test_create_subscription_includes_client_state_and_resource(
 
 
 @pytest.mark.asyncio
+async def test_create_subscription_allows_outlook_seven_day_lifetime(
+    client: GraphClient,
+) -> None:
+    """v1.0 Outlook message max is 10,080 minutes (under seven days).
+
+    https://learn.microsoft.com/en-us/graph/api/resources/subscription
+    """
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    response.json.return_value = {
+        "id": "sub-7d",
+        "resource": "users/user@example.com/mailFolders('inbox')/messages",
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-16T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    sub = await client.create_subscription(
+        "user@example.com",
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+        expiration_minutes=10080,
+    )
+
+    assert sub.id == "sub-7d"
+    client._http.request.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_create_subscription_rejects_overlong_expiration(client: GraphClient) -> None:
-    with pytest.raises(GraphClientError, match="4230"):
+    """One minute past the Outlook message maximum must fail closed."""
+    with pytest.raises(GraphClientError, match="10080"):
         await client.create_subscription(
             "user@example.com",
             "https://example.com/hook",
             "state",
             lifecycle_notification_url="https://example.com/lifecycle",
-            expiration_minutes=5000,
+            expiration_minutes=10081,
         )
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_prefixes_guid_shaped_upn(client: GraphClient) -> None:
+    """Microsoft Example 2: UPN that begins with a GUID needs AAD-UPN:.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    mailbox = "3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+    response.json.return_value = {
+        "id": "sub-guid",
+        "resource": (
+            f"users/AAD-UPN:{mailbox}/mailFolders('inbox')/messages"
+        ),
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-12T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    await client.create_subscription(
+        mailbox,
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+    )
+
+    body = client._http.request.await_args.kwargs["json"]
+    assert body["resource"] == (
+        "users/AAD-UPN:3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+        "/mailFolders('inbox')/messages"
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_uses_directory_oid_as_user_segment(
+    client: GraphClient,
+) -> None:
+    """Bare Entra object IDs stay unprefixed so Exchange maps to one mailbox."""
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    oid = "bb8775a4-4d8c-42cf-a1d4-4d58c2bb668f"
+    response.json.return_value = {
+        "id": "sub-oid",
+        "resource": f"users/{oid}/mailFolders('inbox')/messages",
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-12T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    await client.create_subscription(
+        oid,
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+    )
+
+    body = client._http.request.await_args.kwargs["json"]
+    assert body["resource"] == (
+        f"users/{oid}/mailFolders('inbox')/messages"
+    )
 
 
 @pytest.mark.asyncio

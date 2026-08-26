@@ -15,7 +15,7 @@ from app.core.dependencies_auth import (
     require_csrf,
     require_frontend_origin,
 )
-from app.core.rate_limit import limiter
+from app.core.rate_limit import limiter, resolve_client_ip
 from app.core.security.csrf import mint_csrf
 from app.models.schemas.auth import (
     ChangePasswordRequest,
@@ -126,7 +126,7 @@ async def login(
             email=body.email,
             password=body.password,
             user_agent=request.headers.get("user-agent"),
-            ip=request.client.host if request.client else None,
+            ip=resolve_client_ip(request, settings),
         )
     _set_refresh_cookie(response, settings, result.refresh_plaintext)
     _set_csrf_cookie(response, settings)
@@ -163,7 +163,7 @@ async def refresh(
             redis,
             refresh_plaintext=refresh_plaintext,
             user_agent=request.headers.get("user-agent"),
-            ip=request.client.host if request.client else None,
+            ip=resolve_client_ip(request, settings),
         )
     # Commit succeeded — only then write Redis grace (avoids phantom tokens).
     if result.rotated_from_hash is not None:

@@ -134,7 +134,9 @@ jobs:
             cat deploy/ssm-deploy.sh
           } > /tmp/ssm-deploy-pinned.sh
 
-          COMMANDS_JSON=$(jq -Rs 'split("\n")' /tmp/ssm-deploy-pinned.sh)
+          # One JSON string, not split("\n"): a line-split array would
+          # execute the script's #!/bin/bash as its own RunShellScript command.
+          COMMANDS_JSON=$(bash deploy/ssm-commands-json.sh /tmp/ssm-deploy-pinned.sh)
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \

@@ -70,4 +70,7 @@ skills-lock.json
 # DeepEval local telemetry
 .deepeval/
 **/.deepeval/
-package-lock.json
+# Root-only. A bare `package-lock.json` matches every lockfile (including
+# frontend/web), which would hide npm ci from git if that file were untracked.
+# https://git-scm.com/docs/gitignore
+/package-lock.json

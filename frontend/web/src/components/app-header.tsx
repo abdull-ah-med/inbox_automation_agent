@@ -1,6 +1,5 @@
 "use client"
 
-import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Moon, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
@@ -8,20 +7,13 @@ import { useTheme } from "next-themes"
 import { InboxSearch } from "@/components/inbox-search"
 import { Button } from "@/components/ui/button"
 import { useAuthState, useLogout } from "@/features/auth/use-auth"
+import { useIsClient } from "@/hooks/use-is-client"
 
 export function AppHeader() {
   const auth = useAuthState()
   const logout = useLogout()
   const { resolvedTheme, setTheme } = useTheme()
-  const [mounted, setMounted] = useState(false)
-
-  useEffect(() => {
-    // next-themes hydration-safe mount flag — no effect-free way to detect
-    // client mount before first paint.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true)
-  }, [])
-
+  const isClient = useIsClient()
   const isDark = resolvedTheme === "dark"
 
   const handleToggleTheme = () => {
@@ -68,7 +60,7 @@ export function AppHeader() {
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             onClick={handleToggleTheme}
           >
-            {mounted && isDark ? (
+            {isClient && isDark ? (
               <Sun aria-hidden="true" />
             ) : (
               <Moon aria-hidden="true" />

@@ -43,6 +43,13 @@ describe("AppHeader search", () => {
     searchThreads.mockResolvedValue({ query: "", mailbox: null, hits: [] })
   })
 
+  it("labels the theme toggle for the opposite of the resolved theme", () => {
+    renderHeader()
+    expect(
+      screen.getByRole("button", { name: /switch to dark mode/i }),
+    ).toBeInTheDocument()
+  })
+
   it("puts a mail search box in the header, not an ask dialog", () => {
     renderHeader()
     expect(screen.getByRole("searchbox", { name: /search mail/i })).toBeInTheDocument()

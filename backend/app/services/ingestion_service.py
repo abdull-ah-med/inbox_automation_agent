@@ -86,7 +86,11 @@ def extract_mailbox_from_resource(resource: str) -> str | None:
     match = _MAILBOX_FROM_RESOURCE.search(resource)
     if not match:
         return None
-    return unquote(match.group(1))
+    mailbox = unquote(match.group(1))
+    prefix = "AAD-UPN:"
+    if mailbox.upper().startswith(prefix):
+        return mailbox[len(prefix) :]
+    return mailbox
 
 
 def is_sent_items_resource(resource: str) -> bool:

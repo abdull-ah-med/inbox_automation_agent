@@ -129,6 +129,16 @@ def test_extract_mailbox_from_resource() -> None:
     assert extract_mailbox_from_resource(resource) == "user@example.com"
 
 
+def test_extract_mailbox_from_resource_strips_aad_upn_prefix() -> None:
+    """Graph may echo AAD-UPN: on GUID-shaped UPNs; match TARGET_MAILBOXES without it.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    mailbox = "3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+    resource = f"users/AAD-UPN:{mailbox}/mailFolders('inbox')/messages"
+    assert extract_mailbox_from_resource(resource) == mailbox
+
+
 def test_dedup_key_prefix() -> None:
     assert dedup_key("a@b.com", "msg-1") == "dedup:a@b.com:msg-1"
 

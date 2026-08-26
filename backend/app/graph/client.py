@@ -15,6 +15,7 @@ Official docs:
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from urllib.parse import quote, urlparse
@@ -38,8 +39,14 @@ DEFAULT_MESSAGE_SELECT = (
     "id,subject,bodyPreview,body,uniqueBody,sender,from,toRecipients,ccRecipients,"
     "bccRecipients,receivedDateTime,conversationId,isRead,hasAttachments,importance"
 )
-MAX_SUBSCRIPTION_MINUTES = 4230
+# Outlook message / event / contact subscriptions: 10,080 minutes (under 7 days).
+# https://learn.microsoft.com/en-us/graph/api/resources/subscription
+MAX_SUBSCRIPTION_MINUTES = 10_080
 _ERROR_BODY_MAX_CHARS = 500
+_AAD_UPN_PREFIX = "AAD-UPN:"
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 # https://learn.microsoft.com/en-us/graph/throttling
 MAX_THROTTLE_RETRIES = 3
@@ -64,6 +71,26 @@ def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
 def _path_segment(value: str) -> str:
     """Percent-encode a single URL path segment (IDs may contain ``/``, ``@``, ``#``)."""
     return quote(value, safe="")
+
+
+def outlook_subscription_user(mailbox: str) -> str:
+    """User segment for Outlook change-notification ``resource`` values.
+
+    Directory object IDs are used as-is. UPNs whose local-part is a GUID must
+    be prefixed with ``AAD-UPN:`` so Exchange does not treat them as a mailbox
+    GUID. Other UPNs are unchanged.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    value = mailbox.strip()
+    if value.upper().startswith(_AAD_UPN_PREFIX):
+        return f"{_AAD_UPN_PREFIX}{value[len(_AAD_UPN_PREFIX):]}"
+    if _UUID_RE.fullmatch(value):
+        return value
+    local, sep, _domain = value.partition("@")
+    if sep and _UUID_RE.fullmatch(local):
+        return f"{_AAD_UPN_PREFIX}{value}"
+    return value
 
 
 def _truncate_error_body(text: str) -> str:
@@ -317,9 +344,9 @@ class GraphClient:
         """Create a change notification subscription for a mailbox folder.
 
         POST /subscriptions
-        Resource: users/{mailbox}/mailFolders('{folder}')/messages
+        Resource: users/{user}/mailFolders('{folder}')/messages
         Well-known folder names: ``inbox``, ``sentitems`` (lowercase, no slash).
-        Max lifetime for Outlook messages: 4,230 minutes.
+        Max lifetime for Outlook messages: 10,080 minutes (under seven days).
 
         lifecycleNotificationUrl cannot be added later via PATCH — must be set at create.
         https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
@@ -336,11 +363,12 @@ class GraphClient:
 
         safe_folder = folder.replace("'", "''")
         expiration = datetime.now(UTC) + timedelta(minutes=expiration_minutes)
+        user = outlook_subscription_user(mailbox)
         body = {
             "changeType": "created",
             "notificationUrl": notification_url,
             "lifecycleNotificationUrl": lifecycle_notification_url,
-            "resource": f"users/{mailbox}/mailFolders('{safe_folder}')/messages",
+            "resource": f"users/{user}/mailFolders('{safe_folder}')/messages",
             "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
             "clientState": client_state,
         }

@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 import structlog
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
 from app.core.config import Settings
 from app.core.exceptions import GraphClientError
@@ -24,7 +25,7 @@ from app.core.redis_keys import (
     legacy_subscription_key,
     subscription_key,
 )
-from app.graph.client import GraphClient
+from app.graph.client import GraphClient, outlook_subscription_user
 from app.models.schemas.graph import (
     GraphNotificationItemSchema,
     GraphSubscriptionSchema,
@@ -58,7 +59,8 @@ return count
 
 
 def _folder_resource(mailbox: str, folder: SubscriptionFolder) -> str:
-    return f"users/{mailbox}/mailFolders('{folder}')/messages"
+    user = outlook_subscription_user(mailbox)
+    return f"users/{user}/mailFolders('{folder}')/messages"
 
 
 def _normalize_resource(resource: str) -> str:
@@ -140,21 +142,71 @@ def _is_expired_or_near_expiry(
     return exp <= now + timedelta(seconds=renew_before_seconds)
 
 
-def _serialize_subscription(
+def _is_wrongtype(exc: ResponseError) -> bool:
+    return str(exc).upper().startswith("WRONGTYPE")
+
+
+def _subscription_hash_mapping(
     sub: GraphSubscriptionSchema,
     mailbox: str,
     folder: SubscriptionFolder,
-) -> str:
-    payload: dict[str, Any] = {
+) -> dict[str, str]:
+    return {
         "subscription_id": sub.id,
         "mailbox": mailbox,
         "folder": folder,
         "resource": sub.resource,
         "expiration": sub.expiration_date_time.isoformat(),
         "notification_url": sub.notification_url,
-        "lifecycle_notification_url": sub.lifecycle_notification_url,
+        "lifecycle_notification_url": sub.lifecycle_notification_url or "",
     }
-    return json.dumps(payload)
+
+
+def _subscription_id_from_json(raw: str) -> str | None:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    sub_id = data.get("subscription_id")
+    return sub_id if isinstance(sub_id, str) else None
+
+
+def _mapping_from_legacy_json(raw: str, subscription_id: str) -> dict[str, str]:
+    mapping: dict[str, str] = {"subscription_id": subscription_id}
+    try:
+        extra = json.loads(raw)
+    except json.JSONDecodeError:
+        return mapping
+    if not isinstance(extra, dict):
+        return mapping
+    for field in (
+        "mailbox",
+        "folder",
+        "resource",
+        "expiration",
+        "notification_url",
+        "lifecycle_notification_url",
+    ):
+        value = extra.get(field)
+        if isinstance(value, str):
+            mapping[field] = value
+    return mapping
+
+
+async def _hset_subscription(redis: Redis, key: str, mapping: dict[str, str]) -> None:
+    """Write a hash. Redis cannot change a string key in place — DEL then HSET.
+
+    https://redis.io/docs/latest/develop/data-types/hashes/
+    """
+    try:
+        await redis.hset(key, mapping=mapping)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        await redis.delete(key)
+        await redis.hset(key, mapping=mapping)
 
 
 async def _store_subscription(
@@ -163,9 +215,10 @@ async def _store_subscription(
     sub: GraphSubscriptionSchema,
     folder: SubscriptionFolder,
 ) -> None:
-    await redis.set(
+    await _hset_subscription(
+        redis,
         subscription_key(mailbox, folder),
-        _serialize_subscription(sub, mailbox, folder),
+        _subscription_hash_mapping(sub, mailbox, folder),
     )
     if folder == "inbox":
         # Drop legacy key once rewritten so future reads use the folder key.
@@ -182,27 +235,85 @@ async def _clear_subscription(
         await redis.delete(legacy_subscription_key(mailbox))
 
 
+async def _read_subscription_id(redis: Redis, key: str) -> str | None:
+    try:
+        sub_id = await redis.hget(key, "subscription_id")
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        sub_id = None
+    if isinstance(sub_id, str) and sub_id:
+        return sub_id
+    try:
+        raw = await redis.get(key)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        return None
+    if not isinstance(raw, str) or not raw:
+        return None
+    parsed = _subscription_id_from_json(raw)
+    if parsed is None:
+        return None
+    await _hset_subscription(redis, key, _mapping_from_legacy_json(raw, parsed))
+    return parsed
+
+
+async def _copy_hash_mapping(
+    redis: Redis,
+    source_key: str,
+    *,
+    mailbox: str,
+    folder: SubscriptionFolder,
+    subscription_id: str,
+) -> dict[str, str]:
+    try:
+        fields = await redis.hgetall(source_key)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        fields = None
+    mapping: dict[str, str] = {
+        "subscription_id": subscription_id,
+        "mailbox": mailbox,
+        "folder": folder,
+    }
+    if isinstance(fields, dict):
+        for field, value in fields.items():
+            if isinstance(field, str) and isinstance(value, str) and value:
+                mapping[field] = value
+        mapping["subscription_id"] = subscription_id
+        mapping["mailbox"] = mailbox
+        mapping["folder"] = folder
+    return mapping
+
+
 async def _load_cached_subscription_id(
     redis: Redis,
     mailbox: str,
     folder: SubscriptionFolder = "inbox",
 ) -> str | None:
-    raw = await redis.get(subscription_key(mailbox, folder))
-    if (not isinstance(raw, str) or not raw) and folder == "inbox":
-        # One-shot migration: pre-folder key ``graph:sub:{mailbox}``.
-        raw = await redis.get(legacy_subscription_key(mailbox))
-        if isinstance(raw, str) and raw:
-            await redis.set(inbox_subscription_key(mailbox), raw)
-            await redis.delete(legacy_subscription_key(mailbox))
-            logger.info("subscription_legacy_key_migrated", mailbox=mailbox)
-    if not isinstance(raw, str) or not raw:
+    loaded = await _read_subscription_id(redis, subscription_key(mailbox, folder))
+    if loaded is not None:
+        return loaded
+    if folder != "inbox":
         return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    # One-shot migration: pre-folder key ``graph:sub:{mailbox}``.
+    legacy_key = legacy_subscription_key(mailbox)
+    loaded = await _read_subscription_id(redis, legacy_key)
+    if loaded is None:
         return None
-    sub_id = data.get("subscription_id")
-    return sub_id if isinstance(sub_id, str) else None
+    mapping = await _copy_hash_mapping(
+        redis,
+        legacy_key,
+        mailbox=mailbox,
+        folder=folder,
+        subscription_id=loaded,
+    )
+    await _hset_subscription(redis, inbox_subscription_key(mailbox), mapping)
+    await redis.delete(legacy_key)
+    logger.info("subscription_legacy_key_migrated", mailbox=mailbox)
+    return loaded
 
 
 def _subscription_urls_ok(
