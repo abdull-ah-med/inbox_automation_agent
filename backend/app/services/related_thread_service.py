@@ -40,8 +40,11 @@ from app.services.related_match import (
     drip_key,
     normalize_sender,
     select_related,
+    strip_calendar_dates,
     subjects_near,
 )
+
+_DRIP_ASSOCIATION_LIMIT = 25
 
 logger = structlog.get_logger(__name__)
 
@@ -382,12 +385,12 @@ async def review_related(
         status=status,
         actor=actor,
     )
-    if status == "dismissed":
+    if status in ("dismissed", "confirmed"):
         await association_review_repo.set_status(
             session,
             source_thread_id=related_id,
             related_thread_id=thread_id,
-            status="dismissed",
+            status=status,
             actor=actor,
         )
     return RelatedReviewResponse(status="confirmed" if status == "confirmed" else "dismissed")
@@ -652,4 +655,99 @@ async def propose_alert_associations(
             score=score,
         )
     _ = source_sender  # reserved for future deadline-enrichment reasons
+    return proposed
+
+
+def _exact_drip_match(
+    *,
+    source_sender: str,
+    source_subject: str,
+    candidate_sender: str,
+    candidate_subject: str,
+) -> bool:
+    if normalize_sender(source_sender) != normalize_sender(candidate_sender):
+        return False
+    src_base = base_subject(source_subject)
+    cand_base = base_subject(candidate_subject)
+    if src_base and src_base == cand_base:
+        return True
+    left = strip_calendar_dates(source_subject)
+    right = strip_calendar_dates(candidate_subject)
+    return bool(left) and left == right
+
+
+async def propose_drip_associations(
+    session: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    now: datetime | None = None,
+) -> list[uuid.UUID]:
+    """Propose associations for same-sender / same-base-subject drips (no OpenAI).
+
+    High precision only: exact base_subject or date-stripped subject equality.
+    Never bumps urgency. Status stays proposed until human confirm.
+    """
+    from datetime import UTC, datetime
+
+    clock = now or datetime.now(UTC)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=UTC)
+
+    source = await thread_repo.get_by_id_trusted(session, thread_id)
+    if source is None:
+        return []
+    source_sender = await _latest_inbound_sender(session, source.id)
+    if not source_sender or not base_subject(source.subject):
+        return []
+
+    window_rows = await thread_repo.list_mailbox_threads_in_window(
+        session,
+        mailbox=source.mailbox,
+        now=clock,
+        window_days=90,
+    )
+    load_ids = [source.id] + [row.id for row in window_rows if row.id != source.id]
+    grouped = await message_repo.list_by_thread_ids(session, load_ids)
+    statuses = await association_review_repo.statuses_for_source(session, source.id)
+
+    proposed: list[uuid.UUID] = []
+    for related in window_rows:
+        if related.id == source.id:
+            continue
+        if related.conversation_id == source.conversation_id:
+            continue
+        existing = statuses.get(related.id)
+        if existing in ("dismissed", "confirmed"):
+            continue
+        related_sender = _sender_from_messages(grouped.get(related.id, []))
+        if not _exact_drip_match(
+            source_sender=source_sender,
+            source_subject=source.subject,
+            candidate_sender=related_sender,
+            candidate_subject=related.subject,
+        ):
+            continue
+        await association_review_repo.upsert_proposed(
+            session,
+            source_thread_id=source.id,
+            related_thread_id=related.id,
+            score=1.0,
+        )
+        await association_review_repo.upsert_proposed(
+            session,
+            source_thread_id=related.id,
+            related_thread_id=source.id,
+            score=1.0,
+        )
+        if existing == "proposed":
+            continue
+        proposed.append(related.id)
+        logger.info(
+            "drip_association_proposed",
+            source_thread_id=str(source.id),
+            related_thread_id=str(related.id),
+            mailbox=source.mailbox,
+        )
+        if len(proposed) >= _DRIP_ASSOCIATION_LIMIT:
+            break
     return proposed

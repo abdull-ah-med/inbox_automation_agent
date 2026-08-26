@@ -6,8 +6,9 @@ is deployed. This script refreshes what *is* persisted:
 
   1. alert_fingerprint / alert_signature / alert_sender_norm (automated alerts)
   2. thread_association_reviews via propose_alert_associations (fingerprint SQL)
-  3. optional hybrid related proposals (OpenAI) for drip / similar-subject links
-  4. optional recurrence urgency floor on open automated clusters
+  3. high-precision drip associations via propose_drip_associations (no OpenAI)
+  4. optional hybrid related proposals (OpenAI) for cosine / near-subject links
+  5. optional recurrence urgency floor on open automated clusters
 
 Does not send or modify Outlook mail. Mail.Read only.
 
@@ -16,9 +17,12 @@ Usage (from backend/, with env loaded):
   # Dry run
   .venv/bin/python -m scripts.backfill_thread_signals --limit 50
 
-  # Apply fingerprints + alert associations for open Support threads
+  # Apply fingerprints + alert + drip associations for open Support threads
   .venv/bin/python -m scripts.backfill_thread_signals --apply \\
       --mailbox support@sample-site.example.com --open-only --limit 100
+
+  # Skip drip associations
+  .venv/bin/python -m scripts.backfill_thread_signals --apply --no-drip-assoc --limit 100
 
   # Also propose hybrid related links (needs OPENAI_API_KEY)
   .venv/bin/python -m scripts.backfill_thread_signals --apply --related-search --limit 30
@@ -82,6 +86,7 @@ class _Candidate:
 class _Outcome:
     fingerprint_set: bool = False
     alert_assoc: int = 0
+    drip_assoc: int = 0
     related_assoc: int = 0
     recurrence: str | None = None
     skipped: str | None = None
@@ -154,6 +159,7 @@ async def _process_thread(
     apply: bool,
     do_fingerprint: bool,
     do_alert_assoc: bool,
+    do_drip_assoc: bool,
     do_related_search: bool,
     do_recurrence: bool,
     openai_client,
@@ -204,6 +210,17 @@ async def _process_thread(
                 # Dry run: only count if this thread can form an alert cluster.
                 outcome.alert_assoc = 1 if (keys is not None or thread.alert_fingerprint) else 0
 
+        if do_drip_assoc:
+            if apply:
+                proposed = await related_thread_service.propose_drip_associations(
+                    session,
+                    thread_id=thread.id,
+                    now=datetime.now(UTC),
+                )
+                outcome.drip_assoc = len(proposed)
+            else:
+                outcome.drip_assoc = 1  # would attempt
+
         if do_related_search:
             if openai_client is None and apply:
                 outcome.error = "related_search_needs_openai"
@@ -250,6 +267,7 @@ async def _run(
     open_only: bool,
     do_fingerprint: bool,
     do_alert_assoc: bool,
+    do_drip_assoc: bool,
     do_related_search: bool,
     do_recurrence: bool,
 ) -> int:
@@ -283,6 +301,7 @@ async def _run(
     totals = {
         "fingerprint_set": 0,
         "alert_assoc_links": 0,
+        "drip_assoc_links": 0,
         "related_assoc_links": 0,
         "recurrence_evaluated": 0,
         "errors": 0,
@@ -297,6 +316,7 @@ async def _run(
                     apply=apply,
                     do_fingerprint=do_fingerprint,
                     do_alert_assoc=do_alert_assoc,
+                    do_drip_assoc=do_drip_assoc,
                     do_related_search=do_related_search,
                     do_recurrence=do_recurrence,
                     openai_client=openai_client,
@@ -321,6 +341,7 @@ async def _run(
             if outcome.fingerprint_set:
                 totals["fingerprint_set"] += 1
             totals["alert_assoc_links"] += outcome.alert_assoc
+            totals["drip_assoc_links"] += outcome.drip_assoc
             totals["related_assoc_links"] += outcome.related_assoc
             if outcome.recurrence is not None:
                 totals["recurrence_evaluated"] += 1
@@ -338,6 +359,8 @@ async def _run(
                 ),
                 f"alert_assoc={outcome.alert_assoc}",
             ]
+            if do_drip_assoc:
+                bits.append(f"drip_assoc={outcome.drip_assoc}")
             if do_related_search:
                 bits.append(f"related={outcome.related_assoc}")
             if do_recurrence:
@@ -391,6 +414,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Skip propose_alert_associations.",
     )
     parser.add_argument(
+        "--no-drip-assoc",
+        action="store_true",
+        help="Skip propose_drip_associations (same sender + base subject).",
+    )
+    parser.add_argument(
         "--related-search",
         action="store_true",
         help="Also run hybrid related-thread proposals (needs OPENAI_API_KEY).",
@@ -420,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
                 open_only=args.open_only,
                 do_fingerprint=not args.no_fingerprint,
                 do_alert_assoc=not args.no_alert_assoc,
+                do_drip_assoc=not args.no_drip_assoc,
                 do_related_search=args.related_search,
                 do_recurrence=args.recurrence,
             )

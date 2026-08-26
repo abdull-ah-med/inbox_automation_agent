@@ -2,7 +2,6 @@
 
 import Link from "next/link"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { X } from "lucide-react"
 import { useRef, useState } from "react"
 
 import { ThreadEmailPanel } from "@/components/thread-email-panel"
@@ -199,16 +198,16 @@ export const AssociatedThreadsList = ({
               ) : null}
               <Button
                 type="button"
-                size="icon-sm"
+                size="sm"
                 variant="ghost"
                 tabIndex={0}
-                aria-label={`Dismiss associated thread ${item.subject}`}
+                aria-label={`Remove association ${item.subject}`}
                 disabled={inflightIds.has(item.thread_id)}
                 onClick={() => {
                   void handleReview(item.thread_id, "dismissed")
                 }}
               >
-                <X aria-hidden="true" />
+                Remove
               </Button>
             </div>
           </li>

@@ -109,7 +109,7 @@ describe("AssociatedThreadsList", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it("lists mailbox, US date, confirm, and dismiss", () => {
+  it("lists mailbox, US date, confirm, and remove", () => {
     renderList([item])
     expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
     expect(screen.getByText("cr@example.com")).toBeInTheDocument()
@@ -124,10 +124,24 @@ describe("AssociatedThreadsList", () => {
     ).not.toBeInTheDocument()
     expect(
       screen.getByRole("button", { name: "Confirm associated thread SampleClient follow-up 8/14" }),
-    ).toBeInTheDocument()
+    ).toHaveTextContent("Confirm")
     expect(
-      screen.getByRole("button", { name: "Dismiss associated thread SampleClient follow-up 8/14" }),
-    ).toBeInTheDocument()
+      screen.getByRole("button", { name: "Remove association SampleClient follow-up 8/14" }),
+    ).toHaveTextContent("Remove")
+  })
+
+  it("confirmed row hides confirm and keeps remove control", () => {
+    renderList([{ ...item, status: "confirmed" }])
+    expect(
+      screen.queryByRole("button", {
+        name: "Confirm associated thread SampleClient follow-up 8/14",
+      }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument()
+    expect(screen.getByText(/confirmed/)).toBeInTheDocument()
+    expect(
+      screen.getByRole("button", { name: "Remove association SampleClient follow-up 8/14" }),
+    ).toHaveTextContent("Remove")
   })
 
   it("opens a preview modal and keeps the source thread on screen", async () => {
@@ -186,7 +200,7 @@ describe("AssociatedThreadsList", () => {
     expect(screen.getByText(/confirmed/)).toBeInTheDocument()
     await user.click(
       screen.getByRole("button", {
-        name: "Dismiss associated thread SampleClient follow-up 8/14",
+        name: "Remove association SampleClient follow-up 8/14",
       }),
     )
     await waitFor(() => {
@@ -227,7 +241,7 @@ describe("AssociatedThreadsList", () => {
     )
     await user.click(
       screen.getByRole("button", {
-        name: "Dismiss associated thread Invoice packet 8/12",
+        name: "Remove association Invoice packet 8/12",
       }),
     )
     await waitFor(() => {

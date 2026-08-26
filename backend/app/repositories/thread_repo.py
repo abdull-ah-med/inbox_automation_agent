@@ -567,6 +567,33 @@ async def list_alert_association_candidates(
     return [ThreadSchema.model_validate(row) for row in result.scalars().all()]
 
 
+_DRIP_WINDOW_SCAN_LIMIT = 100
+
+
+async def list_mailbox_threads_in_window(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    now: datetime,
+    window_days: int = 90,
+    limit: int = _DRIP_WINDOW_SCAN_LIMIT,
+) -> list[ThreadSchema]:
+    """Recent threads in one mailbox for drip association filtering in the service."""
+    cutoff = now - timedelta(days=window_days)
+    stmt = (
+        select(Thread)
+        .where(
+            Thread.mailbox == mailbox,
+            Thread.last_message_at.is_not(None),
+            Thread.last_message_at >= cutoff,
+        )
+        .order_by(Thread.last_message_at.desc().nullslast(), Thread.id.asc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return [ThreadSchema.model_validate(row) for row in result.scalars().all()]
+
+
 def _encode_cursor(last_message_at: datetime | None, thread_id: uuid.UUID) -> str:
     payload = {
         "t": last_message_at.isoformat() if last_message_at else None,

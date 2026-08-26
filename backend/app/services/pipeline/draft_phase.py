@@ -61,6 +61,16 @@ async def _apply_draft_outcome_state(
                     thread_id=str(thread_id),
                 )
 
+            try:
+                await related_thread_service.propose_drip_associations(
+                    session, thread_id=thread_id
+                )
+            except Exception:
+                logger.warning(
+                    "drip_association_propose_failed",
+                    thread_id=str(thread_id),
+                )
+
             applied = None
             try:
                 applied = await recurrence_service.apply_recurrence_escalation(
