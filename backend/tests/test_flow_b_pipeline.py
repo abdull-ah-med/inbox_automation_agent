@@ -15,10 +15,10 @@ from app.models.schemas.email_triage_state import CrossThreadContextSchema, Emai
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
-_EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
-_RESOLVE = "app.services.pipeline_service.context_service.resolve_cross_thread_context"
-_GRAPH = "app.services.pipeline_service._resolve_graph_client"
-_SUMMARIZE = "app.services.pipeline_service._summarize_non_spam"
+_EMBED_SAFE = "app.services.pipeline.service.embedding_service.embed_and_store_safe"
+_RESOLVE = "app.services.pipeline.service.context_service.resolve_cross_thread_context"
+_GRAPH = "app.services.pipeline.service._resolve_graph_client"
+_SUMMARIZE = "app.services.pipeline.service._summarize_non_spam"
 _SESSION_FACTORY = "app.db.session.get_session_factory"
 
 
@@ -115,15 +115,15 @@ async def test_flow_b_match_audits_and_passes_context_to_draft() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ) as draft_mock,
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_RESOLVE, new=AsyncMock(return_value=cross)) as resolve,
@@ -184,15 +184,15 @@ async def test_flow_b_no_match_falls_back_to_flow_a() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_RESOLVE, new=AsyncMock(return_value=None)),
@@ -247,15 +247,15 @@ async def test_flow_b_graph_unavailable_audits_no_match_and_drafts() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_RESOLVE, new=AsyncMock()) as resolve,
@@ -307,15 +307,15 @@ async def test_flow_a_skips_context_resolution() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_RESOLVE, new=AsyncMock()) as resolve,
@@ -374,15 +374,15 @@ async def test_flow_b_skips_graph_and_context_when_openai_unconfigured() -> None
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_RESOLVE, new=AsyncMock()) as resolve,
@@ -433,15 +433,15 @@ async def test_spam_skips_summary() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(),
         ) as draft_mock,
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(_SUMMARIZE, new=AsyncMock()) as summarize,
@@ -490,15 +490,15 @@ async def test_non_spam_calls_summary() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(_SUMMARIZE, new=AsyncMock()) as summarize,

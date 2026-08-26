@@ -21,8 +21,8 @@ from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
-_EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
-_SET_OUTCOME = "app.services.pipeline_service.thread_repo.set_thread_outcome"
+_EMBED_SAFE = "app.services.pipeline.service.embedding_service.embed_and_store_safe"
+_SET_OUTCOME = "app.services.pipeline.service.thread_repo.set_thread_outcome"
 _THREAD_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
@@ -62,9 +62,9 @@ def _ingest() -> IngestResultSchema:
 
 async def _run(*, run_triage: object, run_draft: object) -> tuple[object, AsyncMock]:
     with (
-        patch("app.services.pipeline_service.triage_service.run_triage", new=run_triage),
-        patch("app.services.pipeline_service.draft_service.run_draft", new=run_draft),
-        patch("app.services.pipeline_service.audit_service.log_event", new=AsyncMock()),
+        patch("app.services.pipeline.service.triage_service.run_triage", new=run_triage),
+        patch("app.services.pipeline.service.draft_service.run_draft", new=run_draft),
+        patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
         patch(_SET_OUTCOME, new=AsyncMock(return_value=None)) as set_outcome,
         _patch_embed(),
     ):
@@ -214,14 +214,14 @@ async def test_thread_state_update_failure_does_not_crash_pipeline() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
-        patch("app.services.pipeline_service.audit_service.log_event", new=AsyncMock()),
+        patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
         patch(_SET_OUTCOME, new=AsyncMock(side_effect=RuntimeError("db down"))),
         _patch_embed(),
     ):

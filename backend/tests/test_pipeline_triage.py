@@ -17,7 +17,7 @@ from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
-_EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
+_EMBED_SAFE = "app.services.pipeline.service.embedding_service.embed_and_store_safe"
 
 
 def _patch_embed() -> object:
@@ -79,19 +79,19 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ) as draft_mock,
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(
-            "app.services.pipeline_service._summarize_non_spam",
+            "app.services.pipeline.service._summarize_non_spam",
             new=AsyncMock(),
         ),
         _patch_embed() as embed_mock,
@@ -183,27 +183,27 @@ async def test_run_after_ingest_clears_spam_for_allowlisted_sender() -> None:
             new=AsyncMock(return_value=llm_spam),
         ),
         patch(
-            "app.services.pipeline_service._allowlisted_senders",
+            "app.services.pipeline.service._allowlisted_senders",
             new=AsyncMock(return_value=frozenset({"vendor@example.com"})),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(
-            "app.services.pipeline_service._summarize_non_spam",
+            "app.services.pipeline.service._summarize_non_spam",
             new=AsyncMock(),
         ),
         patch(
-            "app.services.pipeline_service.reply_memory_service.find_similar_replies",
+            "app.services.pipeline.service.reply_memory_service.find_similar_replies",
             new=AsyncMock(return_value=[]),
         ),
         patch(
-            "app.services.pipeline_service.thread_repo.set_thread_outcome",
+            "app.services.pipeline.service.thread_repo.set_thread_outcome",
             new=AsyncMock(return_value=None),
         ),
         _patch_embed(),
@@ -256,19 +256,19 @@ async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_fail_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(
-            "app.services.pipeline_service._summarize_non_spam",
+            "app.services.pipeline.service._summarize_non_spam",
             new=AsyncMock(),
         ),
         _patch_embed(),
@@ -336,11 +336,11 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_fail_triage),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(
@@ -409,15 +409,15 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_repo.get_draft_by_message",
+            "app.services.pipeline.service.draft_repo.get_draft_by_message",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.pipeline_service.draft_llm.generate_draft",
+            "app.services.pipeline.service.draft_llm.generate_draft",
             new=AsyncMock(side_effect=DraftGenerationError("boom")),
         ),
         patch(
@@ -429,7 +429,7 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
             new=AsyncMock(return_value=0),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(
@@ -456,7 +456,28 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
     embed_mock.assert_awaited()
 
 
-def test_pipeline_ready_for_dedup() -> None:
+@pytest.mark.parametrize(
+    ("draft_status", "slack_delivery", "has_triage", "ready"),
+    [
+        ("SKIPPED", "not_attempted", True, True),
+        ("DRAFTED", "posted", True, True),
+        ("DRAFTED", "already_posted", True, True),
+        ("DRAFTED", "skipped_unconfigured", True, True),
+        ("DRAFTED", "not_required", True, True),
+        ("DRAFTED", "failed", True, False),
+        ("DRAFTED", "not_attempted", True, False),
+        ("REQUIRES_HUMAN", "not_attempted", True, False),
+        ("PENDING", "not_attempted", True, False),
+        ("REQUIRES_HUMAN", "not_attempted", False, False),
+    ],
+)
+def test_pipeline_ready_for_dedup_matrix(
+    draft_status: str,
+    slack_delivery: str,
+    has_triage: bool,
+    ready: bool,
+) -> None:
+    """Independent oracle: docstring on pipeline_ready_for_dedup."""
     email = _email()
     context = ThreadContextSchema(
         conversation_id="c1",
@@ -464,45 +485,24 @@ def test_pipeline_ready_for_dedup() -> None:
         subject=email.subject,
         messages=[email],
     )
-    base = EmailTriageState(original_email=email, thread_context=context)
-    triage = TriageResultSchema(
-        is_spam=False,
-        has_action_items=True,
-        action_items_summary="x",
-        needs_context=False,
+    triage = (
+        TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="x",
+            needs_context=False,
+        )
+        if has_triage
+        else None
     )
-
-    skipped = base.model_copy(update={"triage": triage, "draft_status": "SKIPPED"})
-    drafted_ok = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "posted",
-        }
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=context,
+        triage=triage,
+        draft_status=draft_status,  # type: ignore[arg-type]
+        slack_delivery=slack_delivery,  # type: ignore[arg-type]
     )
-    drafted_slack_failed = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "failed",
-        }
-    )
-    drafted_not_attempted = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "not_attempted",
-        }
-    )
-    needs_human = base.model_copy(update={"triage": triage, "draft_status": "REQUIRES_HUMAN"})
-    failed = base.model_copy(update={"triage": None, "draft_status": "REQUIRES_HUMAN"})
-
-    assert pipeline_service.pipeline_ready_for_dedup(skipped) is True
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_ok) is True
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_slack_failed) is False
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_not_attempted) is False
-    assert pipeline_service.pipeline_ready_for_dedup(needs_human) is False
-    assert pipeline_service.pipeline_ready_for_dedup(failed) is False
+    assert pipeline_service.pipeline_ready_for_dedup(state) is ready
 
 
 def test_select_original_email_requires_exact_message_id() -> None:

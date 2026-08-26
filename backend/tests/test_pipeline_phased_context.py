@@ -20,9 +20,9 @@ from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, Thr
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
-_GRAPH = "app.services.pipeline_service._resolve_graph_client"
-_RESOLVE = "app.services.pipeline_service.context_service.resolve_cross_thread_context"
-_GENERATE = "app.services.pipeline_service.draft_llm.generate_draft"
+_GRAPH = "app.services.pipeline.service._resolve_graph_client"
+_RESOLVE = "app.services.pipeline.service.context_service.resolve_cross_thread_context"
+_GENERATE = "app.services.pipeline.service.draft_llm.generate_draft"
 _THREAD_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
@@ -99,26 +99,26 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(_GRAPH, new=AsyncMock()) as resolve_graph,
         patch(_RESOLVE, new=AsyncMock()) as resolve_context,
         patch(_GENERATE, new=AsyncMock(return_value=generated)) as generate,
         patch(
-            "app.services.pipeline_service.draft_repo.get_draft_by_message",
+            "app.services.pipeline.service.draft_repo.get_draft_by_message",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.pipeline_service.skill_repo.list_active_for_selection",
+            "app.services.pipeline.service.skill_repo.list_active_for_selection",
             new=AsyncMock(return_value=[]),
         ),
         patch(
-            "app.services.pipeline_service.skill_selection_service.select_from_active",
+            "app.services.pipeline.service.skill_selection_service.select_from_active",
             new=AsyncMock(
                 return_value=MagicMock(
                     blocks=[],
@@ -131,15 +131,15 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             ),
         ),
         patch(
-            "app.services.pipeline_service.skill_selection_service.log_skills_selected",
+            "app.services.pipeline.service.skill_selection_service.log_skills_selected",
             new=AsyncMock(),
         ),
         patch(
-            "app.services.pipeline_service.tone_profile_service.load_for_draft",
+            "app.services.pipeline.service.tone_profile_service.load_for_draft",
             new=AsyncMock(return_value=(None, [])),
         ),
         patch(
-            "app.services.pipeline_service.rejection_memory_service.find_negative_constraints",
+            "app.services.pipeline.service.rejection_memory_service.find_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -151,13 +151,13 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(return_value=0),
         ),
         patch(
-            "app.services.pipeline_service.draft_repo.create_draft",
+            "app.services.pipeline.service.draft_repo.create_draft",
             new=AsyncMock(
                 return_value=MagicMock(model_dump=lambda **_: generated.draft.model_dump())
             ),
         ),
         patch(
-            "app.services.pipeline_service.thread_repo.set_thread_outcome",
+            "app.services.pipeline.service.thread_repo.set_thread_outcome",
             new=AsyncMock(return_value=None),
         ),
         patch(
