@@ -72,6 +72,12 @@ const nextConfig: NextConfig = {
   // Standalone output for minimal Docker images (Next.js output file tracing).
   // https://nextjs.org/docs/app/api-reference/config/next-config-js/output
   output: "standalone",
+  // Pin the app root — a stray repo-root package-lock.json otherwise makes
+  // Turbopack treat the monorepo root as the workspace and break the RSC client manifest.
+  // https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory
+  turbopack: {
+    root: __dirname,
+  },
   poweredByHeader: false,
   reactStrictMode: true,
   async headers() {

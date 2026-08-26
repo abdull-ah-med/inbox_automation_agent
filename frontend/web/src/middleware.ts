@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import type { NextRequest } from "next/server"
 
 /**
  * Auth is not gated here.
@@ -19,7 +18,7 @@ import type { NextRequest } from "next/server"
  * https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy
  * Full nonce + strict-dynamic is the long-term target.
  */
-export function middleware(_request: NextRequest) {
+export function middleware() {
   return NextResponse.next()
 }
 
