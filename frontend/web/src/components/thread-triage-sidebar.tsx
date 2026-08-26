@@ -2,14 +2,12 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { Check, X } from "lucide-react"
 
 import { ApplySiblingsDialog } from "@/components/apply-siblings-dialog"
-import { EmailBody } from "@/components/email-body"
-import { NotSpamButton } from "@/components/not-spam-button"
-import { PresentationBadges } from "@/components/presentation-badges"
-import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
-import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
+import { AuditSection } from "@/components/thread-triage/audit-section"
+import { ClassificationSection } from "@/components/thread-triage/classification-section"
+import { DraftSection } from "@/components/thread-triage/draft-section"
+import { InsightsPanel } from "@/components/thread-triage/insights-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -29,9 +27,8 @@ import {
 } from "@/components/ui/select"
 import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
 import { api } from "@/lib/api-client"
-import { formatEventName, formatRelativeTime } from "@/lib/design-tokens"
 import {
   REJECT_REASON_CODES,
   REJECT_REASON_LABELS,
@@ -42,11 +39,9 @@ import type {
   AuditEntry,
   ClassificationView,
   DraftView,
-  RelatedThreadItem,
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
-import { cn, textLinkClass } from "@/lib/utils"
 
 const REJECT_ITEMS = [
   { label: "Select a reason", value: null },
@@ -55,40 +50,6 @@ const REJECT_ITEMS = [
     value: code,
   })),
 ]
-
-const Panel = ({
-  title,
-  children,
-}: {
-  title: string
-  children: React.ReactNode
-}) => {
-  return (
-    <Card>
-      <CardHeader className="pb-0">
-        <CardTitle className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {title}
-        </CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  )
-}
-
-const Field = ({
-  label,
-  value,
-}: {
-  label: string
-  value: React.ReactNode
-}) => {
-  return (
-    <div>
-      <p className="text-xs text-gray-400">{label}</p>
-      <div className="mt-0.5 text-sm text-gray-900 dark:text-gray-100">{value}</div>
-    </div>
-  )
-}
 
 const feedbackBadge = (
   draft: DraftView,
@@ -135,15 +96,7 @@ export const ThreadTriageSidebar = ({
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
-  const [siblingOpen, setSiblingOpen] = useState(false)
-  const [siblingItems, setSiblingItems] = useState<RelatedThreadItem[]>([])
-  const [siblingTreatment, setSiblingTreatment] = useState<"no_reply" | "urgency">(
-    "no_reply",
-  )
-  const [siblingReason, setSiblingReason] = useState("")
-  const [siblingUrgency, setSiblingUrgency] = useState<
-    "CRITICAL" | "HIGH" | "NORMAL" | "LOW" | undefined
-  >(undefined)
+  const siblings = useSiblingsPrompt(threadId)
 
   const presentation = thread.presentation
 
@@ -161,24 +114,6 @@ export const ThreadTriageSidebar = ({
   }
 
   const draftId = draft?.id
-
-  const promptSiblings = async (
-    treatment: "no_reply" | "urgency",
-    reason: string,
-    urgency?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW",
-  ) => {
-    try {
-      const data = await api.threads.related(threadId, "siblings")
-      if (data.items.length === 0) return
-      setSiblingItems(data.items)
-      setSiblingTreatment(treatment)
-      setSiblingReason(reason)
-      setSiblingUrgency(urgency)
-      setSiblingOpen(true)
-    } catch {
-      // Source action already succeeded; an empty prompt is the fallback.
-    }
-  }
 
   const approveMutation = useMutation({
     mutationFn: (body?: {
@@ -227,7 +162,7 @@ export const ThreadTriageSidebar = ({
       setActionError(null)
       await invalidateReviewQueues()
       if (payload.reason_code === "wrong_action") {
-        await promptSiblings("no_reply", payload.feedback_note)
+        await siblings.prompt("no_reply", payload.feedback_note)
       } else {
         maybePromptResolve()
       }
@@ -306,7 +241,6 @@ export const ThreadTriageSidebar = ({
   )
   const busy = approveMutation.isPending || rejectMutation.isPending
   const suggestedActions = draft?.suggested_actions ?? []
-  const history = presentation?.triage_history
 
   const resolveMutation = useMutation({
     mutationFn: () => api.threads.resolve(threadId),
@@ -321,108 +255,19 @@ export const ThreadTriageSidebar = ({
 
   return (
     <div className="space-y-4">
-      <Panel title="Insights">
-        <div className="space-y-4">
-          <div>
-            <p className="text-xs text-gray-400">Teaching note</p>
-            {teachingNote ? (
-              <EmailBody
-                text={teachingNote}
-                className="mt-1 rounded-md bg-blue-50 px-3 py-2 text-gray-800 dark:bg-blue-950/30 dark:text-gray-100"
-              />
-            ) : (
-              <p className="mt-1 text-sm text-gray-400 italic">
-                No teaching note yet. This thread hasn&apos;t produced a draft.
-              </p>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field
-              label="State"
-              value={
-                presentation?.badges_now?.length ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    <PresentationBadges
-                      badges={presentation.badges_now.filter((b) => b.kind === "state")}
-                    />
-                  </div>
-                ) : (
-                  <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
-                )
-              }
-            />
-            <Field
-              label="Urgency"
-              value={
-                urgency ? (
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge
-                        label={urgency}
-                        tone={
-                          presentation && !presentation.urgency_active
-                            ? "neutral"
-                            : urgencyTone(urgency)
-                        }
-                      />
-                      {presentation && !presentation.urgency_active ? (
-                        <span className="text-xs text-muted-foreground">inactive</span>
-                      ) : null}
-                      {draftId && !feedbackDone && presentation?.urgency_active !== false ? (
-                        <UrgencyEditPopover
-                          draftId={draftId}
-                          threadId={threadId}
-                          currentUrgency={urgency}
-                          disabled={busy}
-                          onSaved={(payload) => {
-                            void promptSiblings(
-                              "urgency",
-                              payload.reason,
-                              payload.urgency,
-                            )
-                          }}
-                        />
-                      ) : null}
-                    </div>
-                    {urgencyReason ? (
-                      <p className="text-xs text-gray-500">{urgencyReason}</p>
-                    ) : null}
-                  </div>
-                ) : (
-                  "—"
-                )
-              }
-            />
-          </div>
-
-          {activity.length > 0 ? (
-            <div>
-              <p className="text-xs text-gray-400">Activity</p>
-              <ul className="mt-2 space-y-2">
-                {activity
-                  .slice()
-                  .reverse()
-                  .slice(0, 5)
-                  .map((entry) => (
-                    <li
-                      key={`${entry.event_type}-${entry.timestamp}`}
-                      className="rounded-md border border-border/60 px-2.5 py-2"
-                    >
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {entry.title}
-                      </p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{entry.body}</p>
-                      <p className="mt-1 text-[11px] text-gray-400">
-                        {formatRelativeTime(entry.timestamp)}
-                      </p>
-                    </li>
-                  ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      </Panel>
+      <InsightsPanel
+        thread={thread}
+        teachingNote={teachingNote}
+        urgency={urgency}
+        urgencyReason={urgencyReason}
+        draftId={draftId}
+        feedbackDone={feedbackDone}
+        busy={busy}
+        activity={activity}
+        onUrgencySaved={(payload) => {
+          void siblings.prompt("urgency", payload.reason, payload.urgency)
+        }}
+      />
 
       <Tabs defaultValue="classification" className="w-full gap-3">
         <TabsList className="w-full" aria-label="Thread review sections">
@@ -433,272 +278,33 @@ export const ThreadTriageSidebar = ({
         </TabsList>
 
         <TabsContent value="classification" className="space-y-4 outline-none">
-          <Panel title="Suggested Process">
-            {suggestedActions.length > 0 ? (
-              <ol className="space-y-3">
-                {suggestedActions
-                  .slice()
-                  .sort((a, b) => a.step - b.step)
-                  .map((item) => (
-                    <li key={`${item.step}-${item.action}`} className="flex gap-3">
-                      <span
-                        className="flex size-6 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                        aria-hidden="true"
-                      >
-                        {item.step}
-                      </span>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                          {item.action}
-                        </p>
-                        {item.stakeholder ? (
-                          <span className="mt-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                            {item.stakeholder}
-                          </span>
-                        ) : null}
-                        <p className="mt-1 text-xs text-gray-500">{item.rationale}</p>
-                      </div>
-                    </li>
-                  ))}
-              </ol>
-            ) : (
-              <p className="text-sm text-gray-500">
-                No suggested process. This thread hasn&apos;t produced a draft.
-              </p>
-            )}
-          </Panel>
-
-          <Panel title="When we triaged">
-            <p className="mb-3 text-xs text-muted-foreground">
-              Historical classification from triage — not current open-work status.
-            </p>
-            {triage ? (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-1.5">
-                  {triage.is_internal ? (
-                    <StatusBadge label="Internal" tone="blue" />
-                  ) : null}
-                  {triage.is_automated ? (
-                    <StatusBadge label="Automated" tone="neutral" />
-                  ) : null}
-                  {triage.is_spam != null ? (
-                    <StatusBadge
-                      label={triage.is_spam ? "Spam" : "Not spam"}
-                      tone={triage.is_spam ? "red" : "green"}
-                    />
-                  ) : null}
-                  {(history?.has_action_items ?? triage.has_action_items) != null ? (
-                    <StatusBadge
-                      label={
-                        (history?.has_action_items ?? triage.has_action_items)
-                          ? "Action needed (at triage)"
-                          : "No action (at triage)"
-                      }
-                      tone="neutral"
-                    />
-                  ) : null}
-                  {(history?.needs_context ?? triage.needs_context) != null ? (
-                    <StatusBadge
-                      label={
-                        (history?.needs_context ?? triage.needs_context)
-                          ? "Needed context (at triage)"
-                          : "Context OK (at triage)"
-                      }
-                      tone="neutral"
-                    />
-                  ) : null}
-                </div>
-                {triage.action_items_summary ? (
-                  <Field label="Action items" value={triage.action_items_summary} />
-                ) : null}
-                {triage.spam_reason ? (
-                  <Field label="Spam reason" value={triage.spam_reason} />
-                ) : null}
-                {thread.state === "SPAM" || triage.is_spam ? (
-                  <NotSpamButton
-                    threadId={threadId}
-                    sender={thread.last_sender}
-                    size="sm"
-                  />
-                ) : null}
-                {triage.context_reason ? (
-                  <Field label="Context reason" value={triage.context_reason} />
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">
-                No triage result yet. Classification may still be pending.
-              </p>
-            )}
-          </Panel>
-
-          <Panel title="Thread details">
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Category" value={thread.category ?? "—"} />
-                <Field label="Messages" value={thread.message_count} />
-                <Field label="Staleness" value={`${thread.staleness_hours.toFixed(1)}h`} />
-                <Field label="Draft" value={thread.has_draft ? "Available" : "None"} />
-              </div>
-              {thread.outlook_url ? (
-                <a
-                  href={thread.outlook_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  tabIndex={0}
-                  aria-label="Open thread in Outlook"
-                  className={cn(textLinkClass, "text-sm")}
-                >
-                  Open in Outlook
-                </a>
-              ) : null}
-            </div>
-          </Panel>
+          <ClassificationSection
+            threadId={threadId}
+            thread={thread}
+            triage={triage}
+            suggestedActions={suggestedActions}
+          />
         </TabsContent>
 
         <TabsContent value="draft" className="outline-none">
-          <Panel title="Draft reply">
-            {draft ? (
-              <div className="space-y-3">
-                {badge ? (
-                  <StatusBadge label={badge.label} tone={badge.tone} />
-                ) : null}
-                <Field label="Subject" value={draft.subject} />
-                <div>
-                  <p className="text-xs text-gray-400">Body</p>
-                  <div className="mt-1 overflow-auto">
-                    <EmailBody text={draft.body} />
-                  </div>
-                </div>
-                {draft.forward_to ? (
-                  <Field label="Forward to" value={draft.forward_to} />
-                ) : null}
-                {draft.feedback_note ? (
-                  <Field label="Feedback note" value={draft.feedback_note} />
-                ) : null}
-                {draft.approval_note ? (
-                  <div className="space-y-1">
-                    <Field label="Learning context" value={draft.approval_note} />
-                    {draft.approval_scope ? (
-                      <StatusBadge
-                        label={
-                          draft.approval_scope === "similar"
-                            ? "Applies to similar emails"
-                            : "This thread only"
-                        }
-                        tone="blue"
-                      />
-                    ) : null}
-                  </div>
-                ) : null}
-
-                <div>
-                  <p className="text-xs text-gray-400">Skills used</p>
-                  {(draft.applied_skills?.length ?? 0) === 0 ? (
-                    <p className="mt-1 text-sm text-gray-500">
-                      No skills applied for this draft
-                    </p>
-                  ) : (
-                    <ul className="mt-2 space-y-2">
-                      {draft.applied_skills.map((skill) => {
-                        const refs = (draft.tool_calls ?? [])
-                          .filter(
-                            (call) =>
-                              call.skill_id === skill.id &&
-                              !call.is_error &&
-                              Boolean(call.path),
-                          )
-                          .map((call) => call.path)
-                        const uniqueRefs = [...new Set(refs)]
-                        return (
-                          <li key={skill.id} className="space-y-1">
-                            <StatusBadge label={skill.name} tone="blue" />
-                            {uniqueRefs.length > 0 ? (
-                              <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600 dark:text-gray-400">
-                                {uniqueRefs.map((path) => (
-                                  <li key={path}>{path}</li>
-                                ))}
-                              </ul>
-                            ) : null}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
-                </div>
-
-                {actionError ? (
-                  <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-                    {actionError}
-                  </p>
-                ) : null}
-
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    tabIndex={0}
-                    aria-label="Approve draft"
-                    disabled={feedbackDone || busy}
-                    onClick={handleOpenApprove}
-                    onKeyDown={handleApproveKeyDown}
-                  >
-                    <Check aria-hidden="true" />
-                    Approve
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    tabIndex={0}
-                    aria-label="Reject draft"
-                    disabled={feedbackDone || busy}
-                    onClick={() => setRejectOpen(true)}
-                    onKeyDown={handleRejectKeyDown}
-                  >
-                    <X aria-hidden="true" />
-                    Reject
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-gray-500">No draft generated for this thread.</p>
-            )}
-          </Panel>
+          <DraftSection
+            draft={draft}
+            badge={badge}
+            actionError={actionError}
+            feedbackDone={feedbackDone}
+            busy={busy}
+            onApprove={handleOpenApprove}
+            onApproveKeyDown={handleApproveKeyDown}
+            onReject={() => setRejectOpen(true)}
+            onRejectKeyDown={handleRejectKeyDown}
+          />
         </TabsContent>
 
         <TabsContent value="audit" className="outline-none">
-          <Panel title="Audit log">
-            <ul className="space-y-2">
-              {auditLog.length === 0 ? (
-                <li className="text-sm text-gray-500">No audit events.</li>
-              ) : (
-                auditLog.map((entry) => (
-                  <li
-                    key={`${entry.timestamp}|${entry.event}|${entry.source}|${entry.detail}`}
-                    className="rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
-                  >
-                    <div className="flex justify-between gap-2">
-                      <span className="text-xs font-medium">
-                        {formatEventName(entry.event)}
-                      </span>
-                      <span className="text-xs text-gray-400">
-                        {formatRelativeTime(entry.timestamp)}
-                      </span>
-                    </div>
-                    {entry.detail ? (
-                      <p className="mt-1 line-clamp-3 text-xs text-gray-500">
-                        {entry.detail}
-                      </p>
-                    ) : null}
-                  </li>
-                ))
-              )}
-            </ul>
-          </Panel>
+          <AuditSection auditLog={auditLog} />
         </TabsContent>
       </Tabs>
+
 
       <Dialog open={approveOpen} onOpenChange={setApproveOpen}>
         <DialogContent size="lg">
@@ -913,14 +519,14 @@ export const ThreadTriageSidebar = ({
         </DialogContent>
       </Dialog>
       <ApplySiblingsDialog
-        key={siblingItems.map((item) => item.thread_id).join(",")}
-        open={siblingOpen}
+        key={siblings.items.map((item) => item.thread_id).join(",")}
+        open={siblings.open}
         sourceThreadId={threadId}
-        items={siblingItems}
-        treatment={siblingTreatment}
-        reason={siblingReason}
-        urgency={siblingUrgency}
-        onOpenChange={setSiblingOpen}
+        items={siblings.items}
+        treatment={siblings.treatment}
+        reason={siblings.reason}
+        urgency={siblings.urgency}
+        onOpenChange={siblings.setOpen}
       />
     </div>
   )
