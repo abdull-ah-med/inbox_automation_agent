@@ -13,6 +13,11 @@ CONCURRENTLY runs in an autocommit block, so SET LOCAL would not apply to
 the build. RESET after the build so later statements on this connection
 do not inherit 2GB.
 
+hnsw.iterative_scan (mailbox-filtered ANN) requires pgvector >= 0.8.0:
+https://github.com/pgvector/pgvector/blob/v0.8.0/CHANGELOG.md
+https://github.com/pgvector/pgvector#iterative-index-scans
+https://www.postgresql.org/about/news/pgvector-080-released-2952/
+
 pgvector HNSW: https://github.com/pgvector/pgvector#hnsw
 See SQLAlchemy/Alembic ``only-concurrent-indexes``.
 """

@@ -9,6 +9,13 @@ index already matches production settings, this revision is a no-op.
 Catalogs that still have demo settings are rebuilt in 036_hnsw_swap_zero_downtime
 (create v2 concurrently, rename swap, drop old concurrently).
 
+SET LOCAL maintenance_work_mem does not survive CREATE INDEX CONCURRENTLY
+(autocommit). The 2GB build budget lives in 036 as session SET + RESET.
+
+hnsw.iterative_scan requires pgvector >= 0.8.0 (released 2024-10-30):
+https://github.com/pgvector/pgvector/blob/v0.8.0/CHANGELOG.md
+https://www.postgresql.org/about/news/pgvector-080-released-2952/
+
 See SQLAlchemy/Alembic ``only-concurrent-indexes``.
 """
 
