@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.core.tenant_scope import TenantScope
 from app.models.db.draft import Draft
 from app.models.db.thread import Thread
 from app.models.schemas.email import ThreadStateEnum
@@ -259,7 +260,7 @@ async def test_wrong_action_sets_no_action_and_leaves_queue(db_session) -> None:
     )
     await db_session.commit()
 
-    updated = await thread_repo.get_by_id(db_session, thread.id)
+    updated = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert updated is not None
     assert updated.state == ThreadStateEnum.NO_ACTION.value
     rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
@@ -292,7 +293,7 @@ async def test_tone_reject_keeps_thread_in_queue(db_session) -> None:
     )
     await db_session.commit()
 
-    updated = await thread_repo.get_by_id(db_session, thread.id)
+    updated = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert updated is not None
     assert updated.state == ThreadStateEnum.DRAFTED.value
     rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)

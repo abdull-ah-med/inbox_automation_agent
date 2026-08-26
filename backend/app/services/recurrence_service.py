@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.automated_mail import is_automated_mail
 from app.core.exceptions import ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.core.thread_policy import max_urgency, recurrence_urgency_floor
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import (
@@ -19,6 +20,7 @@ from app.repositories import (
     message_repo,
     thread_repo,
 )
+from app.repositories.message_repo import MessageSchema
 from app.services import audit_service
 from app.services.related_match import alert_cluster_keys
 
@@ -50,7 +52,7 @@ def _clock(now: datetime | None) -> datetime:
     return clock
 
 
-def _count_automated_in_rows(rows, *, cutoff: datetime) -> int:
+def _count_automated_in_rows(rows: list[MessageSchema], *, cutoff: datetime) -> int:
     count = 0
     for row in rows:
         if str(row.direction).lower() != "inbound":
@@ -93,13 +95,15 @@ async def _latest_inbound_sender(session: AsyncSession, thread_id: uuid.UUID) ->
     return ""
 
 
-async def _ensure_fingerprint(session: AsyncSession, thread) -> str | None:
+async def _ensure_fingerprint(
+    session: AsyncSession, thread: thread_repo.ThreadSchema
+) -> str | None:
     if (
         thread.alert_fingerprint
         and thread.alert_signature
         and thread.alert_sender_norm
     ):
-        return thread.alert_fingerprint
+        return str(thread.alert_fingerprint)
     sender = await _latest_inbound_sender(session, thread.id)
     keys = alert_cluster_keys(
         mailbox=thread.mailbox,
@@ -107,7 +111,7 @@ async def _ensure_fingerprint(session: AsyncSession, thread) -> str | None:
         subject=thread.subject,
     )
     if keys is None:
-        return thread.alert_fingerprint
+        return str(thread.alert_fingerprint) if thread.alert_fingerprint else None
     fingerprint, signature, sender_norm = keys
     await thread_repo.set_alert_fingerprint(
         session,
@@ -122,7 +126,12 @@ async def _ensure_fingerprint(session: AsyncSession, thread) -> str | None:
     return fingerprint
 
 
-async def _open_cluster(session: AsyncSession, thread, *, now: datetime):
+async def _open_cluster(
+    session: AsyncSession,
+    thread: thread_repo.ThreadSchema,
+    *,
+    now: datetime,
+) -> tuple[list[thread_repo.ThreadSchema], int]:
     fingerprint = thread.alert_fingerprint
     if not fingerprint:
         return [thread], 0
@@ -214,7 +223,7 @@ async def apply_recurrence_escalation(
 ) -> str | None:
     """Raise open-cluster urgency to max(assessed, member max, count floor)."""
     clock = _clock(now)
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.single(mailbox))
     if thread is None:
         return assessed_urgency
     if thread.state in _FINISHED:
@@ -297,7 +306,7 @@ async def apply_urgency_feedback(
     """Revert this thread's auto-bump and suppress the fingerprint."""
     if action != "wrong_escalation":
         raise ValueError(f"Unsupported urgency feedback action: {action}")
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id_trusted(session, thread_id)
     if thread is None:
         return None
     events = await audit_repo.list_raw_by_conversation(

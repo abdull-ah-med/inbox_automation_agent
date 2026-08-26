@@ -257,6 +257,28 @@ async def test_unknown_mailbox_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_nl_mailbox_outside_request_scope_raises() -> None:
+    """mailbox:CR while the request is scoped to sales is not 'zero hits'."""
+    session = AsyncMock()
+    with pytest.raises(UnknownMailboxError, match="Mailbox not found"):
+        await search_service.search_threads(
+            session,
+            _settings(),
+            openai_client=None,
+            query=f"mailbox:{CR} packet",
+            mailbox=SALES,
+        )
+
+
+def test_contentful_tokens_rejects_filler_and_keeps_keywords() -> None:
+    from app.services.search_service import contentful_tokens, retrieval_tokens
+
+    assert contentful_tokens("what should I focus on today?") is False
+    assert contentful_tokens("Ashley Cantrell invoice") is True
+    assert "Ashley" in retrieval_tokens("Ashley Cantrell invoice")
+
+
+@pytest.mark.asyncio
 async def test_keyword_mode_returns_fts_hits_not_vector_only_matches() -> None:
     """Keyword search is Outlook-style FTS. A vector-only CR hit must not appear."""
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,8 +12,8 @@ SEARCH_DEFAULT_LIMIT = 10
 SEARCH_MAX_LIMIT = 25
 SEARCH_QUERY_MAX_CHARS = 500
 SEARCH_SNIPPET_MAX_CHARS = 240
-SEARCH_MODE_KEYWORD = "keyword"
-SEARCH_MODE_HYBRID = "hybrid"
+SEARCH_MODE_KEYWORD: Literal["keyword"] = "keyword"
+SEARCH_MODE_HYBRID: Literal["hybrid"] = "hybrid"
 
 
 class SearchColumnFilters(BaseModel):

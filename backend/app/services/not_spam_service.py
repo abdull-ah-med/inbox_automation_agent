@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings
 from app.core.exceptions import ThreadNotFoundError, ThreadStateError
 from app.core.internal_mail import extract_email_address
+from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
 from app.models.schemas.spam import NotSpamResponseSchema
 from app.repositories import message_repo, spam_allowlist_repo, thread_repo
@@ -35,7 +36,7 @@ async def mark_not_spam(
 
     Does not call Graph write APIs. If the message lives in Outlook Junk, it stays there.
     """
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
     if thread.state != ThreadStateEnum.SPAM.value:
@@ -114,7 +115,7 @@ async def mark_not_spam(
         )
         await session.commit()
 
-    refreshed = await thread_repo.get_by_id(session, thread.id)
+    refreshed = await thread_repo.get_by_id(session, thread.id, TenantScope.from_settings(settings))
     new_state = refreshed.state if refreshed is not None else ThreadStateEnum.NEW.value
     return NotSpamResponseSchema(
         thread_id=thread.id,

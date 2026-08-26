@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError, ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.llm.pii_redact import scrub_text
 from app.models.schemas.urgency_feedback import (
@@ -54,7 +55,9 @@ async def apply_manual_urgency_edit(
     if draft is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
 
-    thread = await thread_repo.get_by_id(session, draft.thread_id)
+    thread = await thread_repo.get_by_id(
+        session, draft.thread_id, TenantScope.for_request(settings)
+    )
     if thread is None:
         raise DraftNotFoundError(f"Draft thread not found: {draft.thread_id}")
     if settings is not None and not settings.mailbox_allowed(thread.mailbox):

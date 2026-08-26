@@ -49,6 +49,7 @@ from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.dependencies import close_openai_client, openai_client_from_settings
+from app.core.tenant_scope import TenantScope
 from app.db.session import dispose_engine, get_session_factory
 from app.models.db.thread import Thread
 from app.models.schemas.email import ThreadStateEnum
@@ -161,7 +162,9 @@ async def _process_thread(
     settings = get_settings()
     factory = get_session_factory()
     async with factory() as session:
-        thread = await thread_repo.get_by_id(session, candidate.id)
+        thread = await thread_repo.get_by_id(
+            session, candidate.id, TenantScope.from_settings(get_settings())
+        )
         if thread is None:
             outcome.skipped = "missing"
             return outcome
@@ -325,7 +328,14 @@ async def _run(
                 totals["skipped"] += 1
 
             bits = [
-                f"fp={'set' if outcome.fingerprint_set else ('had' if candidate.has_fingerprint else 'none')}",
+                (
+                    "fp="
+                    + (
+                        "set"
+                        if outcome.fingerprint_set
+                        else ("had" if candidate.has_fingerprint else "none")
+                    )
+                ),
                 f"alert_assoc={outcome.alert_assoc}",
             ]
             if do_related_search:

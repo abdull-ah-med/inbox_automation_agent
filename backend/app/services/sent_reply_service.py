@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import draft_repo, sent_reply_repo, thread_repo
 from app.repositories.message_repo import MessageSchema
@@ -108,7 +109,7 @@ async def resolve_thread_from_outbound(
     )
 
     try:
-        thread = await thread_repo.get_by_id(session, thread_id)
+        thread = await thread_repo.get_by_id(session, thread_id, TenantScope.single(mailbox))
         urgency_assessed = thread.urgency if thread is not None else None
         matched_label = matched_by.replace("_", " ")
         human_body = (

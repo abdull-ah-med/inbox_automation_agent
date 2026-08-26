@@ -19,9 +19,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import EmptySearchQueryError, SearchError, UnknownMailboxError
-from app.core.mailbox_keys import resolve_mailbox_email, scoped_mailboxes
-from app.core.sanitize import sanitize_user_text
+from app.core.exceptions import EmptySearchQueryError, SearchError
 from app.llm.email_clean import clean_email_body
 from app.models.schemas.embedding import EmbeddingMatchSchema
 from app.models.schemas.search import (
@@ -36,6 +34,7 @@ from app.models.schemas.search import (
 )
 from app.repositories import embedding_repo, thread_repo
 from app.services import embedding_service
+from app.services.mailbox_scope import resolve_scoped_mailboxes
 from app.services.nl_mailbox_scope import extract_nl_mailbox_scope
 from app.services.rrf import (
     aggregate_conversation_scores,
@@ -305,6 +304,16 @@ def build_prefix_tsquery(query: str) -> str:
     return " & ".join(f"{token}:*" for token in tokens)
 
 
+def retrieval_tokens(text: str) -> str:
+    """FTS query string used by search, chat intent, and chat follow-ups."""
+    return build_prefix_tsquery(build_fts_query(text or ""))
+
+
+def contentful_tokens(text: str) -> bool:
+    """True when the text has tokens worth retrieving (not filler-only)."""
+    return bool(retrieval_tokens(text))
+
+
 def build_snippet(*, body: str | None, highlight: str | None = None) -> str:
     """Cleaned body window, truncated to ``SEARCH_SNIPPET_MAX_CHARS``.
 
@@ -366,17 +375,7 @@ def _mailboxes_for_search(
     mailbox: str | None,
     mailbox_tokens: tuple[str, ...],
 ) -> list[str]:
-    scoped = scoped_mailboxes(settings, mailbox)
-    if not mailbox_tokens:
-        return scoped
-    wanted: list[str] = []
-    for token in mailbox_tokens:
-        email = resolve_mailbox_email(sanitize_user_text(token), list(settings.mailbox_list))
-        if email is None or not settings.mailbox_allowed(email):
-            raise UnknownMailboxError("Mailbox not found")
-        if email not in wanted:
-            wanted.append(email)
-    return [item for item in scoped if item in set(wanted)]
+    return resolve_scoped_mailboxes(settings, mailbox, mailbox_tokens)
 
 
 def _normalize_limit(limit: int) -> int:
@@ -437,7 +436,7 @@ async def search_threads(
             mailboxes=merged,
         )
     # Chatty leftover ("what should I focus on") must not be embedded or AND-ed.
-    if parsed.free_text and not build_prefix_tsquery(build_fts_query(parsed.free_text)):
+    if parsed.free_text and not contentful_tokens(parsed.free_text):
         parsed = ParsedSearchQuery(
             free_text="",
             senders=parsed.senders,
@@ -511,9 +510,7 @@ async def search_threads(
                 logger.exception("search_vector_failed", query_length=len(cleaned))
 
     try:
-        prefix_query = (
-            build_prefix_tsquery(build_fts_query(parsed.free_text)) if parsed.free_text else ""
-        )
+        prefix_query = retrieval_tokens(parsed.free_text) if parsed.free_text else ""
         # mailbox: or a filler-only chat overview: empty FTS + recency listing.
         recency_listing = (
             not parsed.free_text and filters is None and (bool(parsed.mailboxes) or allow_empty)

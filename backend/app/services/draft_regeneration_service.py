@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError, ThreadNotFoundError
+from app.core.tenant_scope import TenantScope
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftResponseSchema
@@ -84,7 +85,7 @@ async def regenerate_draft(
     before the Sonnet call so Postgres is not held for LLM latency. Persist
     + audit run in a short write transaction afterward.
     """
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
 

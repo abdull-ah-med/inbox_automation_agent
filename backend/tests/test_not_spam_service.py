@@ -16,6 +16,7 @@ import pytest
 
 from app.core.config import Settings
 from app.core.exceptions import ThreadNotFoundError, ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.email import ThreadStateEnum
@@ -130,7 +131,7 @@ async def test_mark_not_spam_unhides_thread_and_allowlists_sender(db_session) ->
     assert result.outlook_unchanged is True
     assert result.thread_id == thread.id
 
-    stored = await thread_repo.get_by_id(db_session, thread.id)
+    stored = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert stored is not None
     assert stored.state != ThreadStateEnum.SPAM.value
 

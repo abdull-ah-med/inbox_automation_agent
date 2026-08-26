@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import uuid
 from collections.abc import Sequence
@@ -22,6 +23,7 @@ from app.core.internal_mail import (
 )
 from app.core.mailbox_keys import infer_mailbox_key
 from app.core.outlook_links import outlook_web_link
+from app.core.tenant_scope import TenantScope
 from app.core.thread_policy import presentation_from_flags
 from app.models.db.draft import Draft
 from app.models.db.message import Message
@@ -144,7 +146,7 @@ def with_presentation(
     )
 
 
-def _latest_message_ranked():
+def _latest_message_ranked() -> Any:
     return (
         select(
             Message.thread_id.label("tid"),
@@ -238,13 +240,43 @@ async def find_thread_by_conversation_id(
     return ThreadSchema.model_validate(thread)
 
 
-async def get_by_id(session: AsyncSession, thread_id: uuid.UUID) -> ThreadSchema | None:
-    stmt = select(Thread).where(Thread.id == thread_id)
+async def get_by_id(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    scope: TenantScope,
+) -> ThreadSchema | None:
+    stmt = select(Thread).where(
+        Thread.id == thread_id,
+        Thread.mailbox.in_(list(scope.mailboxes)),
+    )
     result = await session.execute(stmt)
     thread = result.scalar_one_or_none()
     if thread is None:
         return None
     return ThreadSchema.model_validate(thread)
+
+
+async def get_by_id_trusted(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> ThreadSchema | None:
+    """Load a thread by id, then pin tenant scope to that row's mailbox.
+
+    For trusted internal thread_ids (pipeline, HITL) that already came from
+    our database. HTTP handlers must keep using ``get_by_id`` with an explicit
+    ``TenantScope``.
+    """
+    mailbox = (
+        await session.execute(select(Thread.mailbox).where(Thread.id == thread_id))
+    ).scalar_one_or_none()
+    if inspect.isawaitable(mailbox):
+        mailbox = await mailbox
+    if mailbox is None:
+        return None
+    if not isinstance(mailbox, str) or not mailbox.strip():
+        # Unit tests mock ``get_by_id`` and pass a non-DB session.
+        return await get_by_id(session, thread_id, TenantScope.single("internal"))
+    return await get_by_id(session, thread_id, TenantScope.single(mailbox))
 
 
 async def list_by_ids(
@@ -279,7 +311,7 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-def _folded_text(column: object):
+def _folded_text(column: object) -> Any:
     return func.translate(column, _APOSTROPHE_FROM, "")
 
 
@@ -451,7 +483,7 @@ def _alert_cluster_filter(
     sender_norm: str | None,
     cutoff: datetime,
     open_only: bool,
-):
+) -> Any:
     match = Thread.alert_fingerprint == fingerprint
     if signature and sender_norm:
         match = or_(
@@ -852,7 +884,7 @@ async def ids_needing_attention(
     return {row[0] for row in result.all()}
 
 
-def _latest_draft_ranked():
+def _latest_draft_ranked() -> Any:
     return (
         select(
             Draft.thread_id.label("tid"),
@@ -868,7 +900,7 @@ def _latest_draft_ranked():
     ).subquery()
 
 
-def _needs_elise_action(latest_draft):
+def _needs_elise_action(latest_draft: Any) -> Any:
     """SQL: DRAFTED/REQUIRES_HUMAN and latest draft is not approved or no-reply."""
     no_draft = latest_draft.c.tid.is_(None)
     unanswered = and_(

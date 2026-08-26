@@ -12,7 +12,7 @@ import uuid
 from collections.abc import Sequence
 
 from app.models.schemas.chat import ChatHistoryTurn
-from app.services.search_service import build_fts_query, build_prefix_tsquery
+from app.services.search_service import contentful_tokens
 
 _ORDINAL_INDEX = {
     "first": 0,
@@ -33,7 +33,7 @@ _DEICTIC_RE = re.compile(
 
 
 def has_search_tokens(text: str) -> bool:
-    return bool(build_prefix_tsquery(build_fts_query(text)))
+    return contentful_tokens(text)
 
 
 def retrieval_message(message: str, history: Sequence[ChatHistoryTurn]) -> str:

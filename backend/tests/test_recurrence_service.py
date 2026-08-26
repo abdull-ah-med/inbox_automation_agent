@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.exceptions import ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
@@ -146,7 +147,9 @@ async def test_single_alert_stays_at_assessed_normal(db_session) -> None:
     applied = await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
     await db_session.commit()
 
-    fresh = await thread_repo.get_by_id(db_session, thread_a.id)
+    fresh = await thread_repo.get_by_id(
+        db_session, thread_a.id, TenantScope.single(thread_a.mailbox)
+    )
     assert applied == "NORMAL"
     assert fresh is not None
     assert fresh.urgency == "NORMAL"
@@ -170,8 +173,8 @@ async def test_second_fingerprint_thread_floors_both_high(db_session) -> None:
     applied_b = await _escalate(db_session, thread_b, assessed="NORMAL", now=T_B)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, thread_a.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    a = await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert applied_b == "HIGH"
     assert a is not None and b is not None
     assert a.urgency == "HIGH"
@@ -204,9 +207,9 @@ async def test_third_fingerprint_thread_within_48h_floors_all_critical(db_sessio
     await db_session.commit()
 
     rows = [
-        await thread_repo.get_by_id(db_session, thread_a.id),
-        await thread_repo.get_by_id(db_session, thread_b.id),
-        await thread_repo.get_by_id(db_session, thread_c.id),
+        await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox)),
+        await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox)),
+        await thread_repo.get_by_id(db_session, thread_c.id, TenantScope.single(thread_c.mailbox)),
     ]
     assert applied_c == "CRITICAL"
     assert [row.urgency for row in rows] == ["CRITICAL", "CRITICAL", "CRITICAL"]
@@ -240,9 +243,9 @@ async def test_resolved_thread_drops_out_of_cluster_so_third_is_only_high(db_ses
     applied_c = await _escalate(db_session, thread_c, assessed="NORMAL", now=T_C)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, thread_a.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
-    c = await thread_repo.get_by_id(db_session, thread_c.id)
+    a = await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
+    c = await thread_repo.get_by_id(db_session, thread_c.id, TenantScope.single(thread_c.mailbox))
     assert applied_c == "HIGH"
     assert a is not None and a.urgency == "NORMAL"
     assert b is not None and b.urgency == "HIGH"
@@ -263,7 +266,7 @@ async def test_same_thread_three_inbounds_still_critical(db_session) -> None:
 
     applied = await _escalate(db_session, thread, assessed="NORMAL", now=T_C)
     await db_session.commit()
-    fresh = await thread_repo.get_by_id(db_session, thread.id)
+    fresh = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert applied == "CRITICAL"
     assert fresh is not None
     assert fresh.urgency == "CRITICAL"
@@ -294,8 +297,8 @@ async def test_member_max_critical_raises_cluster_even_when_count_floor_is_high(
     applied_b = await _escalate(db_session, thread_b, assessed="CRITICAL", now=T_B)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, thread_a.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    a = await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert applied_b == "CRITICAL"
     assert a is not None and a.urgency == "CRITICAL"
     assert b is not None and b.urgency == "CRITICAL"
@@ -319,8 +322,8 @@ async def test_near_subject_disk_91_joins_open_cluster_and_floors_high(db_sessio
     applied_b = await _escalate(db_session, thread_b, assessed="NORMAL", now=T_B)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, thread_a.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    a = await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert applied_b == "HIGH"
     assert a is not None and a.urgency == "HIGH"
     assert b is not None and b.urgency == "HIGH"
@@ -351,8 +354,8 @@ async def test_invoice_from_same_sender_does_not_join_disk_cluster(db_session) -
     applied_inv = await _escalate(db_session, invoice, assessed="NORMAL", now=T_B)
     await db_session.commit()
 
-    d = await thread_repo.get_by_id(db_session, disk.id)
-    inv = await thread_repo.get_by_id(db_session, invoice.id)
+    d = await thread_repo.get_by_id(db_session, disk.id, TenantScope.single(disk.mailbox))
+    inv = await thread_repo.get_by_id(db_session, invoice.id, TenantScope.single(invoice.mailbox))
     assert applied_inv == "NORMAL"
     assert d is not None and d.urgency == "NORMAL"
     assert inv is not None and inv.urgency == "NORMAL"
@@ -389,8 +392,8 @@ async def test_mark_as_wrong_reverts_this_thread_and_suppresses_later_floor(
     )
     await db_session.commit()
 
-    c = await thread_repo.get_by_id(db_session, thread_c.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    c = await thread_repo.get_by_id(db_session, thread_c.id, TenantScope.single(thread_c.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert reverted == "NORMAL"
     assert c is not None and c.urgency == "NORMAL"
     assert b is not None and b.urgency == "HIGH"
@@ -417,7 +420,7 @@ async def test_mark_as_wrong_reverts_this_thread_and_suppresses_later_floor(
     await db_session.commit()
     applied_d = await _escalate(db_session, thread_d, assessed="NORMAL", now=T_D)
     await db_session.commit()
-    d = await thread_repo.get_by_id(db_session, thread_d.id)
+    d = await thread_repo.get_by_id(db_session, thread_d.id, TenantScope.single(thread_d.mailbox))
     assert applied_d == "NORMAL"
     assert d is not None and d.urgency == "NORMAL"
 
@@ -468,8 +471,8 @@ async def test_different_host_does_not_join_disk_cluster(db_session) -> None:
     applied = await _escalate(db_session, disk_db2, assessed="NORMAL", now=T_B)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, disk_db1.id)
-    b = await thread_repo.get_by_id(db_session, disk_db2.id)
+    a = await thread_repo.get_by_id(db_session, disk_db1.id, TenantScope.single(disk_db1.mailbox))
+    b = await thread_repo.get_by_id(db_session, disk_db2.id, TenantScope.single(disk_db2.mailbox))
     assert applied == "NORMAL"
     assert a is not None and a.urgency == "NORMAL"
     assert b is not None and b.urgency == "NORMAL"
@@ -499,8 +502,8 @@ async def test_missing_signature_columns_still_cluster_metric_slack(db_session) 
     applied = await _escalate(db_session, disk_91, assessed="NORMAL", now=T_B)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, disk_90.id)
-    b = await thread_repo.get_by_id(db_session, disk_91.id)
+    a = await thread_repo.get_by_id(db_session, disk_90.id, TenantScope.single(disk_90.mailbox))
+    b = await thread_repo.get_by_id(db_session, disk_91.id, TenantScope.single(disk_91.mailbox))
     assert applied == "HIGH"
     assert a is not None and a.urgency == "HIGH"
     assert b is not None and b.urgency == "HIGH"
@@ -529,8 +532,8 @@ async def test_two_inbounds_plus_sibling_is_three_alerts_critical(db_session) ->
     applied_b = await _escalate(db_session, thread_b, assessed="NORMAL", now=T_C)
     await db_session.commit()
 
-    a = await thread_repo.get_by_id(db_session, thread_a.id)
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    a = await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox))
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert applied_b == "CRITICAL"
     assert a is not None and a.urgency == "CRITICAL"
     assert b is not None and b.urgency == "CRITICAL"
@@ -599,7 +602,9 @@ async def test_mark_as_wrong_after_ratchet_reverts_to_pre_recurrence(
     await _escalate(db_session, thread_b, assessed="NORMAL", now=T_B)
     await _escalate(db_session, thread_c, assessed="NORMAL", now=T_C)
     await db_session.commit()
-    before = await thread_repo.get_by_id(db_session, thread_b.id)
+    before = await thread_repo.get_by_id(
+        db_session, thread_b.id, TenantScope.single(thread_b.mailbox)
+    )
     assert before is not None and before.urgency == "CRITICAL"
 
     reverted = await recurrence_service.apply_urgency_feedback(
@@ -609,7 +614,7 @@ async def test_mark_as_wrong_after_ratchet_reverts_to_pre_recurrence(
         actor="elise@example.com",
     )
     await db_session.commit()
-    b = await thread_repo.get_by_id(db_session, thread_b.id)
+    b = await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox))
     assert reverted == "NORMAL"
     assert b is not None and b.urgency == "NORMAL"
 
@@ -632,7 +637,7 @@ async def test_mark_as_wrong_without_escalation_is_rejected(db_session) -> None:
             action="wrong_escalation",
             actor="elise@example.com",
         )
-    fresh = await thread_repo.get_by_id(db_session, thread.id)
+    fresh = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert fresh is not None and fresh.urgency == "NORMAL"
 
 

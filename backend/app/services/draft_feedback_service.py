@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
+from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
 from app.models.schemas.email import ThreadStateEnum
@@ -26,6 +27,21 @@ from app.services import (
 logger = structlog.get_logger(__name__)
 
 
+async def _load_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    settings: Settings | None,
+) -> thread_repo.ThreadSchema | None:
+    """Load a thread under tenant scope when settings are real Settings."""
+    if isinstance(settings, Settings):
+        return await thread_repo.get_by_id(
+            session,
+            thread_id,
+            TenantScope.from_settings(settings),
+        )
+    return await thread_repo.get_by_id_trusted(session, thread_id)
+
+
 async def _require_thread_meta(
     session: AsyncSession,
     thread_id: uuid.UUID,
@@ -36,7 +52,7 @@ async def _require_thread_meta(
 
     Enforces TARGET_MAILBOXES allowlist when settings are provided (API path).
     """
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await _load_thread(session, thread_id, settings)
     if thread is None:
         raise DraftNotFoundError(f"Draft thread not found: {thread_id}")
     if settings is not None and not settings.mailbox_allowed(thread.mailbox):
@@ -159,7 +175,7 @@ async def store_approved_reply_memory(
         try:
             factory = get_session_factory()
             async with factory() as session:
-                thread = await thread_repo.get_by_id(session, draft.thread_id)
+                thread = await _load_thread(session, draft.thread_id, settings)
                 mailbox = thread.mailbox if thread is not None else "unknown"
                 if session.in_transaction():
                     await session.commit()
@@ -187,7 +203,7 @@ async def store_approved_reply_memory(
     try:
         factory = get_session_factory()
         async with factory() as session:
-            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            thread = await _load_thread(session, draft.thread_id, settings)
             mailbox = thread.mailbox if thread is not None else "unknown"
             email_preview = thread.subject if thread is not None else None
             if session.in_transaction():
@@ -240,7 +256,7 @@ async def store_rejection_memory(
     try:
         factory = get_session_factory()
         async with factory() as session:
-            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            thread = await _load_thread(session, draft.thread_id, settings)
             mailbox = thread.mailbox if thread is not None else "unknown"
             if session.in_transaction():
                 await session.commit()

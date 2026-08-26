@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import ThreadNotFoundError, ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import thread_repo
 from app.services import audit_service
@@ -19,8 +20,10 @@ logger = structlog.get_logger(__name__)
 ResolutionFeedbackAction = Literal["reopen", "wrong_reason"]
 
 
-async def _require_thread(session: AsyncSession, settings: Settings, thread_id: uuid.UUID):
-    thread = await thread_repo.get_by_id(session, thread_id)
+async def _require_thread(
+    session: AsyncSession, settings: Settings, thread_id: uuid.UUID
+) -> thread_repo.ThreadSchema:
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
     return thread
@@ -36,7 +39,7 @@ async def resolve_thread_manual(
 ) -> str:
     thread = await _require_thread(session, settings, thread_id)
     if thread.state == ThreadStateEnum.RESOLVED.value:
-        return thread.state
+        return str(thread.state)
     await thread_repo.set_thread_outcome(
         session,
         thread_id,
@@ -136,4 +139,4 @@ async def apply_resolution_feedback(
         )
     except Exception:
         logger.warning("wrong_reason_audit_failed", thread_id=str(thread_id))
-    return thread.state
+    return str(thread.state)

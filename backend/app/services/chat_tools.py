@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import uuid
 from contextlib import suppress
+from typing import Any
 
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import SearchError, UnknownMailboxError
-from app.core.mailbox_keys import resolve_allowed_mailbox
 from app.core.sanitize import sanitize_user_text
+from app.core.tenant_scope import TenantScope
 from app.llm.chat_tools import ChatToolExecution
 from app.llm.email_clean import clean_email_body
 from app.llm.pii_redact import scrub_text
 from app.models.schemas.search import SearchHit
 from app.repositories import message_repo, thread_repo, thread_summary_repo
 from app.services import search_service
+from app.services.mailbox_scope import resolve_scoped_mailboxes
 
 GET_THREAD_MAX_MESSAGES = 8
 GET_THREAD_BODY_CHARS = 4000
@@ -99,11 +101,11 @@ async def execute_chat_tool(
             if scoped:
                 resolved = _scope_email(settings, scoped)
                 mailboxes = [resolved] if resolved else []
-            rows = await thread_repo.aggregate_overview(session, mailboxes)
+            overview_rows = await thread_repo.aggregate_overview(session, mailboxes)
             return ChatToolExecution(
                 hits=[],
                 status="Summarizing mailbox",
-                overview=_format_overview(rows),
+                overview=_format_overview(overview_rows),
             )
     except UnknownMailboxError:
         return ChatToolExecution(
@@ -136,7 +138,7 @@ async def _get_thread(
             status="Opening thread",
             error="Thread not found",
         )
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         return ChatToolExecution(
             hits=[],
@@ -221,7 +223,7 @@ def _message_page(messages: list, *, page: int) -> list:
     return messages[start:end]
 
 
-def _format_overview(rows: list[dict]) -> str:
+def _format_overview(rows: list[dict[str, Any]]) -> str:
     if not rows:
         return "No mailbox data."
     blocks: list[str] = []
@@ -292,4 +294,4 @@ async def _enrich_hits_with_bodies(
 
 
 def _scope_email(settings: Settings, mailbox: str) -> str:
-    return resolve_allowed_mailbox(settings, mailbox)
+    return resolve_scoped_mailboxes(settings, mailbox)[0]

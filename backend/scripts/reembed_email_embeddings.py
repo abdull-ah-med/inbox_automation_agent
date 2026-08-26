@@ -19,6 +19,7 @@ from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.dependencies import close_openai_client, openai_client_from_settings
+from app.core.tenant_scope import TenantScope
 from app.db.session import dispose_engine, get_session_factory
 from app.llm.email_clean import clean_email_body
 from app.models.db.email_embedding import EmailEmbedding
@@ -66,9 +67,17 @@ async def _reembed_one(
     email: EmailMessageSchema | None = None
     async with factory() as session:
         if row.message_id is not None:
-            msg = await message_repo.get_by_id(session, row.message_id)
+            msg = await message_repo.get_by_id(
+                session,
+                row.message_id,
+                TenantScope.from_settings(get_settings()),
+            )
             if msg is not None:
-                thread = await thread_repo.get_by_id(session, msg.thread_id)
+                thread = await thread_repo.get_by_id(
+                    session,
+                    msg.thread_id,
+                    TenantScope.from_settings(get_settings()),
+                )
                 subject = thread.subject if thread is not None else "(no subject)"
                 body_clean = msg.body_clean
                 if not body_clean:

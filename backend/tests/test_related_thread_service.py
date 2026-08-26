@@ -14,6 +14,7 @@ import pytest
 
 from app.core.config import Settings
 from app.core.exceptions import ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
@@ -189,8 +190,12 @@ async def test_apply_no_reply_sets_sibling_no_action_and_leaves_invoice(db_sessi
     await db_session.commit()
 
     assert applied == [sibling.id]
-    updated_sib = await thread_repo.get_by_id(db_session, sibling.id)
-    updated_inv = await thread_repo.get_by_id(db_session, invoice.id)
+    updated_sib = await thread_repo.get_by_id(
+        db_session, sibling.id, TenantScope.single(sibling.mailbox)
+    )
+    updated_inv = await thread_repo.get_by_id(
+        db_session, invoice.id, TenantScope.single(invoice.mailbox)
+    )
     assert updated_sib is not None
     assert updated_sib.state == ThreadStateEnum.NO_ACTION.value
     assert updated_inv is not None

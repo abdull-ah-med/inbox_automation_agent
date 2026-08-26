@@ -15,7 +15,7 @@ from enum import StrEnum
 from app.models.schemas.chat import ChatHistoryTurn
 from app.services.chat_query import resolve_cited_thread
 from app.services.nl_mailbox_scope import extract_nl_mailbox_scope
-from app.services.search_service import build_fts_query, build_prefix_tsquery
+from app.services.search_service import retrieval_tokens
 
 _AGGREGATION_RE = re.compile(
     r"\b(how many|how much|count of|what'?s the queue|queue like)\b",
@@ -76,7 +76,7 @@ def classify_chat_intent(
             tool_name="get_overview",
             mailbox=mailbox,
         )
-    leftover_tokens = build_prefix_tsquery(build_fts_query(remainder))
+    leftover_tokens = retrieval_tokens(remainder)
     if leftover_tokens:
         return ChatIntentPlan(
             intent=ChatIntent.SEARCH,

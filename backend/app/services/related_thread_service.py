@@ -7,6 +7,7 @@ Nothing writes to Outlook. Search failures return an empty proposal.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import structlog
 from openai import AsyncOpenAI
@@ -14,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import SearchError, ThreadNotFoundError, ThreadStateError
+from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema
 from app.models.schemas.related import (
@@ -29,6 +31,7 @@ from app.repositories import (
     message_repo,
     thread_repo,
 )
+from app.repositories.message_repo import MessageSchema
 from app.services import audit_service, draft_feedback_service, search_service
 from app.services.related_match import (
     RelatedCandidate,
@@ -49,8 +52,8 @@ async def _require_thread(
     session: AsyncSession,
     thread_id: uuid.UUID,
     settings: Settings,
-):
-    thread = await thread_repo.get_by_id(session, thread_id)
+) -> thread_repo.ThreadSchema:
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
     return thread
@@ -63,13 +66,13 @@ async def _latest_inbound_sender(
     messages = await message_repo.list_by_thread(session, thread_id)
     inbound = [row for row in messages if row.direction == "inbound"]
     if inbound:
-        return inbound[-1].sender
+        return str(inbound[-1].sender)
     if messages:
-        return messages[-1].sender
+        return str(messages[-1].sender)
     return ""
 
 
-def _deadlines_from_messages(rows) -> tuple[str, ...]:
+def _deadlines_from_messages(rows: list[MessageSchema]) -> tuple[str, ...]:
     inbound = [row for row in rows if str(row.direction).lower() == "inbound"]
     if not inbound:
         return ()
@@ -82,12 +85,12 @@ def _deadlines_from_messages(rows) -> tuple[str, ...]:
     return tuple(str(item) for item in raw if item)
 
 
-def _sender_from_messages(rows) -> str:
+def _sender_from_messages(rows: list[MessageSchema]) -> str:
     inbound = [row for row in rows if str(row.direction).lower() == "inbound"]
     if inbound:
-        return inbound[-1].sender
+        return str(inbound[-1].sender)
     if rows:
-        return rows[-1].sender
+        return str(rows[-1].sender)
     return ""
 
 
@@ -177,7 +180,7 @@ async def list_related(
         mailbox: str,
         conversation_id: str,
         subject: str,
-        last_message_at,
+        last_message_at: datetime | None,
         urgency: str | None,
         score: float,
         cosine: float | None,
@@ -278,26 +281,26 @@ async def list_related(
     )
 
     items: list[RelatedThreadItem] = []
-    for row in selected:
-        status = statuses.get(row.thread_id, "proposed")
+    for candidate in selected:
+        status = statuses.get(candidate.thread_id, "proposed")
         if status == "proposed":
             await association_review_repo.upsert_proposed(
                 session,
                 source_thread_id=source_thread.id,
-                related_thread_id=row.thread_id,
-                score=row.score,
+                related_thread_id=candidate.thread_id,
+                score=candidate.score,
             )
         items.append(
             RelatedThreadItem(
-                thread_id=row.thread_id,
-                mailbox=row.mailbox,
-                subject=row.subject,
-                sender=row.sender,
-                last_message_at=row.last_message_at,
-                urgency=row.urgency,
-                score=row.score,
+                thread_id=candidate.thread_id,
+                mailbox=candidate.mailbox,
+                subject=candidate.subject,
+                sender=candidate.sender,
+                last_message_at=candidate.last_message_at,
+                urgency=candidate.urgency,
+                score=candidate.score,
                 status=status if status in ("proposed", "confirmed", "dismissed") else "proposed",
-                match_reasons=list(row.match_reasons),
+                match_reasons=list(candidate.match_reasons),
             )
         )
     return RelatedThreadList(items=items)
@@ -365,7 +368,7 @@ async def review_related(
     await _require_thread(session, thread_id, settings)
     if thread_id == related_id:
         raise ThreadStateError("A thread cannot be associated with itself")
-    related = await thread_repo.get_by_id(session, related_id)
+    related = await thread_repo.get_by_id(session, related_id, TenantScope.from_settings(settings))
     if related is None or not settings.mailbox_allowed(related.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {related_id}")
     statuses = await association_review_repo.statuses_for_source(session, thread_id)
@@ -437,7 +440,7 @@ async def _apply_urgency(
         urgency=urgency,
         urgency_reason=reason,
     )
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id_trusted(session, thread_id)
     if thread is None:
         return
     try:
@@ -458,7 +461,7 @@ async def _apply_urgency(
 
 
 def _row_to_email(
-    message,
+    message: MessageSchema,
     *,
     mailbox: str,
     conversation_id: str,
@@ -498,7 +501,7 @@ async def load_confirmed_contexts(
     pairs = await association_review_repo.confirmed_pairs(session, source_thread_id)
     contexts: list[CrossThreadContextSchema] = []
     for related_id, score in pairs:
-        related = await thread_repo.get_by_id(session, related_id)
+        related = await thread_repo.get_by_id_trusted(session, related_id)
         if related is None:
             continue
         rows = await message_repo.list_by_thread(session, related.id)
@@ -527,7 +530,7 @@ async def list_stored_associations(
     source_thread_id: uuid.UUID,
 ) -> list[RelatedThreadItem]:
     statuses = await association_review_repo.statuses_for_source(session, source_thread_id)
-    source = await thread_repo.get_by_id(session, source_thread_id)
+    source = await thread_repo.get_by_id_trusted(session, source_thread_id)
     keep_ids = [related_id for related_id, status in statuses.items() if status != "dismissed"]
     related_map = await thread_repo.list_by_ids(session, keep_ids)
     load_ids = list(related_map.keys())
@@ -574,7 +577,7 @@ async def propose_alert_associations(
     session: AsyncSession,
     *,
     thread_id: uuid.UUID,
-    now=None,
+    now: datetime | None = None,
 ) -> list[uuid.UUID]:
     """Propose associations for automated alerts without OpenAI/search.
 
@@ -586,7 +589,7 @@ async def propose_alert_associations(
     if clock.tzinfo is None:
         clock = clock.replace(tzinfo=UTC)
 
-    source = await thread_repo.get_by_id(session, thread_id)
+    source = await thread_repo.get_by_id_trusted(session, thread_id)
     if source is None:
         return []
     fingerprint = source.alert_fingerprint
