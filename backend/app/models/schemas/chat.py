@@ -15,6 +15,8 @@ CHAT_MESSAGE_MAX_CHARS = SEARCH_QUERY_MAX_CHARS
 CHAT_HISTORY_CONTENT_MAX_CHARS = 8_000
 CHAT_HISTORY_MAX_TURNS = 20
 
+GroundedVerifier = Literal["SUPPORTED", "UNSUPPORTED", "SKIPPED", "UNKNOWN"]
+
 
 class ChatCitedThread(BaseModel):
     thread_id: uuid.UUID
@@ -82,4 +84,4 @@ class ChatAskResponse(BaseModel):
     refused_write: bool
     cached: bool = False
     cache_similarity: float | None = None
-    grounded_verifier: Literal["SUPPORTED", "UNSUPPORTED", "SKIPPED", "UNKNOWN"] = "SKIPPED"
+    grounded_verifier: GroundedVerifier = "SKIPPED"

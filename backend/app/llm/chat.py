@@ -10,7 +10,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from anthropic import APIError, AsyncAnthropic
@@ -88,12 +88,19 @@ def sanitize_chat_answer(
     answer: str,
     *,
     known_thread_ids: set[uuid.UUID] | None = None,
+    mailbox: str | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> str:
     """Strip thread ids from answer text. Citations are attached by the app."""
     text = _unwrap_wrapping_fence(answer)
     if known_thread_ids is not None:
         for token in unknown_thread_ids_in_answer(text, known_thread_ids=known_thread_ids):
-            logger.warning("chat.unknown_thread_id", thread_id=token)
+            logger.warning(
+                "chat.unknown_thread_id",
+                thread_id=token,
+                mailbox=mailbox,
+                user_id=str(user_id) if user_id is not None else None,
+            )
     text = _ID_CLAUSE.sub("", text)
     text = _UUID_LIKE.sub("", text)
     text = re.sub(r"\(\s*\)", "", text)
@@ -120,8 +127,16 @@ class ChatDeltaScrubber:
 
     _MAX_PENDING = 256
 
-    def __init__(self, *, known_thread_ids: set[uuid.UUID] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        known_thread_ids: set[uuid.UUID] | None = None,
+        mailbox: str | None = None,
+        user_id: uuid.UUID | None = None,
+    ) -> None:
         self.known_thread_ids = known_thread_ids
+        self.mailbox = mailbox
+        self.user_id = user_id
         self._pending = ""
 
     def feed(self, piece: str) -> str:
@@ -148,7 +163,12 @@ class ChatDeltaScrubber:
         if not text:
             return ""
         if sanitize:
-            return sanitize_chat_answer(text, known_thread_ids=self.known_thread_ids)
+            return sanitize_chat_answer(
+                text,
+                known_thread_ids=self.known_thread_ids,
+                mailbox=self.mailbox,
+                user_id=self.user_id,
+            )
         return text
 
 
@@ -221,7 +241,9 @@ def _usage_fields(response: object) -> dict[str, int | None]:
 
 def _text_from_content(content: object) -> str:
     parts: list[str] = []
-    for block in content or []:  # type: ignore[union-attr]
+    if not isinstance(content, (list, tuple)):
+        return ""
+    for block in content:
         if getattr(block, "type", None) == "text" and getattr(block, "text", None):
             parts.append(str(block.text))
         elif isinstance(block, dict) and block.get("type") == "text":
@@ -364,7 +386,6 @@ async def _execute_tool_block(
 
 
 CHAT_INPUT_CHAR_BUDGET = 100_000
-TOKEN_COUNT_CHAR_FLOOR = 60_000
 
 
 def _content_chars(content: object) -> int:
@@ -462,11 +483,15 @@ def fit_chat_messages(
         nonlocal counted
         if use_tokens:
             try:
-                counted = token_counter(fitted)  # type: ignore[misc]
+                token_count = token_counter(fitted)  # type: ignore[misc]
             except Exception:
                 logger.warning("chat_token_count_failed")
                 return _messages_chars(fitted) > budget_chars
-            return int(counted) > int(budget_tokens)
+            if token_count is None:
+                return _messages_chars(fitted) > budget_chars
+            counted = token_count
+            limit = budget_tokens if budget_tokens is not None else 0
+            return token_count > limit
         return _messages_chars(fitted) > budget_chars
 
     while len(fitted) > 1 and over_budget():
@@ -484,12 +509,8 @@ async def fit_chat_request(
     messages: list[dict[str, Any]],
     settings: Settings,
 ) -> list[dict[str, Any]]:
-    """Prefer Anthropic count_tokens; fall back to the char heuristic."""
+    """Count tokens; fall back to the char heuristic if the API is unavailable."""
     fitted = _copy_messages(messages)
-    # Dense Unicode can be >2× tokens/char; count whenever we are near the
-    # char budget, not only after we already exceeded it.
-    if _messages_chars(fitted) <= TOKEN_COUNT_CHAR_FLOOR:
-        return fitted
     token_cache: dict[int, int] = {}
 
     async def tokens_for(current: list[dict[str, Any]]) -> int:
@@ -497,9 +518,9 @@ async def fit_chat_request(
         if key not in token_cache:
             result = await client.messages.count_tokens(
                 model=request["model"],
-                messages=current,
-                system=request.get("system"),
-                tools=request.get("tools"),
+                messages=cast(Any, current),
+                system=cast(Any, request.get("system")),
+                tools=cast(Any, request.get("tools")),
             )
             token_cache[key] = int(getattr(result, "input_tokens", 0) or 0)
         return token_cache[key]
@@ -523,6 +544,8 @@ async def iter_chat_agent(
     execute_tool: Callable[[str, dict], Awaitable[Any]],
     history: Sequence[ChatHistoryTurn] | None = None,
     initial_tool: str | None = None,
+    mailbox: str | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield status, optional token deltas, then a result with grounded hits."""
     if not settings.anthropic_api_key.strip():
@@ -608,6 +631,8 @@ async def iter_chat_agent(
                         answer = sanitize_chat_answer(
                             raw,
                             known_thread_ids={hit.thread_id for hit in hits},
+                            mailbox=mailbox,
+                            user_id=user_id,
                         )
                     usage = _usage_fields(response)
                     input_tokens = usage["input_tokens"]
@@ -628,6 +653,8 @@ async def iter_chat_agent(
                         cache_creation_input_tokens=usage["cache_write_tokens"],
                         input_tokens=input_tokens,
                         cache_hit_ratio=cache_hit_ratio,
+                        mailbox=mailbox,
+                        user_id=str(user_id) if user_id is not None else None,
                     )
                     yield _agent_result_event(
                         answer=answer,
@@ -746,6 +773,8 @@ async def iter_chat_agent(
                 error=str(exc),
                 status_code=getattr(exc, "status_code", None),
                 streamed=streamed_any,
+                mailbox=mailbox,
+                user_id=str(user_id) if user_id is not None else None,
             )
             if streamed_any:
                 raise ChatError("Claude chat failed") from exc
@@ -762,6 +791,8 @@ async def run_chat_agent(
     execute_tool: Callable[[str, dict], Awaitable[Any]],
     history: Sequence[ChatHistoryTurn] | None = None,
     initial_tool: str | None = None,
+    mailbox: str | None = None,
+    user_id: uuid.UUID | None = None,
 ) -> ChatAgentResult:
     """Run the retrieve-then-answer tool loop. Empty hits yield an empty answer."""
     answer = ""
@@ -776,6 +807,8 @@ async def run_chat_agent(
         execute_tool=execute_tool,
         history=history,
         initial_tool=initial_tool,
+        mailbox=mailbox,
+        user_id=user_id,
     ):
         if event.get("type") == "result":
             answer = str(event.get("answer") or "")

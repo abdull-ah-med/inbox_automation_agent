@@ -519,6 +519,9 @@ async def test_chat_ask_stream_emits_error_when_agent_raises_unexpected(app) -> 
     ]
     assert parsed[-1]["type"] == "error"
     assert parsed[-1]["message"] == "Claude chat failed"
+    assert "Traceback" not in resp.text
+    assert "RuntimeError" not in resp.text
+    assert "cache store exploded" not in resp.text
 
 
 @pytest.mark.asyncio

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.rate_limit import client_ip_key
 
 
@@ -182,3 +183,100 @@ async def test_chat_key_ignores_revoked_token(db_session) -> None:
         key = chat_rate_limit_key(request)
     assert key == "10.0.0.1"
     assert key != f"user:{user_id}"
+
+
+@pytest.mark.asyncio
+async def test_chat_ask_rate_limited_per_user_not_per_ip() -> None:
+    """Same user from two IPs shares one chat bucket; the 2nd ask is 429."""
+    from unittest.mock import AsyncMock, patch
+
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.dependencies import get_anthropic_client, get_db, get_openai_client
+    from app.core.dependencies_auth import get_current_user
+    from app.core.rate_limit import limiter
+    from app.core.security.tokens import create_access_token
+    from app.main import create_app
+    from app.models.schemas.auth import UserMe
+    from app.models.schemas.chat import ChatAskResponse
+
+    user_id = uuid.UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+    settings = Settings(
+        environment="local",
+        jwt_secret="c" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        enable_dev_routes=False,
+        target_mailboxes="sales@example.com",
+        anthropic_api_key="sk-ant-test",
+        chat_rate_limit_per_minute=1,
+        trust_x_forwarded_for=True,
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+        _env_file=None,
+    )
+    storage = getattr(getattr(limiter, "_limiter", limiter), "_storage", None)
+    reset = getattr(storage, "reset", None)
+    if callable(reset):
+        reset()
+
+    get_settings.cache_clear()
+    with (
+        patch("app.main.get_settings", return_value=settings),
+        patch("app.main._ping_redis", AsyncMock()),
+        patch("app.main.get_slack_app", return_value=None),
+        patch("app.main.run_subscription_reconcile", AsyncMock()),
+        patch("app.main.AsyncIOScheduler") as sched,
+        patch("app.core.rate_limit.get_settings", return_value=settings),
+        patch("app.core.rate_limit._load_user_auth", lambda uid: (True, 0)),
+    ):
+        sched.return_value.start = lambda: None
+        sched.return_value.shutdown = lambda wait=False: None
+        application = create_app()
+        application.dependency_overrides[get_settings] = lambda: settings
+
+        async def fake_user() -> UserMe:
+            return UserMe(
+                id=user_id,
+                email="elise@example.com",
+                role="user",
+                created_at=datetime.now(UTC),
+            )
+
+        application.dependency_overrides[get_current_user] = fake_user
+        application.dependency_overrides[get_db] = lambda: AsyncMock()
+        application.dependency_overrides[get_openai_client] = lambda: None
+        application.dependency_overrides[get_anthropic_client] = lambda: None
+
+        token, _expires = create_access_token(user_id, settings, token_version=0)
+        ok_response = ChatAskResponse(
+            answer="Focus on billing.",
+            citations=[],
+            retrieval_count=0,
+            mailbox="sales@example.com",
+            refused_write=False,
+        )
+        with patch("app.api.web.chat.chat_service.ask", AsyncMock(return_value=ok_response)):
+            transport = ASGITransport(app=application)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                first = await client.post(
+                    "/api/chat/ask",
+                    json={"message": "billing disputes waiting on review"},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Real-IP": "203.0.113.10",
+                    },
+                )
+                second = await client.post(
+                    "/api/chat/ask",
+                    json={"message": "billing disputes waiting on review"},
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "X-Real-IP": "198.51.100.20",
+                    },
+                )
+        application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 429, second.text

@@ -178,6 +178,8 @@ async def run_chat_case(
         execute_tool: Any,
         history: Any = None,
         initial_tool: str | None = None,
+        mailbox: str | None = None,
+        user_id: Any = None,
     ) -> ChatAgentResult:
         from app.services.chat_tools import ChatToolExecution
 
@@ -195,6 +197,8 @@ async def run_chat_case(
             execute_tool=execute,
             history=history,
             initial_tool=initial_tool,
+            mailbox=mailbox,
+            user_id=user_id,
         )
 
     patches = [

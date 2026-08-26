@@ -288,12 +288,15 @@ async def test_chat_ask_logs_tool_and_token_fields() -> None:
             anthropic_client=MagicMock(),
             message="billing disputes waiting on review",
             mailbox=SALES,
+            user_id=THREAD_A,
         )
     chat_ask = [
         call for call in log_info.call_args_list if call.args and call.args[0] == "chat.ask"
     ]
     assert chat_ask
     kwargs = chat_ask[-1].kwargs
+    assert kwargs["mailbox"] == SALES
+    assert kwargs["user_id"] == str(THREAD_A)
     assert kwargs["tool_used_first"] == "search_mail"
     assert kwargs["tool_iterations"] == 2
     assert kwargs["ttft_ms"] == 41
@@ -303,6 +306,90 @@ async def test_chat_ask_logs_tool_and_token_fields() -> None:
     assert kwargs["cache_write_tokens"] == 0
     assert kwargs["cached"] is False
     assert kwargs["grounded_verifier"] == "SKIPPED"
+
+
+def test_chat_observation_logs_token_and_timing_literals() -> None:
+    """Production change that fails this: dropping ttft/verdict from chat.ask logs."""
+    from app.services.chat_service import ChatObservation, _log_chat_ask
+
+    observation = ChatObservation(
+        input_tokens=120,
+        output_tokens=18,
+        cache_read_tokens=80,
+        cache_write_tokens=0,
+        ttft_ms=41,
+        total_ms=90,
+        verdict="UNKNOWN",
+    )
+    with patch("app.services.chat_service.logger.info") as log_info:
+        _log_chat_ask(
+            hit_count=1,
+            mailbox=SALES,
+            user_id=THREAD_A,
+            refused_write=False,
+            query_length=12,
+            observation=observation,
+        )
+    kwargs = log_info.call_args.kwargs
+    assert log_info.call_args.args[0] == "chat.ask"
+    assert kwargs["mailbox"] == SALES
+    assert kwargs["user_id"] == str(THREAD_A)
+    assert kwargs["input_tokens"] == 120
+    assert kwargs["output_tokens"] == 18
+    assert kwargs["cache_read_tokens"] == 80
+    assert kwargs["cache_write_tokens"] == 0
+    assert kwargs["ttft_ms"] == 41
+    assert kwargs["total_ms"] == 90
+    assert kwargs["grounded_verifier"] == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_unsupported_groundedness_log_includes_user_and_mailbox() -> None:
+    """Dropping mailbox/user_id from chat.groundedness_unsupported fails this."""
+    from app.llm.groundedness import Groundedness
+    from app.services.chat_service import _groundedness_verdict
+
+    with (
+        patch(
+            "app.services.chat_service.verify_grounded",
+            AsyncMock(
+                return_value=Groundedness(
+                    verdict="UNSUPPORTED",
+                    unsupported_spans=["$9"],
+                )
+            ),
+        ),
+        patch("app.services.chat_service.logger.warning") as log_warn,
+    ):
+        await _groundedness_verdict(
+            settings=_settings(chat_groundedness_enabled=True),
+            client=MagicMock(),
+            answer="The invoice is $9.",
+            hits=[_hit(THREAD_A)],
+            grounded=True,
+            mailbox=SALES,
+            user_id=THREAD_A,
+        )
+    assert log_warn.call_args.args[0] == "chat.groundedness_unsupported"
+    assert log_warn.call_args.kwargs["mailbox"] == SALES
+    assert log_warn.call_args.kwargs["user_id"] == str(THREAD_A)
+
+
+def test_unknown_thread_id_log_includes_user_and_mailbox() -> None:
+    """Production change that fails this: dropping mailbox/user_id from chat.unknown_thread_id."""
+    from app.llm.chat import sanitize_chat_answer
+
+    with patch("app.llm.chat.logger.warning") as log_warn:
+        sanitize_chat_answer(
+            f"See {INVENTED_ID} for billing.",
+            known_thread_ids={THREAD_A},
+            mailbox=SALES,
+            user_id=THREAD_A,
+        )
+    assert log_warn.call_args.args[0] == "chat.unknown_thread_id"
+    assert log_warn.call_args.kwargs["mailbox"] == SALES
+    assert log_warn.call_args.kwargs["user_id"] == str(THREAD_A)
+    assert log_warn.call_args.kwargs["thread_id"] == str(INVENTED_ID)
 
 
 def test_sanitize_chat_answer_strips_mangled_and_valid_thread_ids() -> None:
@@ -689,3 +776,90 @@ async def test_ask_follow_up_includes_resolved_thread_id_in_the_question() -> No
     question = agent_mock.await_args.kwargs["question"]
     assert str(THREAD_A) in question
     assert agent_mock.await_args.kwargs["initial_tool"] == "get_thread"
+
+
+ANSWER_ASK_STREAM = "Focus on Invoice dispute — overdue billing."
+
+
+async def _stream_agent_events(**_kwargs):
+    hit = _hit(THREAD_A)
+    yield {"type": "retrieved", "hits": [hit]}
+    yield {"type": "delta", "text": ANSWER_ASK_STREAM}
+    yield {
+        "type": "result",
+        "answer": ANSWER_ASK_STREAM,
+        "hits": [hit],
+        "grounded": True,
+        "evidence_blocks": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ask_and_stream_produce_identical_final_response() -> None:
+    """ask() and iter_ask_events() must agree on the terminal ChatAskResponse.
+
+    Production change that would fail this: stream sanitizing/citing/counting
+    differently from ask, or one path setting cached/refused_write/mailbox
+    while the other does not.
+    """
+    from app.llm.chat import ChatAgentResult
+    from app.services import chat_service
+
+    hit = _hit(THREAD_A)
+    session = AsyncMock()
+    settings = _settings()
+    kwargs = {
+        "openai_client": MagicMock(),
+        "anthropic_client": MagicMock(),
+        "message": "billing disputes waiting on review",
+        "mailbox": SALES,
+        "user_key": "reviewer-a",
+    }
+    with (
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer=ANSWER_ASK_STREAM,
+                    hits=[hit],
+                    grounded=True,
+                )
+            ),
+        ),
+        patch(
+            "app.services.chat_service.iter_chat_agent",
+            new=_stream_agent_events,
+        ),
+        patch(
+            "app.services.chat_service._lookup_semantic_cache",
+            AsyncMock(return_value=(None, None)),
+        ),
+    ):
+        asked = await chat_service.ask(session, settings, **kwargs)
+        events = [
+            event
+            async for event in chat_service.iter_ask_events(session, settings, **kwargs)
+        ]
+
+    stream_answer = "".join(
+        event["text"] for event in events if event.get("type") == "delta"
+    )
+    meta = next(event for event in events if event.get("type") == "meta")
+    done = next(event for event in events if event.get("type") == "done")
+    stream_citation_ids = [
+        uuid.UUID(str(citation["thread_id"])) for citation in meta["citations"]
+    ]
+
+    assert asked.answer == ANSWER_ASK_STREAM
+    assert stream_answer == asked.answer
+    assert asked.retrieval_count == 1
+    assert meta["retrieval_count"] == asked.retrieval_count
+    assert [citation.thread_id for citation in asked.citations] == [THREAD_A]
+    assert stream_citation_ids == [citation.thread_id for citation in asked.citations]
+    assert asked.refused_write is False
+    assert meta["refused_write"] is asked.refused_write
+    assert asked.cached is False
+    assert meta["cached"] is asked.cached
+    assert asked.mailbox == SALES
+    assert meta["mailbox"] == asked.mailbox
+    assert done["grounded_verifier"] == asked.grounded_verifier

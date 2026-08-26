@@ -647,23 +647,6 @@ def test_fit_chat_messages_falls_back_to_chars_when_token_counter_fails() -> Non
 
 
 @pytest.mark.asyncio
-async def test_fit_chat_request_skips_count_tokens_when_under_char_budget() -> None:
-    from app.llm.chat import fit_chat_request
-
-    client = MagicMock()
-    client.messages.count_tokens = AsyncMock(return_value=MagicMock(input_tokens=12))
-    messages = [{"role": "user", "content": "billing disputes waiting on review"}]
-    fitted = await fit_chat_request(
-        client=client,
-        request={"model": "claude-haiku-4-5"},
-        messages=messages,
-        settings=_settings(),
-    )
-    assert fitted[0]["content"] == "billing disputes waiting on review"
-    client.messages.count_tokens.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_agent_does_not_retry_after_streaming_a_partial_answer() -> None:
     import httpx
     from anthropic import APIError
@@ -1004,11 +987,11 @@ async def test_tool_loop_exhaustion_falls_back_to_hit_subjects() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fit_chat_request_counts_tokens_near_char_budget() -> None:
-    """H21: dense prompts under 100k chars still go through count_tokens."""
-    from app.llm.chat import TOKEN_COUNT_CHAR_FLOOR, fit_chat_request
+async def test_fit_chat_request_always_counts_tokens() -> None:
+    """M18: every prompt goes through count_tokens; oversized prefix is dropped."""
+    from app.llm.chat import fit_chat_request
 
-    blob = "x" * (TOKEN_COUNT_CHAR_FLOOR + 200)
+    blob = "x" * 500
     client = MagicMock()
     client.messages.count_tokens = AsyncMock(return_value=MagicMock(input_tokens=200_000))
     fitted = await fit_chat_request(
