@@ -88,17 +88,17 @@ export const ErrorPage = ({
       )}
     >
       <div className="mx-auto w-full max-w-md text-center">
-        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase dark:text-gray-400">
+        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase dark:text-muted-foreground">
           SampleSite Support
         </p>
         <h1 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
           {heading}
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+        <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-muted-foreground">
           {body}
         </p>
         {reference ? (
-          <p className="mt-3 text-xs text-gray-400">Reference: {reference}</p>
+          <p className="mt-3 text-xs text-muted-foreground">Reference: {reference}</p>
         ) : null}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           {onRetry ? (

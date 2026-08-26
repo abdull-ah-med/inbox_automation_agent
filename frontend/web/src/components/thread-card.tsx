@@ -9,7 +9,8 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import {
   formatRelativeTime,
-  inboxColor,
+  inboxAccentStyle,
+  inboxChipClassName,
   inboxLabel,
 } from "@/lib/design-tokens"
 import { cn, textLinkClass } from "@/lib/utils"
@@ -22,7 +23,6 @@ export const ThreadCard = ({
   thread: ThreadSummary
   selected?: boolean
 }) => {
-  const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
   const presentation = thread.presentation
   const triage = thread.triage
@@ -42,8 +42,8 @@ export const ThreadCard = ({
         >
           <div className="mb-2 flex flex-wrap items-center gap-1.5">
             <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium text-white"
-              style={{ backgroundColor: color }}
+              className={inboxChipClassName}
+              style={inboxAccentStyle(thread.mailbox_key)}
             >
               {label}
             </span>

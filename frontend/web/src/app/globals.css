@@ -15,7 +15,8 @@
   --primary: #2563eb;
   --primary-foreground: #ffffff;
   --muted: #f3f4f6;
-  --muted-foreground: #6b7280;
+  /* Gray-600: small meta labels stay WCAG-AA on white; .dark keeps #9ca3af */
+  --muted-foreground: #4b5563;
   --accent: #f3f4f6;
   --accent-foreground: #111827;
   --secondary: #f3f4f6;

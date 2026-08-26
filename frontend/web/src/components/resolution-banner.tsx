@@ -2,10 +2,13 @@
 
 import { useState } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { CircleCheck } from "lucide-react"
 
+import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api-client"
 import { getMutationErrorMessage } from "@/lib/error-messages"
 import type { ActivityEntry, ThreadPresentation } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 type FeedbackOutcome = "reopened" | "wrong_reason"
 
@@ -22,6 +25,12 @@ const OUTCOME_COPY: Record<
     body: "We recorded that the auto-resolve reason was wrong.",
   },
 }
+
+const bannerShellClass = cn(
+  "mb-5 flex gap-3 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-4 py-3.5 text-sm text-emerald-950",
+  "shadow-sm shadow-emerald-900/5",
+  "dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-50",
+)
 
 const outcomeFromActivity = (
   activity: ActivityEntry[] | undefined,
@@ -88,24 +97,30 @@ export const ResolutionBanner = ({
   if (effectiveOutcome) {
     const copy = OUTCOME_COPY[effectiveOutcome]
     return (
-      <div
-        role="status"
-        aria-live="polite"
-        className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-      >
-        <p className="font-medium">{copy.title}</p>
-        <p className="mt-1 text-emerald-900/90 dark:text-emerald-100/90">
-          {copy.body}
-        </p>
-        <div className="mt-3">
-          <button
-            type="button"
-            className="cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-800 underline-offset-2 hover:underline dark:text-emerald-200"
-            aria-label="Dismiss resolution banner"
-            onClick={handleDismiss}
-          >
-            Dismiss
-          </button>
+      <div role="status" aria-live="polite" className={bannerShellClass}>
+        <CircleCheck
+          aria-hidden="true"
+          className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
+            {copy.title}
+          </p>
+          <p className="mt-1 text-emerald-800/85 dark:text-emerald-100/75">
+            {copy.body}
+          </p>
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="cursor-pointer text-emerald-800 hover:bg-emerald-100/80 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+              aria-label="Dismiss resolution banner"
+              onClick={handleDismiss}
+            >
+              Dismiss
+            </Button>
+          </div>
         </div>
       </div>
     )
@@ -116,47 +131,57 @@ export const ResolutionBanner = ({
     : ""
 
   return (
-    <div
-      role="status"
-      className="mb-5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100"
-    >
-      <p className="font-medium">This thread was resolved automatically</p>
-      <p className="mt-1 text-emerald-900/90 dark:text-emerald-100/90">
-        Removed from Needs Attention.
-        {urgencyNote} You can reopen if work is still open.
-      </p>
-      {error ? (
-        <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
-          {error}
+    <div role="status" className={bannerShellClass}>
+      <CircleCheck
+        aria-hidden="true"
+        className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
+          This thread was resolved automatically
         </p>
-      ) : null}
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="cursor-pointer rounded-md bg-emerald-800 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-emerald-900 disabled:opacity-50"
-          aria-label="Mark thread still open"
-          disabled={feedbackMutation.isPending}
-          onClick={handleReopen}
-        >
-          Still open?
-        </button>
-        <button
-          type="button"
-          className="cursor-pointer rounded-md border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50 dark:border-emerald-700 dark:bg-emerald-900 dark:text-emerald-50"
-          aria-label="Wrong auto-resolve reason"
-          disabled={feedbackMutation.isPending}
-          onClick={handleWrongReason}
-        >
-          Wrong reason
-        </button>
-        <button
-          type="button"
-          className="cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium text-emerald-800 underline-offset-2 hover:underline dark:text-emerald-200"
-          aria-label="Dismiss resolution banner"
-          onClick={handleDismiss}
-        >
-          Dismiss
-        </button>
+        <p className="mt-1 max-w-2xl leading-relaxed text-emerald-800/85 dark:text-emerald-100/75">
+          Removed from Needs Attention.
+          {urgencyNote} You can reopen if work is still open.
+        </p>
+        {error ? (
+          <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="cursor-pointer bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+            aria-label="Mark thread still open"
+            disabled={feedbackMutation.isPending}
+            onClick={handleReopen}
+          >
+            Still open?
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="cursor-pointer border-emerald-300/80 bg-white/90 text-emerald-950 hover:bg-emerald-100 dark:border-emerald-700/80 dark:bg-emerald-950/80 dark:text-emerald-50 dark:hover:bg-emerald-900/70"
+            aria-label="Wrong auto-resolve reason"
+            disabled={feedbackMutation.isPending}
+            onClick={handleWrongReason}
+          >
+            Wrong reason
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="cursor-pointer text-emerald-800 hover:bg-emerald-100/80 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+            aria-label="Dismiss resolution banner"
+            onClick={handleDismiss}
+          >
+            Dismiss
+          </Button>
+        </div>
       </div>
     </div>
   )

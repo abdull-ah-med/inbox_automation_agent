@@ -91,9 +91,9 @@ const SkillFileRow = ({
         ) : (
           <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
         )}
-        <FileText className="size-4 shrink-0 text-gray-400" aria-hidden="true" />
+        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{file.relative_path}</span>
-        <span className="shrink-0 text-xs text-gray-400">
+        <span className="shrink-0 text-xs text-muted-foreground">
           {file.kind} · {(file.size_bytes / 1024).toFixed(1)} KB
         </span>
       </button>

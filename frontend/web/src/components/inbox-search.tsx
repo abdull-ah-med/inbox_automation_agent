@@ -142,13 +142,12 @@ export const InboxSearch = () => {
         Search mail
       </label>
       <Search
-        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-gray-400"
+        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden="true"
       />
       <Input
         id="inbox-search-input"
         type="search"
-        role="searchbox"
         name="q"
         value={value}
         autoComplete="off"
@@ -156,7 +155,6 @@ export const InboxSearch = () => {
         aria-label="Search mail"
         aria-autocomplete="list"
         aria-controls={resultsId}
-        aria-expanded={showList}
         onChange={(event) => {
           setValue(event.target.value)
           setOpen(true)
@@ -190,6 +188,7 @@ export const InboxSearch = () => {
                   <button
                     type="button"
                     role="option"
+                    aria-selected="false"
                     tabIndex={0}
                     aria-label={`${valueEntry?.key}:${suggestion}`}
                     className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60"
@@ -213,6 +212,7 @@ export const InboxSearch = () => {
                   <button
                     type="button"
                     role="option"
+                    aria-selected="false"
                     tabIndex={0}
                     aria-label={`${key}: ${FILTER_VALUE_PROMPTS[key]}`}
                     className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60"
@@ -244,7 +244,7 @@ export const InboxSearch = () => {
           ) : null}
           {showHits
             ? hits.map((hit) => (
-                <li key={hit.thread_id} role="option">
+                <li key={hit.thread_id} role="option" aria-selected="false">
                   <SearchHitLink hit={hit} onNavigate={() => setOpen(false)} />
                 </li>
               ))

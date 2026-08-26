@@ -7,9 +7,11 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import {
   formatRelativeTime,
-  inboxColor,
+  inboxAccentStyle,
+  inboxChipClassName,
   inboxLabel,
 } from "@/lib/design-tokens"
+import { cn } from "@/lib/utils"
 import type { MailboxOverview } from "@/lib/types"
 
 export const MailboxSummaryCard = ({
@@ -17,7 +19,6 @@ export const MailboxSummaryCard = ({
 }: {
   mailbox: MailboxOverview
 }) => {
-  const color = inboxColor(mailbox.mailbox)
   const label = mailbox.label || inboxLabel(mailbox.mailbox)
   const isEmpty = mailbox.thread_count === 0
 
@@ -31,8 +32,8 @@ export const MailboxSummaryCard = ({
         <CardHeader className="gap-2 pb-4">
           <div className="flex items-start justify-between gap-2">
             <span
-              className="inline-block rounded-full px-2 py-0.5 text-xs font-medium text-white"
-              style={{ backgroundColor: color }}
+              className={cn("inline-block", inboxChipClassName)}
+              style={inboxAccentStyle(mailbox.mailbox)}
             >
               {label}
             </span>

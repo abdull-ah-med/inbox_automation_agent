@@ -3,7 +3,7 @@
 import Link from "next/link"
 
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
-import { formatRelativeTime, inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { formatRelativeTime, inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
 import { cn } from "@/lib/utils"
 import type { SearchHit } from "@/lib/types"
 
@@ -41,8 +41,8 @@ export const SearchHitLink = ({
     >
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
         <span
-          className="rounded-full px-2 py-0.5 text-xs font-medium text-white"
-          style={{ backgroundColor: inboxColor(key) }}
+          className={inboxChipClassName}
+          style={inboxAccentStyle(key)}
         >
           {inboxLabel(key)}
         </span>

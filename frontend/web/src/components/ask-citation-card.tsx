@@ -4,7 +4,7 @@ import Link from "next/link"
 import { ArrowUpRight } from "lucide-react"
 
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
-import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
 import { cn } from "@/lib/utils"
 import type { ChatCitation, MailboxOverview } from "@/lib/types"
 
@@ -32,7 +32,6 @@ export const AskCitationCard = ({
   onNavigate?: () => void
 }) => {
   const key = mailboxKeyFor(citation.mailbox, mailboxes)
-  const color = inboxColor(key)
   const label = inboxLabel(key)
   const subject = citation.subject?.trim() || "Untitled thread"
   const href = citation.url_path || `/threads/${citation.thread_id}`
@@ -62,8 +61,8 @@ export const AskCitationCard = ({
         <div className="min-w-0 flex-1">
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
             <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium text-white"
-              style={{ backgroundColor: color }}
+              className={inboxChipClassName}
+              style={inboxAccentStyle(key)}
             >
               {label}
             </span>

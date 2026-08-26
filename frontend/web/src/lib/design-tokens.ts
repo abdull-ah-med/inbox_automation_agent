@@ -1,5 +1,7 @@
 /** Inbox accent palette from the demo + helpers. */
 
+import type { CSSProperties } from "react"
+
 const DEMO_COLORS = {
   "client-relations": "#2563eb",
   sales: "#16a34a",
@@ -42,6 +44,17 @@ function hashKey(key: string): number {
 export function inboxColor(key: string): string {
   if (KNOWN_COLORS[key]) return KNOWN_COLORS[key];
   return KEY_COLOR_ORDER[hashKey(key) % KEY_COLOR_ORDER.length];
+}
+
+/**
+ * Light: tinted chip + accent text (readable on white).
+ * Dark: solid accent fill + white text (previous look).
+ */
+export const inboxChipClassName =
+  "rounded-full px-2 py-0.5 text-xs font-medium text-[color:var(--inbox-accent)] bg-[color-mix(in_srgb,var(--inbox-accent)_15%,white)] dark:bg-[var(--inbox-accent)] dark:text-white"
+
+export function inboxAccentStyle(key: string): CSSProperties {
+  return { ["--inbox-accent" as string]: inboxColor(key) }
 }
 
 export function inboxLabel(key: string, fallback?: string): string {

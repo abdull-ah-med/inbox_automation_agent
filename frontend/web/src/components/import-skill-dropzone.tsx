@@ -226,7 +226,7 @@ export const ImportSkillDropzone = ({
       >
         <div className="flex flex-col items-center gap-3 text-center">
           <FileArchive
-            className="size-8 text-gray-400"
+            className="size-8 text-muted-foreground"
             aria-hidden="true"
           />
           <div>

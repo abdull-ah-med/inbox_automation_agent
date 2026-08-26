@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
-import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
 
 const STATE_ITEMS = [
   { label: "All actionable states", value: null },
@@ -140,7 +140,6 @@ export default function MailboxPage() {
     return () => observer.disconnect()
   }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
-  const color = inboxColor(mailbox)
   const label = inboxLabel(mailbox)
   const filtersActive = Boolean(state || urgency || staleOnly || showFiltered)
 
@@ -166,8 +165,8 @@ export default function MailboxPage() {
       />
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span
-          className="rounded-full px-2 py-0.5 text-xs font-medium text-white"
-          style={{ backgroundColor: color }}
+          className={inboxChipClassName}
+          style={inboxAccentStyle(mailbox)}
         >
           {label}
         </span>

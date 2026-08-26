@@ -25,7 +25,7 @@ export function UrgencyDistribution({
               <span className="font-medium text-gray-700 dark:text-gray-300">
                 {label}
               </span>
-              <span className="text-gray-400">{total}</span>
+              <span className="text-muted-foreground">{total}</span>
             </div>
             {total > 0 ? (
               <div
@@ -34,16 +34,24 @@ export function UrgencyDistribution({
                 aria-label={`${label}: ${LEVELS.map((level) => `${level} ${m.urgency_breakdown[level] ?? 0}`).join(", ")}`}
               >
                 {LEVELS.map((level) => {
-                  const count = m.urgency_breakdown[level] ?? 0;
-                  if (!count) return null;
+                  const count = m.urgency_breakdown[level] ?? 0
+                  if (!count) return null
+                  if (level === "LOW") {
+                    return (
+                      <div
+                        key={level}
+                        className="bg-gray-400 dark:bg-gray-300"
+                        style={{ width: `${(count / total) * 100}%` }}
+                        title={`${level}: ${count}`}
+                      />
+                    )
+                  }
                   const color =
                     level === "CRITICAL"
                       ? "#dc2626"
                       : level === "HIGH"
                         ? accent
-                        : level === "NORMAL"
-                          ? "#9ca3af"
-                          : "#d1d5db";
+                        : "#9ca3af"
                   return (
                     <div
                       key={level}
@@ -53,11 +61,11 @@ export function UrgencyDistribution({
                       }}
                       title={`${level}: ${count}`}
                     />
-                  );
+                  )
                 })}
               </div>
             ) : (
-              <p className="text-xs text-gray-400 italic">
+              <p className="text-xs text-muted-foreground italic">
                 No urgent threads right now.
               </p>
             )}

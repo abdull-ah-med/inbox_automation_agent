@@ -19,7 +19,7 @@ import { ThreadTriageSidebar } from "@/components/thread-triage-sidebar"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
-import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
 import { formatThreadHeaderMeta } from "@/lib/thread-header-meta"
 import { cn, textLinkClass } from "@/lib/utils"
 
@@ -65,8 +65,8 @@ function ThreadDetailPageContent() {
     queryFn: () => api.threads.detail(threadId),
   })
   const originQuery = useQuery({
-    queryKey: ["thread", originId],
-    queryFn: () => api.threads.detail(originId ?? ""),
+    queryKey: ["thread", originId, "header"],
+    queryFn: () => api.threads.header(originId ?? ""),
     enabled: originId != null,
   })
 
@@ -96,7 +96,6 @@ function ThreadDetailPageContent() {
   const { thread, classification, draft, triage, messages, audit_log, activity, sent_reply, draft_vs_sent_diff, associated_threads } =
     data
   const associatedItems = associated_threads ?? []
-  const color = inboxColor(thread.mailbox_key)
   const label = inboxLabel(thread.mailbox_key)
   const presentation = thread.presentation
   const subject = thread.subject || "(no subject)"
@@ -105,7 +104,7 @@ function ThreadDetailPageContent() {
 
   const lastInbound = [...messages].reverse().find((row) => row.direction === "inbound")
   const originSubject =
-    originQuery.data?.thread.subject?.trim() || "the thread you were reviewing"
+    originQuery.data?.subject?.trim() || "the thread you were reviewing"
   const crumbItems = [
     { label: "Overview", href: "/dashboard" },
     {
@@ -129,8 +128,8 @@ function ThreadDetailPageContent() {
         <CardHeader className="gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <span
-              className="rounded-full px-2 py-0.5 text-xs font-medium text-white"
-              style={{ backgroundColor: color }}
+              className={inboxChipClassName}
+              style={inboxAccentStyle(thread.mailbox_key)}
             >
               {label}
             </span>

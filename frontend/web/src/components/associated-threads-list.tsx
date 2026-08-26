@@ -156,8 +156,8 @@ export const AssociatedThreadsList = ({
               >
                 {item.subject}
               </button>
-              <p className="mt-0.5 truncate text-xs text-gray-500">
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
                   {item.mailbox}
                 </span>
                 {" · "}
