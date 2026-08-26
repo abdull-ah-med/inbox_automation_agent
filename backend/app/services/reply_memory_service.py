@@ -164,7 +164,7 @@ async def set_excluded(
     reply_id: uuid.UUID,
     *,
     is_excluded: bool,
-):
+) -> reply_embedding_repo.ReplyEmbeddingSchema | None:
     """Toggle exclusion for a reply memory row."""
     return await reply_embedding_repo.set_excluded(
         session,

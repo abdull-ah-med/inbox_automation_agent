@@ -117,7 +117,7 @@ async def invalidate_for_mailbox(session: AsyncSession, mailbox_key: str) -> int
     result = await session.execute(
         delete(ChatResponseCache).where(ChatResponseCache.mailbox_key == mailbox_key)
     )
-    return int(result.rowcount or 0)
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def invalidate_for_threads(
@@ -129,11 +129,11 @@ async def invalidate_for_threads(
     result = await session.execute(
         delete(ChatResponseCache).where(ChatResponseCache.citation_thread_ids.overlap(thread_ids))
     )
-    return int(result.rowcount or 0)
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def purge_expired(session: AsyncSession) -> int:
     result = await session.execute(
         delete(ChatResponseCache).where(ChatResponseCache.expires_at <= func.now())
     )
-    return int(result.rowcount or 0)
+    return int(getattr(result, "rowcount", 0) or 0)

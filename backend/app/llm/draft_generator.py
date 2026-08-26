@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from anthropic import APIError, AsyncAnthropic
@@ -190,7 +190,7 @@ def _build_user_content(
 
     addressee = resolve_reply_addressee(
         mailbox=email.mailbox,
-        messages=list(thread_context.messages) or [email],
+        messages=cast(Any, list(thread_context.messages) or [email]),
     )
     addressee_block = ""
     if addressee is not None:

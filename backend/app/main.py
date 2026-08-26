@@ -247,7 +247,10 @@ def create_app() -> FastAPI:
     )
 
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_exception_handler(
+        RateLimitExceeded,
+        _rate_limit_exceeded_handler,  # type: ignore[arg-type]
+    )
 
     # Middleware order: last added = outermost. CORS outermost for preflight.
     app.add_middleware(SecurityHeadersMiddleware, settings=settings)

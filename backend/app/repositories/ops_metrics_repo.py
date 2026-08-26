@@ -174,7 +174,10 @@ async def top_reject_themes(
     )
     result = await session.execute(stmt)
     return [
-        RejectThemeCount(reason_code=str(row.reason_code), count=int(row.count or 0))
+        RejectThemeCount(
+            reason_code=str(row.reason_code),
+            count=int(row._mapping["count"] or 0),
+        )
         for row in result.all()
     ]
 
@@ -279,7 +282,10 @@ async def volume_by_category(
     )
     result = await session.execute(stmt)
     return [
-        CategoryCount(category=str(row.category), count=int(row.count or 0))
+        CategoryCount(
+            category=str(row.category),
+            count=int(row._mapping["count"] or 0),
+        )
         for row in result.all()
     ]
 

@@ -349,7 +349,8 @@ async def _load_refresh_grace(
     if not raw:
         return None
     try:
-        decoded = _decode_refresh_grace(settings, raw)
+        payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+        decoded = _decode_refresh_grace(settings, payload)
         if decoded is None:
             return None
         data = json.loads(decoded)

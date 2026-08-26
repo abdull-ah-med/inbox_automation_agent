@@ -57,7 +57,7 @@ def rrf_fuse(
             scores[emb_id] = scores.get(emb_id, 0.0) + 1.0 / (k + rank)
             meta.setdefault(emb_id, (conv_id, msg_id))
 
-    hits = [
+    fused = [
         MessageHit(
             embedding_id=emb_id,
             conversation_id=meta[emb_id][0],
@@ -66,8 +66,8 @@ def rrf_fuse(
         )
         for emb_id, score in scores.items()
     ]
-    hits.sort(key=lambda h: h.rrf_score, reverse=True)
-    return hits
+    fused.sort(key=lambda h: h.rrf_score, reverse=True)
+    return fused
 
 
 def aggregate_conversation_scores(

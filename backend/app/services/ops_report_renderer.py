@@ -18,6 +18,7 @@ Storage
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from io import BytesIO
 from pathlib import Path
@@ -777,7 +778,7 @@ def _hairline(width: float, gap: float = _HAIRLINE_GAP) -> list[Flowable]:
     ]
 
 
-def _footer_callback(generated_by: str | None):
+def _footer_callback(generated_by: str | None) -> Callable[[Canvas, SimpleDocTemplate], None]:
     def _draw_footer(canvas: Canvas, doc: SimpleDocTemplate) -> None:
         canvas.saveState()
         canvas.setFillColorRGB(*_MUTED)

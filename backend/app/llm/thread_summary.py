@@ -54,7 +54,7 @@ async def summarize_thread(
         messages=[{"role": "user", "content": packed or "(empty thread)"}],
     )
     chunks = [
-        block.text
+        str(getattr(block, "text", "") or "")
         for block in response.content
         if getattr(block, "type", None) == "text" and getattr(block, "text", None)
     ]
