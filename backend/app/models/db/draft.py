@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,4 +57,12 @@ class Draft(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+    __table_args__ = (
+        Index(
+            "ix_drafts_approved_at",
+            text("approved_at DESC"),
+            postgresql_where=text("approved_at IS NOT NULL"),
+        ),
+        Index("ix_drafts_thread_id_created_at", "thread_id", text("created_at DESC")),
     )

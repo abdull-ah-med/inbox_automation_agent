@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,4 +28,11 @@ class Classification(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+    __table_args__ = (
+        Index(
+            "ix_classifications_message_id_created_at",
+            "message_id",
+            text("created_at DESC"),
+        ),
     )
