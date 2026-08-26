@@ -42,6 +42,7 @@ class EmailMessageSchema(BaseModel):
     body_preview: str | None = None
     body_content_type: str = "text"
     body_clean: str | None = None
+    unique_body_text: str | None = None
     received_at: datetime
     direction: EmailDirectionEnum = EmailDirectionEnum.INBOUND
     to_recipients: list[str] = Field(default_factory=list)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import difflib
-import re
 import uuid
 from typing import Literal
 
@@ -12,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.closing_mail import looks_like_closing_mail
 from app.core.config import Settings
+from app.core.email_quotes import split_quoted_history
 from app.core.outlook_links import outlook_web_link
+from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     ActivityEntryView,
     AppliedSkillView,
@@ -24,6 +25,7 @@ from app.models.schemas.dashboard import (
     SentReplyView,
     SuggestedActionView,
     ThreadDetail,
+    ThreadHeader,
 )
 from app.models.schemas.draft import DraftResponseSchema
 from app.repositories import (
@@ -36,7 +38,6 @@ from app.repositories import (
 )
 from app.services import related_thread_service
 from app.services.thread_narrative import build_activity
-from app.utils.email_quotes import find_quote_boundary
 
 
 def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
@@ -94,35 +95,54 @@ def _proposed_body(draft: DraftView | None) -> str | None:
     return draft.body
 
 
-def _reply_only(text: str) -> str:
-    """Strip Outlook/Gmail quoted history so draft vs sent compares the reply itself.
+def reply_text_for_message(
+    *,
+    body_text: str,
+    unique_body_text: str | None,
+    body_preview: str | None,
+) -> str:
+    """Unique new content for review. Empty string means no new text.
 
-    Mirrors the frontend ``splitQuotedHistory`` markers closely enough for diffing:
-    Original Message separators, underscore rules, From/Sent header blocks, and
-    ``On … wrote:`` markers.
+    Stored ``unique_body_text`` (including "") wins. NULL old rows fall back
+    to quote-split of ``body_text``, then preview.
     """
-    extra_patterns = (
-        re.compile(r"(^|\n)_{10,}\s*\n"),
-        re.compile(
-            r"(^|\n)From:\s.+\nSent:\s.+(?:\n(?:To|Cc|Bcc|Subject):.*)*\n",
-            re.IGNORECASE,
+    if unique_body_text is not None:
+        return unique_body_text
+    main, quoted = split_quoted_history(body_text or "")
+    if quoted is not None:
+        return main.strip()
+    stripped = (body_text or "").strip()
+    if stripped:
+        return stripped
+    return body_preview or ""
+
+
+def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
+    return MessageDetail(
+        id=m.id,
+        direction=m.direction,
+        sender=m.sender,
+        to=list(m.to_recipients),
+        cc=list(m.cc_recipients),
+        bcc=list(m.bcc_recipients),
+        body_text=m.body_text,
+        reply_text=reply_text_for_message(
+            body_text=m.body_text,
+            unique_body_text=m.unique_body_text,
+            body_preview=m.body_preview,
         ),
+        body_preview=m.body_preview,
+        received_at=m.received_at,
+        has_attachments=bool(m.has_attachments),
+        outlook_url=outlook_web_link(m.graph_message_id),
     )
-    candidates: list[int] = []
-    shared = find_quote_boundary(text)
-    if shared is not None and shared > 0:
-        candidates.append(shared)
-    for pattern in extra_patterns:
-        match = pattern.search(text)
-        if match is None:
-            continue
-        at = match.start() + (len(match.group(1)) if match.group(1) else 0)
-        if at > 0:
-            candidates.append(at)
-    if not candidates:
+
+
+def _reply_only(text: str) -> str:
+    """Strip Outlook/Gmail quoted history so draft vs sent compares the reply itself."""
+    main, quoted = split_quoted_history(text)
+    if quoted is None:
         return text
-    quote_start = min(candidates)
-    main = text[:quote_start].rstrip()
     return main if main else text
 
 
@@ -156,33 +176,29 @@ def compute_draft_vs_sent_diff(
     return DraftVsSentDiff(added=added, removed=removed)
 
 
+async def get_thread_header(
+    session: AsyncSession,
+    settings: Settings,
+    thread_id: uuid.UUID,
+) -> ThreadHeader:
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
+    if thread is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
+    return ThreadHeader(subject=thread.subject, mailbox=thread.mailbox)
+
+
 async def get_thread_detail(
     session: AsyncSession,
     settings: Settings,
     thread_id: uuid.UUID,
 ) -> ThreadDetail:
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     summary = await thread_repo.build_thread_summary(session, thread)
     messages = await message_repo.list_by_thread(session, thread_id)
-    message_details = [
-        MessageDetail(
-            id=m.id,
-            direction=m.direction,
-            sender=m.sender,
-            to=list(m.to_recipients),
-            cc=list(m.cc_recipients),
-            bcc=list(m.bcc_recipients),
-            body_text=m.body_text,
-            body_preview=m.body_preview,
-            received_at=m.received_at,
-            has_attachments=bool(m.has_attachments),
-            outlook_url=outlook_web_link(m.graph_message_id),
-        )
-        for m in messages
-    ]
+    message_details = [_message_detail(m) for m in messages]
     classification = await classification_repo.get_latest_for_thread(session, thread_id)
     draft_row = await draft_repo.get_latest_by_thread(session, thread_id)
     draft: DraftView | None = None
@@ -290,27 +306,12 @@ async def list_thread_messages(
     settings: Settings,
     thread_id: uuid.UUID,
 ) -> list[MessageDetail]:
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     messages = await message_repo.list_by_thread(session, thread_id)
-    return [
-        MessageDetail(
-            id=m.id,
-            direction=m.direction,
-            sender=m.sender,
-            to=list(m.to_recipients),
-            cc=list(m.cc_recipients),
-            bcc=list(m.bcc_recipients),
-            body_text=m.body_text,
-            body_preview=m.body_preview,
-            received_at=m.received_at,
-            has_attachments=bool(m.has_attachments),
-            outlook_url=outlook_web_link(m.graph_message_id),
-        )
-        for m in messages
-    ]
+    return [_message_detail(m) for m in messages]
 
 
 async def list_thread_audit(
@@ -318,7 +319,7 @@ async def list_thread_audit(
     settings: Settings,
     thread_id: uuid.UUID,
 ) -> list[AuditEntry]:
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return await audit_repo.list_by_thread_id(

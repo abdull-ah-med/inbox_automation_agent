@@ -78,3 +78,56 @@ async def test_regenerate_draft_route_is_loadable(local_settings: Settings, db_s
     get_settings.cache_clear()
 
     assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_thread_header_returns_subject_and_mailbox(
+    local_settings: Settings, db_session
+) -> None:
+    from app.models.db.thread import Thread
+
+    mailbox = "elise@sample-site.example.com"
+    thread = Thread(
+        id=uuid.uuid4(),
+        mailbox=mailbox,
+        conversation_id="header-conv",
+        subject="Invoice dispute — overdue billing",
+        state="REQUIRES_HUMAN",
+        last_message_at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+    )
+    db_session.add(thread)
+    await db_session.commit()
+
+    get_settings.cache_clear()
+    application = create_app()
+    application.dependency_overrides[get_settings] = lambda: local_settings
+
+    async def fake_user() -> UserMe:
+        return UserMe(
+            id=uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            email="elise@sample-site.example.com",
+            role="user",
+            created_at=datetime.now(UTC),
+        )
+
+    application.dependency_overrides[get_current_user] = fake_user
+    application.dependency_overrides[get_db] = lambda: db_session
+    application.dependency_overrides[get_redis] = lambda: None
+    application.dependency_overrides[get_anthropic_client] = lambda: None
+    application.dependency_overrides[get_openai_client] = lambda: None
+
+    async with AsyncClient(
+        transport=ASGITransport(app=application),
+        base_url="http://test",
+    ) as client:
+        resp = await client.get(f"/api/threads/{thread.id}/header")
+
+    application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "subject": "Invoice dispute — overdue billing",
+        "mailbox": mailbox,
+    }

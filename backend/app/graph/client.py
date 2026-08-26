@@ -35,8 +35,8 @@ logger = structlog.get_logger(__name__)
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 _GRAPH_HOSTS = frozenset({"graph.microsoft.com"})
 DEFAULT_MESSAGE_SELECT = (
-    "id,subject,bodyPreview,body,sender,from,toRecipients,ccRecipients,bccRecipients,"
-    "receivedDateTime,conversationId,isRead,hasAttachments,importance"
+    "id,subject,bodyPreview,body,uniqueBody,sender,from,toRecipients,ccRecipients,"
+    "bccRecipients,receivedDateTime,conversationId,isRead,hasAttachments,importance"
 )
 MAX_SUBSCRIPTION_MINUTES = 4230
 _ERROR_BODY_MAX_CHARS = 500

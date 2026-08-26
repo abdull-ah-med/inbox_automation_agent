@@ -125,6 +125,7 @@ export interface MessageDetail {
   cc: string[]
   bcc: string[]
   body_text: string
+  reply_text: string
   body_preview: string | null
   received_at: string
   has_attachments: boolean

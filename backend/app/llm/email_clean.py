@@ -119,6 +119,20 @@ def _strip_signature(text: str) -> tuple[str, bool]:
     return text.strip(), False
 
 
+def to_plain_text(raw_body: str, *, content_type: str = "text") -> str:
+    """Return Graph body/uniqueBody content as plain text.
+
+    Whitespace-only input is empty. HTML is converted; already-plain text is
+    returned as-is so internal newlines in a real reply are kept.
+    """
+    if not (raw_body or "").strip():
+        return ""
+    ctype = (content_type or "text").strip().lower()
+    if ctype == "html":
+        return (talon_utils.html_to_text(raw_body) or "").strip()
+    return raw_body
+
+
 def _fallback_plain(raw_body: str, *, content_type: str) -> str:
     normalized = _normalize_newlines(raw_body or "")
     if content_type == "html":

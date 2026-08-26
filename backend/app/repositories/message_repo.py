@@ -11,7 +11,9 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.tenant_scope import TenantScope
 from app.models.db.message import Message
+from app.models.db.thread import Thread
 
 
 class MessageSchema(BaseModel):
@@ -24,6 +26,7 @@ class MessageSchema(BaseModel):
     sender: str
     body_text: str
     body_preview: str | None = None
+    unique_body_text: str | None = None
     body_content_type: str = "text"
     body_clean: str | None = None
     body_clean_version: int | None = None
@@ -56,8 +59,16 @@ async def get_by_graph_id(
 async def get_by_id(
     session: AsyncSession,
     message_id: uuid.UUID,
+    scope: TenantScope,
 ) -> MessageSchema | None:
-    stmt = select(Message).where(Message.id == message_id)
+    stmt = (
+        select(Message)
+        .join(Thread, Message.thread_id == Thread.id)
+        .where(
+            Message.id == message_id,
+            Thread.mailbox.in_(list(scope.mailboxes)),
+        )
+    )
     result = await session.execute(stmt)
     message = result.scalar_one_or_none()
     if message is None:
@@ -103,6 +114,7 @@ async def create_message(
     sender: str,
     body_text: str,
     body_preview: str | None,
+    unique_body_text: str | None = None,
     received_at: datetime,
     to_recipients: list[str] | None = None,
     cc_recipients: list[str] | None = None,
@@ -114,7 +126,7 @@ async def create_message(
     body_clean_version: int | None = None,
     body_clean_computed_at: datetime | None = None,
 ) -> MessageSchema:
-    """Insert a message or return the existing row on ``graph_message_id`` conflict."""
+    """Insert a message or fill an empty existing row on ``graph_message_id`` conflict."""
     insert_stmt = insert(Message).values(
         thread_id=thread_id,
         graph_message_id=graph_message_id,
@@ -122,6 +134,7 @@ async def create_message(
         sender=sender,
         body_text=body_text,
         body_preview=body_preview,
+        unique_body_text=unique_body_text,
         received_at=received_at,
         to_recipients=list(to_recipients or []),
         cc_recipients=list(cc_recipients or []),
@@ -147,6 +160,25 @@ async def create_message(
         raise RuntimeError(
             f"Message insert conflicted but row missing for graph_message_id={graph_message_id}"
         )
+    incoming = body_text or ""
+    if not (existing.body_text or "").strip() and incoming.strip():
+        stmt = (
+            update(Message)
+            .where(Message.id == existing.id)
+            .values(
+                body_text=incoming,
+                body_preview=body_preview,
+                unique_body_text=unique_body_text,
+                body_content_type=body_content_type,
+                body_clean=body_clean,
+                body_clean_version=body_clean_version,
+                body_clean_computed_at=body_clean_computed_at,
+            )
+            .returning(Message)
+        )
+        updated = (await session.execute(stmt)).scalar_one()
+        await session.flush()
+        return MessageSchema.model_validate(updated)
     return existing
 
 

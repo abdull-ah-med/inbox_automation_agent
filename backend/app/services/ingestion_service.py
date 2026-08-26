@@ -13,6 +13,7 @@ Dedup lifecycle (Redis SET NX EX):
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import unquote
@@ -32,6 +33,7 @@ from app.core.redis_keys import (
     dedup_key,
     triage_lock_key,
 )
+from app.core.tenant_scope import TenantScope
 from app.graph.client import GraphClient
 from app.llm import email_clean
 from app.models.schemas.email import (
@@ -40,6 +42,7 @@ from app.models.schemas.email import (
     ThreadContextSchema,
 )
 from app.models.schemas.graph import (
+    GraphMessageBodySchema,
     GraphMessageSchema,
     GraphNotificationItemSchema,
     GraphRecipientSchema,
@@ -48,6 +51,7 @@ from app.models.schemas.graph import (
 )
 from app.repositories import message_repo, thread_repo
 from app.services.related_match import alert_cluster_keys
+from app.utils.email_quotes import split_quoted_history
 
 logger = structlog.get_logger(__name__)
 
@@ -104,7 +108,7 @@ def extract_well_known_folder(resource: str) -> str | None:
 async def _maybe_set_alert_fingerprint(
     session: AsyncSession,
     *,
-    thread_id,
+    thread_id: uuid.UUID,
     mailbox: str,
     sender: str,
     subject: str,
@@ -139,10 +143,30 @@ def _recipient_addresses(
     return addresses
 
 
+def _item_plain_text(body: GraphMessageBodySchema | None) -> str:
+    if body is None:
+        return ""
+    return email_clean.to_plain_text(
+        body.content or "",
+        content_type=body.content_type or "text",
+    )
+
+
 def _body_text(message: GraphMessageSchema) -> str:
-    if message.body and message.body.content:
-        return message.body.content
+    plain = _item_plain_text(message.body)
+    if plain.strip():
+        return plain
     return message.body_preview or ""
+
+
+def _unique_body_text(message: GraphMessageSchema, full_body: str) -> str:
+    unique = _item_plain_text(message.unique_body)
+    if unique.strip():
+        return unique.strip()
+    main, quoted = split_quoted_history(full_body)
+    if quoted is not None:
+        return main.strip()
+    return full_body.strip()
 
 
 def _direction_for_sender(
@@ -161,7 +185,10 @@ def _direction_for_sender(
 
 def _body_content_type(message: GraphMessageSchema) -> str:
     if message.body and message.body.content_type:
-        return message.body.content_type.strip().lower() or "text"
+        ctype = message.body.content_type.strip().lower() or "text"
+        if ctype == "html":
+            return "text"
+        return ctype
     return "text"
 
 
@@ -196,14 +223,16 @@ def _to_email_message_schema(
 ) -> EmailMessageSchema:
     sender = _sender_address(message)
     received_at = message.received_date_time or datetime.now(UTC)
+    body_text = _body_text(message)
     email = EmailMessageSchema(
         message_id=message.id,
         conversation_id=conversation_id,
         mailbox=mailbox,
         sender=sender,
         subject=message.subject or "(no subject)",
-        body_text=_body_text(message),
+        body_text=body_text,
         body_preview=message.body_preview,
+        unique_body_text=_unique_body_text(message, body_text),
         body_content_type=_body_content_type(message),
         received_at=received_at,
         direction=_direction_for_sender(mailbox, sender),
@@ -299,7 +328,7 @@ async def build_thread_context_from_db(
     existing = await message_repo.get_by_graph_id(session, message_id)
     if existing is None:
         return None
-    thread = await thread_repo.get_by_id(session, existing.thread_id)
+    thread = await thread_repo.get_by_id(session, existing.thread_id, TenantScope.single(mailbox))
     if thread is None:
         return None
     db_messages = await message_repo.list_by_thread(session, thread.id)
@@ -439,6 +468,7 @@ async def ingest_graph_message(
                 sender=email_msg.sender,
                 body_text=email_msg.body_text,
                 body_preview=email_msg.body_preview,
+                unique_body_text=email_msg.unique_body_text,
                 received_at=email_msg.received_at,
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
@@ -665,6 +695,7 @@ async def handle_outbound_notification(
             sender=email_msg.sender,
             body_text=email_msg.body_text,
             body_preview=email_msg.body_preview,
+            unique_body_text=email_msg.unique_body_text,
             received_at=email_msg.received_at,
             to_recipients=email_msg.to_recipients,
             cc_recipients=email_msg.cc_recipients,
@@ -748,6 +779,10 @@ async def ingest_simulated_message(
         )
 
         direction = _direction_for_sender(payload.mailbox, payload.sender)
+        unique_main, unique_quoted = split_quoted_history(payload.body_text)
+        unique_body_text = (
+            unique_main.strip() if unique_quoted is not None else (payload.body_text or "").strip()
+        )
         email_msg = _apply_body_clean(
             EmailMessageSchema(
                 message_id=payload.message_id,
@@ -757,6 +792,7 @@ async def ingest_simulated_message(
                 subject=payload.subject,
                 body_text=payload.body_text,
                 body_preview=payload.body_preview,
+                unique_body_text=unique_body_text,
                 body_content_type="text",
                 received_at=payload.received_at,
                 direction=direction,
@@ -774,6 +810,7 @@ async def ingest_simulated_message(
             sender=payload.sender,
             body_text=payload.body_text,
             body_preview=payload.body_preview,
+            unique_body_text=email_msg.unique_body_text,
             received_at=payload.received_at,
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),

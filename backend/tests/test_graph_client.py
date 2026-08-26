@@ -60,6 +60,7 @@ async def test_get_message_calls_correct_url(client: GraphClient) -> None:
     assert args[1] == (f"{GRAPH_BASE_URL}/users/user%40example.com/messages/msg-1")
     assert kwargs["headers"]["Authorization"] == "Bearer test-token"
     assert 'outlook.body-content-type="text"' in kwargs["headers"]["Prefer"]
+    assert "uniqueBody" in kwargs["params"]["$select"]
 
 
 @pytest.mark.asyncio

@@ -137,6 +137,7 @@ class MessageDetail(BaseModel):
     cc: list[str] = Field(default_factory=list)
     bcc: list[str] = Field(default_factory=list)
     body_text: str
+    reply_text: str = ""
     body_preview: str | None = None
     received_at: datetime
     has_attachments: bool = False
@@ -208,6 +209,11 @@ class SentReplyView(BaseModel):
 class DraftVsSentDiff(BaseModel):
     added: list[str] = Field(default_factory=list)
     removed: list[str] = Field(default_factory=list)
+
+
+class ThreadHeader(BaseModel):
+    subject: str
+    mailbox: str
 
 
 class ThreadDetail(BaseModel):

@@ -23,6 +23,7 @@ class Message(Base):
     sender: Mapped[str] = mapped_column(String(320), nullable=False)
     body_text: Mapped[str] = mapped_column(Text, nullable=False)
     body_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unique_body_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     body_content_type: Mapped[str] = mapped_column(
         String(16),
         nullable=False,

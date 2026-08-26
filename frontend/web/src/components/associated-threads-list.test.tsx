@@ -90,6 +90,7 @@ describe("AssociatedThreadsList", () => {
           cc: [],
           bcc: [],
           body_text: PACKET,
+          reply_text: PACKET,
           body_preview: "SampleClient packet",
           received_at: "2026-08-10T14:00:00Z",
           has_attachments: false,

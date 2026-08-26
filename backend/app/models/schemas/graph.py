@@ -93,6 +93,7 @@ class GraphMessageSchema(BaseModel):
     subject: str | None = None
     body_preview: str | None = Field(default=None, alias="bodyPreview")
     body: GraphMessageBodySchema | None = None
+    unique_body: GraphMessageBodySchema | None = Field(default=None, alias="uniqueBody")
     sender: GraphRecipientSchema | None = None
     from_: GraphRecipientSchema | None = Field(default=None, alias="from")
     to_recipients: list[GraphRecipientSchema] = Field(

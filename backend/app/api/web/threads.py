@@ -13,7 +13,14 @@ from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, RedisDep,
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ThreadNotFoundError
 from app.core.rate_limit import limiter
-from app.models.schemas.dashboard import AuditEntry, DraftView, MessageDetail, ThreadDetail
+from app.core.tenant_scope import TenantScope
+from app.models.schemas.dashboard import (
+    AuditEntry,
+    DraftView,
+    MessageDetail,
+    ThreadDetail,
+    ThreadHeader,
+)
 from app.models.schemas.feedback import RegenerateDraftSchema
 from app.models.schemas.related import (
     ApplyTreatmentResponse,
@@ -65,6 +72,24 @@ async def get_thread(
     _user: CurrentUser,
 ) -> ThreadDetail:
     return await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+
+@router.get(
+    "/{thread_id}/header",
+    response_model=ThreadHeader,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("120/minute")
+async def get_thread_header(
+    thread_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    _user: CurrentUser,
+) -> ThreadHeader:
+    _ = request, response
+    return await thread_view_service.get_thread_header(session, settings, thread_id)
 
 
 @router.get(
@@ -302,7 +327,7 @@ async def urgency_feedback(
 ) -> UrgencyHitlFeedbackResponse:
     """Mark an automatic urgency bump wrong; revert this thread and suppress fingerprint."""
     _ = request, response
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
     urgency = await recurrence_service.apply_urgency_feedback(
