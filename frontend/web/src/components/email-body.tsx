@@ -3,6 +3,7 @@
 import { Fragment, useState, type ReactNode, type KeyboardEvent } from "react"
 import Link from "next/link"
 
+import { EMAIL_QUOTE_PATTERNS } from "@/lib/email-quote-patterns"
 import { cn, textLinkClass } from "@/lib/utils"
 import type { ChatCitation } from "@/lib/types"
 
@@ -13,19 +14,32 @@ const URL_PATTERN = /\bhttps?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
 // InboxAssistant citation markers like [1] matching citation card order (1-based).
 const CITATION_MARKER_PATTERN = /\[(\d+)\]/g
 
-const ORIGINAL_MESSAGE_PATTERN = /(^|\n)[-\s]*Original Message[-\s]*\s*\n/i
-const UNDERSCORE_SEP_PATTERN = /(^|\n)_{10,}\s*\n/
-const OUTLOOK_HEADERS_PATTERN =
-  /(^|\n)From:\s.+\nSent:\s.+(?:\n(?:To|Cc|Bcc|Subject):.*)*\n/i
-const ON_WROTE_PATTERN = /(^|\n)On .+ wrote:\s*\n/i
+const ORIGINAL_MESSAGE_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.originalMessage.source,
+  EMAIL_QUOTE_PATTERNS.originalMessage.flags,
+)
+const UNDERSCORE_SEP_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.underscoreSep.source,
+  EMAIL_QUOTE_PATTERNS.underscoreSep.flags,
+)
+const OUTLOOK_HEADERS_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.outlookHeaders.source,
+  EMAIL_QUOTE_PATTERNS.outlookHeaders.flags,
+)
+const ON_WROTE_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.onWrote.source,
+  EMAIL_QUOTE_PATTERNS.onWrote.flags,
+)
 
 /**
  * Splits a plain-text email body into the latest reply and any quoted history
  * that Outlook/Gmail typically append (Original Message, From/Sent headers, etc.).
+ * An empty unique reply is valid — quote-only bodies must not restore the wall.
  */
 export const splitQuotedHistory = (
   text: string,
 ): { main: string; quoted: string | null } => {
+  const normalized = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n")
   const candidates: number[] = []
 
   for (const pattern of [
@@ -34,23 +48,22 @@ export const splitQuotedHistory = (
     OUTLOOK_HEADERS_PATTERN,
     ON_WROTE_PATTERN,
   ]) {
-    const match = pattern.exec(text)
+    const match = pattern.exec(normalized)
     if (!match) continue
-    // Prefer the start of the quote marker itself (skip the leading newline).
     const at = match.index + (match[1] ? match[1].length : 0)
-    if (at > 0) candidates.push(at)
+    candidates.push(at)
   }
 
   if (candidates.length === 0) {
-    return { main: text, quoted: null }
+    return { main: normalized, quoted: null }
   }
 
   const quoteStart = Math.min(...candidates)
-  const main = text.slice(0, quoteStart).trimEnd()
-  const quoted = text.slice(quoteStart).trim()
+  const main = normalized.slice(0, quoteStart).trimEnd()
+  const quoted = normalized.slice(quoteStart).trim()
 
-  if (!main || !quoted) {
-    return { main: text, quoted: null }
+  if (!quoted) {
+    return { main: normalized, quoted: null }
   }
 
   return { main, quoted }
@@ -197,6 +210,7 @@ export const EmailBody = ({
   className = "",
   emptyLabel = "(no content)",
   collapseQuotes = false,
+  quotedText,
   trailing = null,
   citations,
 }: {
@@ -204,21 +218,19 @@ export const EmailBody = ({
   className?: string
   emptyLabel?: string
   collapseQuotes?: boolean
+  quotedText?: string | null
   trailing?: ReactNode
   citations?: ChatCitation[]
 }) => {
   const [showQuoted, setShowQuoted] = useState(false)
 
-  if (!text || !text.trim()) {
-    if (trailing) {
-      return <div className={cn("text-sm leading-relaxed", className)}>{trailing}</div>
-    }
-    return <p className={`text-sm text-gray-400 italic ${className}`}>{emptyLabel}</p>
-  }
-
-  const { main, quoted } = collapseQuotes
-    ? splitQuotedHistory(text)
-    : { main: text, quoted: null }
+  const split = collapseQuotes
+    ? splitQuotedHistory(text ?? "")
+    : { main: text ?? "", quoted: null as string | null }
+  const main = quotedText != null ? (text ?? "") : split.main
+  const quoted =
+    quotedText != null ? (quotedText.trim() || null) : split.quoted
+  const uniqueEmpty = Boolean(quoted) && !main.trim()
 
   const handleToggleQuoted = () => {
     setShowQuoted((value) => !value)
@@ -231,6 +243,13 @@ export const EmailBody = ({
     }
   }
 
+  if (!main.trim() && !quoted) {
+    if (trailing) {
+      return <div className={cn("text-sm leading-relaxed", className)}>{trailing}</div>
+    }
+    return <p className={`text-sm text-muted-foreground italic ${className}`}>{emptyLabel}</p>
+  }
+
   return (
     <div
       className={cn(
@@ -239,7 +258,11 @@ export const EmailBody = ({
       )}
     >
       <div className="wrap-anywhere whitespace-pre-wrap break-words">
-        <BodyText text={main} citations={citations} />
+        {uniqueEmpty ? (
+          <p className="text-sm italic text-muted-foreground">No new text in this reply</p>
+        ) : (
+          <BodyText text={main} citations={citations} />
+        )}
         {trailing}
       </div>
       {quoted ? (
@@ -255,10 +278,13 @@ export const EmailBody = ({
             onClick={handleToggleQuoted}
             onKeyDown={handleQuotedKeyDown}
           >
-            {showQuoted ? "Hide earlier" : "Show earlier"}
+            {showQuoted ? "Hide quoted earlier" : "Quoted earlier"}
           </button>
           {showQuoted ? (
-            <div className="mt-3 wrap-anywhere whitespace-pre-wrap break-words border-t border-border pt-3 text-gray-500 dark:text-gray-400">
+            <div
+              data-quoted-history
+              className="mt-3 wrap-anywhere whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-gray-500 dark:text-muted-foreground"
+            >
               <BodyText text={quoted} citations={citations} />
             </div>
           ) : null}

@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const threadDetail = vi.fn()
+const threadHeader = vi.fn()
 const relatedThreads = vi.fn()
 const searchParamsString = vi.fn(
   () => "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -18,6 +19,7 @@ vi.mock("@/lib/api-client", () => ({
   api: {
     threads: {
       detail: (...args: unknown[]) => threadDetail(...args),
+      header: (...args: unknown[]) => threadHeader(...args),
       related: (...args: unknown[]) => relatedThreads(...args),
     },
   },
@@ -68,6 +70,7 @@ const renderPage = () => {
 describe("Thread detail page — useSearchParams Suspense boundary", () => {
   beforeEach(() => {
     threadDetail.mockReset()
+    threadHeader.mockReset()
     relatedThreads.mockReset()
     searchParamsString.mockReturnValue(
       "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
@@ -75,25 +78,18 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
   })
 
   it("renders the origin banner derived from the ?from= query param without bailing out", async () => {
-    threadDetail.mockImplementation(async (id: string) =>
-      id === ORIGIN_ID
-        ? {
-            thread: originThread,
-            messages: [],
-            classification: null,
-            draft: null,
-            triage: null,
-            audit_log: [],
-          }
-        : {
-            thread: baseThread,
-            messages: [],
-            classification: null,
-            draft: null,
-            triage: null,
-            audit_log: [],
-          },
-    )
+    threadHeader.mockResolvedValue({
+      subject: originThread.subject,
+      mailbox: originThread.mailbox,
+    })
+    threadDetail.mockResolvedValue({
+      thread: baseThread,
+      messages: [],
+      classification: null,
+      draft: null,
+      triage: null,
+      audit_log: [],
+    })
 
     renderPage()
 

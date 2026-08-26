@@ -1,7 +1,33 @@
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
-import { EmailBody } from "@/components/email-body"
+import { EmailBody, splitQuotedHistory } from "@/components/email-body"
+
+const QUOTE_ONLY =
+  "From: Alice <alice@example.com>\n" +
+  "Sent: Monday, August 22, 2022 10:43 AM\n" +
+  "To: sales@example.com\n" +
+  "Subject: Re: Vercel deploy\n\n" +
+  "Can you check the Vercel deploy?"
+
+describe("splitQuotedHistory", () => {
+  it("keeps an Outlook quote-only body collapsed with an empty unique reply", () => {
+    const { main, quoted } = splitQuotedHistory(QUOTE_ONLY)
+
+    expect(main).toBe("")
+    expect(quoted).toContain("From: Alice")
+    expect(quoted).toContain("Can you check the Vercel deploy?")
+  })
+
+  it("normalizes CRLF before matching Outlook headers", () => {
+    const crlf = QUOTE_ONLY.replaceAll("\n", "\r\n")
+    const { main, quoted } = splitQuotedHistory(crlf)
+
+    expect(main).toBe("")
+    expect(quoted).toContain("From: Alice")
+  })
+})
 
 describe("EmailBody", () => {
   it("renders markdown bold markers as emphasis without showing asterisks", () => {
@@ -60,5 +86,37 @@ describe("EmailBody", () => {
     render(<EmailBody text="Orphan marker [9] stays plain." citations={[]} />)
     expect(screen.queryByRole("link", { name: /citation 9/i })).toBeNull()
     expect(screen.getByText(/\[9\]/)).toBeInTheDocument()
+  })
+
+  it("shows No new text in this reply instead of the From/Sent wall", async () => {
+    const user = userEvent.setup()
+    render(<EmailBody text={QUOTE_ONLY} collapseQuotes />)
+
+    expect(screen.getByText("No new text in this reply")).toBeInTheDocument()
+    expect(screen.queryByText(/From: Alice/)).not.toBeInTheDocument()
+
+    await user.click(
+      screen.getByRole("button", { name: "Show quoted earlier messages" }),
+    )
+    expect(screen.getByText(/From: Alice/)).toBeInTheDocument()
+  })
+
+  it("indents expanded quoted history so earlier mail reads as nested", async () => {
+    const user = userEvent.setup()
+    render(
+      <EmailBody
+        text={"Thanks — please proceed.\n\n" + QUOTE_ONLY}
+        collapseQuotes
+      />,
+    )
+
+    await user.click(
+      screen.getByRole("button", { name: "Show quoted earlier messages" }),
+    )
+
+    const quoted = screen.getByText(/From: Alice/).closest("[data-quoted-history]")
+    expect(quoted).not.toBeNull()
+    expect(quoted?.className).toMatch(/border-l/)
+    expect(quoted?.className).toMatch(/pl-/)
   })
 })
