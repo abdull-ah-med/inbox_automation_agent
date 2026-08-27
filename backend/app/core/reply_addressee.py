@@ -6,13 +6,32 @@ import re
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.core.email_quotes import split_quoted_history
 from app.core.internal_mail import extract_email_address, thread_counterpart
 
 _ANGLE = re.compile(r"^(?P<name>[^<]+)<(?P<email>[^<>@\s]+@[^<>@\s]+)>\s*$")
 # Closing / sign-off then a single personal-name line (not a role mailbox label).
 _SIGNATURE_NAME = re.compile(
     r"(?is)(?:thanks|thank you|regards|best regards|best|sincerely|cheers|warm regards)"
-    r"[,!]?\s*\n+\s*([A-Z][a-zA-Z'’\-]{1,40})\s*(?:\n|$)"
+    r"[,!]?\s*\n+\s*([A-Z][a-zA-Z'" + "\u2019" + r"\-]{1,40})\s*(?:\n|$)"
+)
+# Zendesk / helpdesk agent byline: "Alex Taylor (SampleHelpdesk)" then a date.
+_AGENT_BYLINE = re.compile(
+    r"(?m)^([A-Z][a-zA-Z'"
+    + "\u2019"
+    + r"\-]{1,40})(?:\s+[A-Z][a-zA-Z'"
+    + "\u2019"
+    + r"\-]{1,40})?\s*\([^)\n]{2,80}\)\s*$"
+)
+# Bare closing: "Alex Taylor\nCustomer Support" (no Thanks line).
+_TITLE_CLOSING = re.compile(
+    r"(?im)\n([A-Z][a-zA-Z'"
+    + "\u2019"
+    + r"\-]{1,40})(?:\s+[A-Z][a-zA-Z'"
+    + "\u2019"
+    + r"\-]{1,40})?\s*\n+"
+    r"(?:customer support|support|help desk|helpdesk|technical support|"
+    r"account manager|success manager)\s*(?:\n|$)"
 )
 
 # Local-parts that are job/role mailboxes, not personal names.
@@ -135,19 +154,92 @@ def is_role_mailbox_salute(*, salute_name: str, email: str) -> bool:
     return salute_name.strip().lower() == local_first or _is_role_token(local)
 
 
-def signature_first_name(body: str | None) -> str | None:
-    """Pull a personal first name from a closing signature near the end of body."""
+def _unique_reply_text(body: str | None) -> str:
+    """Newest comment only — drop quoted prior comments / reply history."""
     text = (body or "").strip()
+    if not text:
+        return ""
+    main, _quoted = split_quoted_history(text)
+    return (main or "").strip()
+
+
+def _owner_first_name(mailbox_owner: str | None) -> str | None:
+    token = (mailbox_owner or "").strip().split()[0] if mailbox_owner else ""
+    return token or None
+
+
+def _usable_person_name(
+    name: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    if not name:
+        return None
+    cleaned = name.strip()
+    if not cleaned or _is_role_token(cleaned):
+        return None
+    if reject_names and cleaned.casefold() in {n.casefold() for n in reject_names}:
+        return None
+    return cleaned
+
+
+def signature_first_name(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """Pull a personal first name from a closing signature in the unique reply."""
+    text = _unique_reply_text(body)
     if not text:
         return None
     tail = text[-1200:] if len(text) > 1200 else text
     matches = list(_SIGNATURE_NAME.finditer(tail))
     if not matches:
         return None
-    name = matches[-1].group(1).strip()
-    if _is_role_token(name):
+    return _usable_person_name(matches[-1].group(1), reject_names=reject_names)
+
+
+def agent_byline_first_name(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """Zendesk-style ``Name (Org)`` byline on the unique tip comment."""
+    text = _unique_reply_text(body)
+    if not text:
         return None
-    return name
+    match = _AGENT_BYLINE.search(text)
+    if match is None:
+        return None
+    return _usable_person_name(match.group(1), reject_names=reject_names)
+
+
+def title_closing_first_name(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """``Alex Taylor\\nCustomer Support`` style closing without a Thanks line."""
+    text = _unique_reply_text(body)
+    if not text:
+        return None
+    matches = list(_TITLE_CLOSING.finditer(f"\n{text}"))
+    if not matches:
+        return None
+    return _usable_person_name(matches[-1].group(1), reject_names=reject_names)
+
+
+def addressee_first_name_from_body(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """Best personal name for a role-mailbox tip body (agent byline > signature)."""
+    return (
+        agent_byline_first_name(body, reject_names=reject_names)
+        or signature_first_name(body, reject_names=reject_names)
+        or title_closing_first_name(body, reject_names=reject_names)
+    )
 
 
 def _direction_value(direction: object) -> str:
@@ -161,6 +253,7 @@ def _better_salute_for_email(
     *,
     email: str,
     messages: list[_MessageLike] | tuple[_MessageLike, ...] | None,
+    reject_names: frozenset[str] | set[str] | None = None,
 ) -> str | None:
     """Prefer a human display/signature name for the same address elsewhere in-thread."""
     if not messages:
@@ -173,9 +266,16 @@ def _better_salute_for_email(
         if sender_email is None or sender_email.lower() != target:
             continue
         from_party = salute_name_from_party(sender)
-        if from_party and not is_role_mailbox_salute(salute_name=from_party, email=target):
+        if (
+            from_party
+            and not is_role_mailbox_salute(salute_name=from_party, email=target)
+            and _usable_person_name(from_party, reject_names=reject_names)
+        ):
             return from_party
-        signed = signature_first_name(getattr(msg, "body_text", None))
+        signed = addressee_first_name_from_body(
+            getattr(msg, "body_text", None),
+            reject_names=reject_names,
+        )
         if signed:
             return signed
     # Also check outbound tip body when Elise already used a short name? Skip —
@@ -187,6 +287,7 @@ def resolve_reply_addressee(
     *,
     mailbox: str | None,
     messages: list[_MessageLike] | tuple[_MessageLike, ...] | None,
+    mailbox_owner: str | None = None,
 ) -> ReplyAddressee | None:
     """Pick who to salute from the tip of the thread, not the thread opener.
 
@@ -197,10 +298,14 @@ def resolve_reply_addressee(
     When the tip address is a role mailbox (``Dev@``, ``support@``, …), enrich
     the salute from an in-thread display name or signature for that same email
     (e.g. ``Thanks,\\nDivyansh``) instead of greeting the role label.
+
+    Never salute the mailbox owner — that person signs the outbound reply.
     """
     if not messages:
         return None
     message_list = list(messages)
+    owner = _owner_first_name(mailbox_owner)
+    reject = frozenset({owner}) if owner else frozenset()
     for msg in reversed(message_list):
         direction = _direction_value(msg.direction)
         raw = thread_counterpart(
@@ -225,10 +330,26 @@ def resolve_reply_addressee(
             tip_signed = None
             # Only the inbound tip's body belongs to the addressee.
             if direction == "inbound":
-                tip_signed = signature_first_name(getattr(msg, "body_text", None))
+                tip_signed = addressee_first_name_from_body(
+                    getattr(msg, "body_text", None),
+                    reject_names=reject,
+                )
             better = tip_signed or _better_salute_for_email(
                 email=email,
                 messages=message_list,
+                reject_names=reject,
+            )
+            if better:
+                salute = better
+        elif owner and salute.casefold() == owner.casefold():
+            # Display name accidentally matched the owner; try body enrichment.
+            better = addressee_first_name_from_body(
+                getattr(msg, "body_text", None) if direction == "inbound" else None,
+                reject_names=reject,
+            ) or _better_salute_for_email(
+                email=email,
+                messages=message_list,
+                reject_names=reject,
             )
             if better:
                 salute = better

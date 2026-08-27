@@ -22,6 +22,7 @@ from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.auth import UserMe
 from app.models.schemas.email import ThreadStateEnum
+from app.services.thread_view_service import reply_text_for_message
 
 pytestmark = pytest.mark.db
 
@@ -48,6 +49,40 @@ INBOUND_3_FULL = (
     "Subject: Re: Vercel deploy\n\n"
     "Will do."
 )
+
+# Stored unique_body still contains prior Zendesk comment (pre-fix ingest).
+ZENDESK_UNIQUE_WALL = (
+    "Your request (40197) has been updated. To add additional comments, "
+    "reply to this email.\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 25, 2026, 8:55 AM MDT\n\n"
+    "Elise,\n\n"
+    "Can you provide a search ID that I can look into?\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+    "info\n\n"
+    "Aug 25, 2026, 8:19 AM MDT\n\n"
+    "This is a follow-up to your previous request #40155\n\n"
+    "Hi there.\n\n"
+    "I updated the method for delivery last week.\n\n"
+    "Thanks,\n"
+    "Elise\n"
+)
+
+
+def test_reply_text_quote_splits_stored_zendesk_unique_wall() -> None:
+    """Existing rows: unique_body embeds prior ticket comments — display tip only."""
+    reply = reply_text_for_message(
+        body_text=ZENDESK_UNIQUE_WALL,
+        unique_body_text=ZENDESK_UNIQUE_WALL,
+        body_preview="Your request (40197) has been updated.",
+    )
+    assert "search ID that I can look into" in reply
+    assert "Alex Taylor" in reply
+    assert "follow-up to your previous request" not in reply
+    assert "I updated the method for delivery" not in reply
+    assert "Thanks,\nElise" not in reply
 
 
 @pytest.fixture

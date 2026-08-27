@@ -47,12 +47,7 @@ def test_salute_name_falls_back_to_local_part() -> None:
 def test_role_mailbox_inbound_uses_signature_name_not_local_part() -> None:
     """Dev@ is a role mailbox; signature Divyansh is the person to salute."""
     mailbox = "sampleagent@sample-site.example.com"
-    body = (
-        "Hi Elise,\n\n"
-        "I have updated both invoice screens.\n\n"
-        "Thanks,\n"
-        "Divyansh\n"
-    )
+    body = "Hi Elise,\n\nI have updated both invoice screens.\n\nThanks,\nDivyansh\n"
     messages = [
         _msg(
             message_id="1",
@@ -67,6 +62,50 @@ def test_role_mailbox_inbound_uses_signature_name_not_local_part() -> None:
     assert addressee is not None
     assert addressee.email == "dev@sample-site.example.com"
     assert addressee.salute_name == "Divyansh"
+
+
+def test_zendesk_helpdesk_salutes_agent_not_customer_or_quoted_owner() -> None:
+    """Zendesk tip greets our owner (Elise) and embeds her prior Thanks,Elise.
+
+    Reply must salute the agent (Alex), never the mailbox owner we sign as.
+    """
+    mailbox = "info@sample-services.example.com"
+    tip = (
+        "##- Please type your reply above this line -##\n\n"
+        "Your request (40197) has been updated. To add additional comments, "
+        "reply to this email.\n\n"
+        "Alex Taylor (SampleHelpdesk)\n\n"
+        "Aug 25, 2026, 8:55 AM MDT\n\n"
+        "Elise,\n\n"
+        "I am happy to look into this for you. Can you provide a search ID?\n\n"
+        "Alex Taylor\n"
+        "Customer Support\n\n"
+        "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+        "info\n\n"
+        "Aug 25, 2026, 8:40 AM MDT\n\n"
+        "Hello,\n\n"
+        "Please check notifications.\n\n"
+        "Thanks,\n"
+        "Elise\n"
+    )
+    messages = [
+        _msg(
+            message_id="1",
+            sender="helpdesk@sample-helpdesk.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text=tip,
+        ),
+    ]
+    addressee = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+    )
+    assert addressee is not None
+    assert addressee.email == "helpdesk@sample-helpdesk.example.com"
+    assert addressee.salute_name == "Alex"
 
 
 def test_role_mailbox_outbound_tip_uses_prior_inbound_display_or_signature() -> None:

@@ -14,11 +14,28 @@ from app.repositories import draft_repo, sent_reply_repo, thread_repo
 from app.repositories.message_repo import MessageSchema
 from app.repositories.sent_reply_repo import MatchedBy, SentReplySchema
 from app.services import audit_service
+from app.services.thread_view_service import reply_text_for_message
 
 logger = structlog.get_logger(__name__)
 
 _SENT_BODY_CAP = 20_000
 _TIME_WINDOW = timedelta(hours=48)
+
+# Graph eventMessage.meetingMessageType values that are calendar mail, not replies.
+_MEETING_MESSAGE_TYPES = frozenset(
+    {
+        "meetingRequest",
+        "meetingCancelled",
+        "meetingAccepted",
+        "meetingTenativelyAccepted",
+        "meetingDeclined",
+    }
+)
+
+
+def is_meeting_message(message: MessageSchema) -> bool:
+    """True when Graph identified this row as an event/meeting message."""
+    return (message.meeting_message_type or "") in _MEETING_MESSAGE_TYPES
 
 
 def _cap_body(body: str) -> str:
@@ -75,7 +92,18 @@ async def resolve_thread_from_outbound(
     """Link an outbound message to a draft (when possible) and set RESOLVED.
 
     Idempotent on ``message.id`` via unique constraint. Never logs body text.
+    Skips Graph-identified meeting messages (accepts/declines/requests).
     """
+    if is_meeting_message(message):
+        logger.info(
+            "sent_reply_skip_meeting_message",
+            thread_id=str(thread_id),
+            message_id=str(message.id),
+            mailbox=mailbox,
+            meeting_message_type=message.meeting_message_type,
+        )
+        return None
+
     sent_at = _normalize_sent_at(message.received_at)
     draft_id, matched_by = await _pick_draft_match(
         session,
@@ -88,7 +116,13 @@ async def resolve_thread_from_outbound(
         thread_id=thread_id,
         message_id=message.id,
         draft_id=draft_id,
-        sent_body_snapshot=_cap_body(message.body_text),
+        sent_body_snapshot=_cap_body(
+            reply_text_for_message(
+                body_text=message.body_text,
+                unique_body_text=message.unique_body_text,
+                body_preview=message.body_preview,
+            )
+        ),
         sent_at=sent_at,
         matched_by=matched_by,
     )
@@ -112,10 +146,7 @@ async def resolve_thread_from_outbound(
         thread = await thread_repo.get_by_id(session, thread_id, TenantScope.single(mailbox))
         urgency_assessed = thread.urgency if thread is not None else None
         matched_label = matched_by.replace("_", " ")
-        human_body = (
-            f"Matched your Outlook send ({matched_label}). "
-            "Removed from Needs Attention."
-        )
+        human_body = f"Matched your Outlook send ({matched_label}). Removed from Needs Attention."
         if urgency_assessed:
             human_body = (
                 f"{human_body} Assessed urgency was {urgency_assessed}; "

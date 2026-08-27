@@ -55,9 +55,7 @@ describe("SentReplyPanel", () => {
 
   it("collapses when hide is clicked", async () => {
     const user = userEvent.setup()
-    render(
-      <SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />,
-    )
+    render(<SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />)
     await user.click(screen.getByRole("button", { name: "Collapse sent reply panel" }))
     expect(screen.queryByText("Proposed draft")).not.toBeInTheDocument()
   })
@@ -77,17 +75,14 @@ describe("SentReplyPanel", () => {
         }}
       />,
     )
-    expect(
-      screen.getByText(/substantially edited from the proposed draft/i),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/substantially edited from the proposed draft/i)).toBeInTheDocument()
     expect(screen.getByText(/Line one of the draft/)).toBeInTheDocument()
     const struck = document.querySelector(".line-through")
     expect(struck).toBeNull()
   })
 
   it("wraps long unbroken tokens in the sent reply column", () => {
-    const longToken =
-      "info@sample-services.example.com<mailto:info@sample-services.example.com>"
+    const longToken = "info@sample-services.example.com<mailto:info@sample-services.example.com>"
     render(
       <SentReplyPanel
         sentReply={{
@@ -99,8 +94,10 @@ describe("SentReplyPanel", () => {
       />,
     )
     const token = screen.getByText((_, element) => {
-      return element?.textContent?.includes(longToken) === true
-        && element.classList.contains("break-words")
+      return (
+        element?.textContent?.includes(longToken) === true &&
+        element.classList.contains("break-words")
+      )
     })
     expect(token).toBeTruthy()
     expect(token.closest(".overflow-hidden")).not.toBeNull()
