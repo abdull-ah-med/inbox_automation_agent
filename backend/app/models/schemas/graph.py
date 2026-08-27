@@ -90,6 +90,7 @@ class GraphMessageSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     id: str
+    odata_type: str | None = Field(default=None, alias="@odata.type")
     subject: str | None = None
     body_preview: str | None = Field(default=None, alias="bodyPreview")
     body: GraphMessageBodySchema | None = None
@@ -113,6 +114,8 @@ class GraphMessageSchema(BaseModel):
     is_read: bool | None = Field(default=None, alias="isRead")
     has_attachments: bool | None = Field(default=None, alias="hasAttachments")
     importance: str | None = None
+    meeting_message_type: str | None = Field(default=None, alias="meetingMessageType")
+    response_type: str | None = Field(default=None, alias="responseType")
     # Set by the poller; not a Graph JSON field.
     source_folder: str | None = None
 
@@ -121,6 +124,28 @@ class GraphMessageListSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     value: list[GraphMessageSchema] = Field(default_factory=list)
+    odata_next_link: str | None = Field(default=None, alias="@odata.nextLink")
+
+
+class GraphFileAttachmentSchema(BaseModel):
+    """Subset of fileAttachment used to resolve cid: images in HTML bodies."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str | None = None
+    name: str | None = None
+    content_type: str | None = Field(default=None, alias="contentType")
+    content_bytes: str | None = Field(default=None, alias="contentBytes")
+    content_id: str | None = Field(default=None, alias="contentId")
+    is_inline: bool | None = Field(default=None, alias="isInline")
+    size: int | None = None
+    odata_type: str | None = Field(default=None, alias="@odata.type")
+
+
+class GraphAttachmentListSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    value: list[GraphFileAttachmentSchema] = Field(default_factory=list)
     odata_next_link: str | None = Field(default=None, alias="@odata.nextLink")
 
 
