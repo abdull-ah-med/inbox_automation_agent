@@ -74,8 +74,7 @@ async def load_skill_reference(
     if row.kind == "asset" and row.size_bytes > MAX_ASSET_BYTES:
         return {
             "content": (
-                f"Asset exceeds {MAX_ASSET_BYTES} byte limit "
-                f"({row.size_bytes} bytes): {path}"
+                f"Asset exceeds {MAX_ASSET_BYTES} byte limit ({row.size_bytes} bytes): {path}"
             ),
             "is_error": True,
             "bytes": 0,

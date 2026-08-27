@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { clearAuthSession, setAuthSession } from "@/features/auth/auth-store"
-import {
-  SkillDuplicateCandidatesError,
-  api,
-} from "@/lib/api-client"
+import { SkillDuplicateCandidatesError, api } from "@/lib/api-client"
 
 describe("api.skills.import duplicate handling", () => {
   beforeEach(() => {
@@ -46,23 +43,23 @@ describe("api.skills.import duplicate handling", () => {
     vi.stubGlobal("fetch", fetchMock)
 
     const file = new File(["pk"], "demo.zip", { type: "application/zip" })
-    let caught: unknown
-    try {
-      await api.skills.import(file)
-    } catch (error) {
-      caught = error
-    }
+    const caught = await api.skills.import(file).then(
+      () => {
+        throw new Error("expected SkillDuplicateCandidatesError")
+      },
+      (error: unknown) => error,
+    )
 
     expect(caught).toBeInstanceOf(SkillDuplicateCandidatesError)
-    if (caught instanceof SkillDuplicateCandidatesError) {
-      expect(caught.candidates).toEqual([
+    expect(caught).toMatchObject({
+      candidates: [
         {
           id: "cand-1",
           name: "samplelab-rebilling",
           similarity: 0.91,
         },
-      ])
-    }
+      ],
+    })
   })
 
   it("sends overwrite FormData fields on retry options", async () => {

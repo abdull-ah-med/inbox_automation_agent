@@ -129,13 +129,13 @@ def _scheduling_triage() -> TriageResultSchema:
 
 
 # ---------------------------------------------------------------------------
-# Packaging / Level 1–3 offline contract
+# Packaging / Level 1-3 offline contract
 # ---------------------------------------------------------------------------
 
 
 def test_fixture_packages_like_claude_agent_skill() -> None:
     """Anthropic packaging: root folder == name, SKILL.md frontmatter, refs only."""
-    name, description, body, extras, files, warnings = _parse_fixture()
+    name, description, body, _extras, files, warnings = _parse_fixture()
     assert name == "samplelab-rebilling"
     assert "samplelab" in description.lower()
     assert "rebill" in description.lower()
@@ -238,7 +238,7 @@ async def test_level3_loader_returns_real_reference_bytes_on_demand() -> None:
     skill_id = uuid.uuid4()
     by_path = {str(f["relative_path"]): f for f in files}
 
-    async def fake_get_by_path(session, *, skill_id, relative_path):  # noqa: ANN001
+    async def fake_get_by_path(session, *, skill_id, relative_path):
         _ = session, skill_id
         item = by_path.get(relative_path)
         if item is None:
@@ -380,9 +380,7 @@ async def test_draft_tool_loop_loads_client_rules_then_uses_content() -> None:
     name, description, body, _extras, files, _warnings = _parse_fixture()
     skill_id = uuid.uuid4()
     client_rules = next(
-        f["content"].decode()
-        for f in files
-        if f["relative_path"] == "references/client_rules.md"
+        f["content"].decode() for f in files if f["relative_path"] == "references/client_rules.md"
     )
     block = skill_selection_service.format_skill_block(
         _selection_row(
@@ -575,7 +573,7 @@ async def test_live_sonnet_reads_client_rules_for_harmeyer_draft(
     Uses an in-memory loader backed by the real zip (same bytes the DB would hold)
     so we prove the tool-loop contract without requiring a migrated DB.
 
-    Full SKILL.md activation (~10 KB) plus tool rounds can take 1–3 minutes.
+    Full SKILL.md activation (~10 KB) plus tool rounds can take 1-3 minutes.
     """
     import asyncio
 

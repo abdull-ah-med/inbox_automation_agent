@@ -55,15 +55,15 @@ export const SkillCandidatesSection = () => {
           Proposed skills
         </h2>
         <p className="mt-1 text-sm text-gray-500">
-          Recurring rejection themes promoted into standing skill drafts for
-          review. Accept creates an active skill; dismiss archives the proposal.
+          Recurring rejection themes promoted into standing skill drafts for review. Accept creates
+          an active skill; dismiss archives the proposal.
         </p>
       </div>
-      <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+      <div className="bg-card ring-foreground/10 overflow-hidden rounded-xl ring-1">
         {candidates.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">
-            No pending proposals. Reject drafts with the same reason a few times
-            to surface candidates.
+            No pending proposals. Reject drafts with the same reason a few times to surface
+            candidates.
           </p>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -93,8 +93,7 @@ export const SkillCandidatesSection = () => {
                       tabIndex={0}
                       aria-label={`Accept proposed skill ${candidate.proposed_name}`}
                       disabled={
-                        acceptCandidateMutation.isPending ||
-                        dismissCandidateMutation.isPending
+                        acceptCandidateMutation.isPending || dismissCandidateMutation.isPending
                       }
                       onClick={() => handleAcceptCandidate(candidate)}
                     >
@@ -107,8 +106,7 @@ export const SkillCandidatesSection = () => {
                       tabIndex={0}
                       aria-label={`Dismiss proposed skill ${candidate.proposed_name}`}
                       disabled={
-                        acceptCandidateMutation.isPending ||
-                        dismissCandidateMutation.isPending
+                        acceptCandidateMutation.isPending || dismissCandidateMutation.isPending
                       }
                       onClick={() => handleDismissCandidate(candidate)}
                     >

@@ -64,9 +64,7 @@ export const skillCandidatesApi = {
     const qs = new URLSearchParams()
     if (mailbox) qs.set("mailbox", mailbox)
     const query = qs.toString()
-    return apiFetch<SkillCandidateResponse[]>(
-      `/api/skill-candidates${query ? `?${query}` : ""}`,
-    )
+    return apiFetch<SkillCandidateResponse[]>(`/api/skill-candidates${query ? `?${query}` : ""}`)
   },
   accept(id: string) {
     return apiFetch<SkillResponse>(`/api/skill-candidates/${id}/accept`, {
@@ -74,9 +72,8 @@ export const skillCandidatesApi = {
     })
   },
   dismiss(id: string) {
-    return apiFetch<SkillCandidateResponse>(
-      `/api/skill-candidates/${id}/dismiss`,
-      { method: "POST" },
-    )
+    return apiFetch<SkillCandidateResponse>(`/api/skill-candidates/${id}/dismiss`, {
+      method: "POST",
+    })
   },
 }

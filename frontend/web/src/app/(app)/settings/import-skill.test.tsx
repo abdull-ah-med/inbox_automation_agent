@@ -14,10 +14,7 @@ const successResult = (): ImportSkillResult => ({
   skill_id: "skill-1",
   name: "samplelab-rebilling",
   description: "Rebill SampleLab invoices",
-  reference_files: [
-    "references/client_rules.md",
-    "references/output_format.md",
-  ],
+  reference_files: ["references/client_rules.md", "references/output_format.md"],
   asset_files: [],
   warnings: ["scripts/ skipped (read-only constraint): scripts/run.py"],
   overwritten: false,
@@ -26,14 +23,10 @@ const successResult = (): ImportSkillResult => ({
 describe("validateSkillArchiveClient", () => {
   it("accepts .zip and .skill", () => {
     expect(
-      validateSkillArchiveClient(
-        new File(["pk"], "demo.zip", { type: "application/zip" }),
-      ),
+      validateSkillArchiveClient(new File(["pk"], "demo.zip", { type: "application/zip" })),
     ).toBeNull()
     expect(
-      validateSkillArchiveClient(
-        new File(["pk"], "demo.skill", { type: "application/zip" }),
-      ),
+      validateSkillArchiveClient(new File(["pk"], "demo.skill", { type: "application/zip" })),
     ).toBeNull()
   })
 
@@ -78,21 +71,14 @@ describe("ImportSkillDropzone", () => {
 
   it("surfaces server error text verbatim on failure", async () => {
     const user = userEvent.setup()
-    const onImport = vi
-      .fn()
-      .mockRejectedValue(new Error("Unsafe archive path: ../etc/passwd"))
+    const onImport = vi.fn().mockRejectedValue(new Error("Unsafe archive path: ../etc/passwd"))
 
     render(<ImportSkillDropzone onImport={onImport} />)
 
     const input = screen.getByLabelText("Skill archive file input")
-    await user.upload(
-      input,
-      new File(["pk"], "bad.zip", { type: "application/zip" }),
-    )
+    await user.upload(input, new File(["pk"], "bad.zip", { type: "application/zip" }))
 
-    expect(
-      await screen.findByText("Unsafe archive path: ../etc/passwd"),
-    ).toBeInTheDocument()
+    expect(await screen.findByText("Unsafe archive path: ../etc/passwd")).toBeInTheDocument()
   })
 
   it("rejects .txt on drop-zone without calling onImport", async () => {
@@ -101,10 +87,7 @@ describe("ImportSkillDropzone", () => {
     render(<ImportSkillDropzone onImport={onImport} />)
 
     const input = screen.getByLabelText("Skill archive file input")
-    await user.upload(
-      input,
-      new File(["hello"], "notes.txt", { type: "text/plain" }),
-    )
+    await user.upload(input, new File(["hello"], "notes.txt", { type: "text/plain" }))
 
     expect(await screen.findByText(/zip or \.skill/i)).toBeInTheDocument()
     expect(onImport).not.toHaveBeenCalled()
@@ -116,11 +99,9 @@ describe("ImportSkillDropzone", () => {
     render(<ImportSkillDropzone onImport={onImport} />)
 
     const input = screen.getByLabelText("Skill archive file input")
-    const big = new File(
-      [new Uint8Array(MAX_SKILL_ARCHIVE_BYTES + 1)],
-      "big.zip",
-      { type: "application/zip" },
-    )
+    const big = new File([new Uint8Array(MAX_SKILL_ARCHIVE_BYTES + 1)], "big.zip", {
+      type: "application/zip",
+    })
     await user.upload(input, big)
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/10 MB/i)

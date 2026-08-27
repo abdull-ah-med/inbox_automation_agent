@@ -3,16 +3,8 @@
 import { useRef, useState } from "react"
 import { FileArchive, Upload } from "lucide-react"
 
+import { DuplicateSkillDialog, ImportSkillResultCard } from "@/components/import-skill-parts"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
 import {
   SkillDuplicateCandidatesError,
   type ImportSkillOptions,
@@ -29,9 +21,7 @@ export const isAcceptedSkillArchive = (file: File): boolean => {
   return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext))
 }
 
-export const validateSkillArchiveClient = (
-  file: File,
-): string | null => {
+export const validateSkillArchiveClient = (file: File): string | null => {
   if (!isAcceptedSkillArchive(file)) {
     return "Upload a .zip or .skill archive"
   }
@@ -47,10 +37,7 @@ export const validateSkillArchiveClient = (
 type ImportSkillDropzoneProps = {
   disabled?: boolean
   isPending?: boolean
-  onImport: (
-    file: File,
-    options?: ImportSkillOptions,
-  ) => Promise<ImportSkillResult>
+  onImport: (file: File, options?: ImportSkillOptions) => Promise<ImportSkillResult>
   onImported?: (result: ImportSkillResult) => void
 }
 
@@ -92,10 +79,7 @@ export const ImportSkillDropzone = ({
     setNewName("")
   }
 
-  const handleFile = async (
-    file: File | null,
-    options?: ImportSkillOptions,
-  ) => {
+  const handleFile = async (file: File | null, options?: ImportSkillOptions) => {
     if (!file || disabled || isPending || retryPending) return
     setClientError(null)
     setServerError(null)
@@ -119,9 +103,7 @@ export const ImportSkillDropzone = ({
         return
       }
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Import failed"
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
       setServerError(message)
     }
   }
@@ -163,9 +145,7 @@ export const ImportSkillDropzone = ({
       handleImportSuccess(imported)
     } catch (error) {
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Import failed"
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
       setServerError(message)
     } finally {
       setRetryPending(false)
@@ -189,9 +169,7 @@ export const ImportSkillDropzone = ({
       handleImportSuccess(imported)
     } catch (error) {
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Import failed"
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
       setServerError(message)
     } finally {
       setRetryPending(false)
@@ -225,17 +203,14 @@ export const ImportSkillDropzone = ({
         ].join(" ")}
       >
         <div className="flex flex-col items-center gap-3 text-center">
-          <FileArchive
-            className="size-8 text-muted-foreground"
-            aria-hidden="true"
-          />
+          <FileArchive className="text-muted-foreground size-8" aria-hidden="true" />
           <div>
             <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
               Import Claude Skill
             </p>
             <p className="mt-1 text-xs text-gray-500">
-              Drop a .zip or .skill archive (max 10 MB). Scripts are skipped —
-              this app never executes imported code.
+              Drop a .zip or .skill archive (max 10 MB). Scripts are skipped — this app never
+              executes imported code.
             </p>
           </div>
           <Button
@@ -274,140 +249,22 @@ export const ImportSkillDropzone = ({
         </p>
       ) : null}
 
-      {result ? (
-        <div className="rounded-xl bg-card p-5 ring-1 ring-foreground/10">
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            Imported {result.name}
-            {result.overwritten ? " (overwritten)" : ""}
-          </p>
-          {result.description ? (
-            <p className="mt-1 text-sm text-gray-500">{result.description}</p>
-          ) : null}
-          {result.reference_files.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
-                Reference files
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-300">
-                {result.reference_files.map((path) => (
-                  <li key={path}>{path}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.asset_files.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
-                Assets
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-300">
-                {result.asset_files.map((path) => (
-                  <li key={path}>{path}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.warnings.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-400">
-                Warnings
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-amber-800 dark:text-amber-300">
-                {result.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {result ? <ImportSkillResultCard result={result} /> : null}
 
-      <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
-        <DialogContent size="lg" aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>Similar skill found</DialogTitle>
-            <DialogDescription>
-              This archive looks similar to an existing skill. Overwrite one of
-              the matches, or create it as a new skill with a different name.
-            </DialogDescription>
-          </DialogHeader>
-
-          <ul className="space-y-3">
-            {candidates.map((candidate) => (
-              <li
-                key={candidate.id}
-                className="flex flex-col gap-2 border-b border-border pb-3 last:border-b-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p className="text-sm font-medium text-foreground">
-                    {candidate.name}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {Math.round(candidate.similarity * 100)}% similar
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  tabIndex={0}
-                  aria-label={`Overwrite skill ${candidate.name}`}
-                  disabled={retryPending}
-                  onClick={() => {
-                    void handleOverwrite(candidate.id)
-                  }}
-                >
-                  Overwrite
-                </Button>
-              </li>
-            ))}
-          </ul>
-
-          <div className="space-y-2">
-            <label
-              htmlFor="skill-name-override"
-              className="text-sm font-medium text-foreground"
-            >
-              Create as new skill
-            </label>
-            <Input
-              id="skill-name-override"
-              value={newName}
-              onChange={(event) => setNewName(event.target.value)}
-              placeholder="new-skill-name"
-              aria-label="New skill name"
-              disabled={retryPending}
-            />
-            <p className="text-xs text-muted-foreground">
-              Lowercase letters, numbers, and hyphens only (max 64 characters).
-            </p>
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              tabIndex={0}
-              aria-label="Cancel duplicate skill prompt"
-              disabled={retryPending}
-              onClick={() => handleDialogOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              tabIndex={0}
-              aria-label="Create skill with new name"
-              disabled={retryPending || !newName.trim()}
-              onClick={() => {
-                void handleCreateAsNew()
-              }}
-            >
-              Create as new
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DuplicateSkillDialog
+        open={dialogOpen}
+        onOpenChange={handleDialogOpenChange}
+        candidates={candidates}
+        newName={newName}
+        onNewNameChange={setNewName}
+        retryPending={retryPending}
+        onOverwrite={(candidateId) => {
+          void handleOverwrite(candidateId)
+        }}
+        onCreateAsNew={() => {
+          void handleCreateAsNew()
+        }}
+      />
     </div>
   )
 }

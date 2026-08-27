@@ -96,10 +96,7 @@ async def test_long_body_skill_stays_in_haiku_candidate_pool() -> None:
         embedding=[1.0, 0.0, 0.0],
         refs=["references/client_rules.md"],
     )
-    fillers = [
-        _row(name=f"filler-{i}", embedding=[0.0, 1.0, 0.0])
-        for i in range(9)
-    ]
+    fillers = [_row(name=f"filler-{i}", embedding=[0.0, 1.0, 0.0]) for i in range(9)]
     pool = [target, *fillers]
     assert len(pool) > 8
 

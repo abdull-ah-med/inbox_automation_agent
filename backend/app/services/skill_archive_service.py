@@ -196,6 +196,114 @@ def _classify_member(
     return None, f"Unsupported path skipped: {normalized}"
 
 
+def _collect_archive_members(
+    zf: zipfile.ZipFile,
+) -> list[tuple[str, zipfile.ZipInfo]]:
+    infos = [info for info in zf.infolist() if not info.is_dir()]
+    if not infos:
+        raise SkillPackagingError("Archive is empty")
+
+    members: list[tuple[str, zipfile.ZipInfo]] = []
+    seen_paths: set[str] = set()
+    for info in infos:
+        path = _normalize_member_path(info.filename)
+        if _is_junk_path(path):
+            continue
+        _assert_safe_path(info.filename)
+        path = _normalize_member_path(info.filename)
+        if path in seen_paths:
+            raise SkillPackagingError(f"Duplicate archive path: {path}")
+        seen_paths.add(path)
+        # Declared size is a cheap pre-check only; actual bytes are enforced
+        # after zf.read() (zip local headers are attacker-controlled).
+        if info.file_size > MAX_SINGLE_FILE_BYTES:
+            raise SkillPackageTooLargeError(
+                f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
+            )
+        members.append((path, info))
+
+    if not members:
+        raise SkillPackagingError("Archive contains no usable files")
+    return members
+
+
+def _resolve_skill_root(
+    members: list[tuple[str, zipfile.ZipInfo]],
+) -> tuple[str, str, zipfile.ZipInfo]:
+    top_levels = {path.split("/", 1)[0] for path, _ in members}
+    if any("/" not in path for path, _ in members):
+        # Anthropic packaging: zip must contain the skill folder as root.
+        raise SkillPackagingError(
+            "The ZIP should contain the skill folder as its root "
+            "(my-skill/SKILL.md), not files directly in the ZIP root"
+        )
+    if len(top_levels) != 1:
+        raise SkillPackagingError("Archive must contain exactly one root skill folder")
+    root_dir = next(iter(top_levels))
+
+    skill_md_path = f"{root_dir}/SKILL.md"
+    skill_md_info = next((info for path, info in members if path == skill_md_path), None)
+    if skill_md_info is None:
+        # Case-insensitive fallback for Skill.md
+        skill_md_info = next(
+            (info for path, info in members if path.lower() == skill_md_path.lower()),
+            None,
+        )
+        if skill_md_info is None:
+            raise SkillPackagingError(f"Missing {skill_md_path}")
+    return root_dir, skill_md_path, skill_md_info
+
+
+def _read_bounded_member(
+    zf: zipfile.ZipFile,
+    info: zipfile.ZipInfo,
+    *,
+    path: str,
+    total_uncompressed: int,
+) -> tuple[bytes, int]:
+    payload = zf.read(info)
+    if len(payload) > MAX_SINGLE_FILE_BYTES:
+        raise SkillPackageTooLargeError(
+            f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
+        )
+    total = total_uncompressed + len(payload)
+    if total > MAX_UNCOMPRESSED_BYTES:
+        raise SkillPackageTooLargeError("Uncompressed archive exceeds 25 MB limit (zip bomb guard)")
+    return payload, total
+
+
+def _read_side_files(
+    zf: zipfile.ZipFile,
+    members: list[tuple[str, zipfile.ZipInfo]],
+    *,
+    root_dir: str,
+    skill_md_path: str,
+    total_uncompressed: int,
+) -> tuple[list[dict[str, object]], list[str]]:
+    files: list[dict[str, object]] = []
+    warnings: list[str] = []
+    total = total_uncompressed
+    for path, info in members:
+        if path.lower() == skill_md_path.lower():
+            continue
+        relative = path[len(root_dir) + 1 :]
+        kind, warning = _classify_member(relative)
+        if warning:
+            warnings.append(warning)
+        if kind is None:
+            continue
+        payload, total = _read_bounded_member(zf, info, path=path, total_uncompressed=total)
+        files.append(
+            {
+                "relative_path": relative,
+                "kind": kind,
+                "mime_type": _guess_mime(relative),
+                "content": payload,
+            }
+        )
+    return files, warnings
+
+
 def parse_skill_archive(
     archive_bytes: bytes,
     *,
@@ -218,98 +326,20 @@ def parse_skill_archive(
         raise SkillPackagingError("File is not a valid zip archive") from exc
 
     with zf:
-        infos = [info for info in zf.infolist() if not info.is_dir()]
-        if not infos:
-            raise SkillPackagingError("Archive is empty")
-
-        total_uncompressed = 0
-        members: list[tuple[str, zipfile.ZipInfo]] = []
-        seen_paths: set[str] = set()
-        for info in infos:
-            path = _normalize_member_path(info.filename)
-            if _is_junk_path(path):
-                continue
-            _assert_safe_path(info.filename)
-            path = _normalize_member_path(info.filename)
-            if path in seen_paths:
-                raise SkillPackagingError(f"Duplicate archive path: {path}")
-            seen_paths.add(path)
-            # Declared size is a cheap pre-check only; actual bytes are enforced
-            # after zf.read() (zip local headers are attacker-controlled).
-            if info.file_size > MAX_SINGLE_FILE_BYTES:
-                raise SkillPackageTooLargeError(
-                    f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
-                )
-            members.append((path, info))
-
-        if not members:
-            raise SkillPackagingError("Archive contains no usable files")
-
-        top_levels = {path.split("/", 1)[0] for path, _ in members}
-        if any("/" not in path for path, _ in members):
-            # Anthropic packaging: zip must contain the skill folder as root.
-            raise SkillPackagingError(
-                "The ZIP should contain the skill folder as its root "
-                "(my-skill/SKILL.md), not files directly in the ZIP root"
-            )
-        if len(top_levels) != 1:
-            raise SkillPackagingError("Archive must contain exactly one root skill folder")
-        root_dir = next(iter(top_levels))
-
-        skill_md_path = f"{root_dir}/SKILL.md"
-        skill_md_info = next((info for path, info in members if path == skill_md_path), None)
-        if skill_md_info is None:
-            # Case-insensitive fallback for Skill.md
-            skill_md_info = next(
-                (info for path, info in members if path.lower() == skill_md_path.lower()),
-                None,
-            )
-            if skill_md_info is None:
-                raise SkillPackagingError(f"Missing {skill_md_path}")
-
-        skill_raw = zf.read(skill_md_info)
-        if len(skill_raw) > MAX_SINGLE_FILE_BYTES:
-            raise SkillPackageTooLargeError(
-                f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {skill_md_path}"
-            )
-        total_uncompressed += len(skill_raw)
-        if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
-            raise SkillPackageTooLargeError(
-                "Uncompressed archive exceeds 25 MB limit (zip bomb guard)"
-            )
+        members = _collect_archive_members(zf)
+        root_dir, skill_md_path, skill_md_info = _resolve_skill_root(members)
+        skill_raw, total_uncompressed = _read_bounded_member(
+            zf, skill_md_info, path=skill_md_path, total_uncompressed=0
+        )
         meta, body = _parse_skill_md(skill_raw)
         name, description, extras = _validate_frontmatter(meta, root_dir=root_dir)
-
-        files: list[dict[str, object]] = []
-        warnings: list[str] = []
-        for path, info in members:
-            if path.lower() == skill_md_path.lower():
-                continue
-            relative = path[len(root_dir) + 1 :]
-            kind, warning = _classify_member(relative)
-            if warning:
-                warnings.append(warning)
-            if kind is None:
-                continue
-            payload = zf.read(info)
-            if len(payload) > MAX_SINGLE_FILE_BYTES:
-                raise SkillPackageTooLargeError(
-                    f"File exceeds {MAX_SINGLE_FILE_BYTES // (1024 * 1024)} MB limit: {path}"
-                )
-            total_uncompressed += len(payload)
-            if total_uncompressed > MAX_UNCOMPRESSED_BYTES:
-                raise SkillPackageTooLargeError(
-                    "Uncompressed archive exceeds 25 MB limit (zip bomb guard)"
-                )
-            files.append(
-                {
-                    "relative_path": relative,
-                    "kind": kind,
-                    "mime_type": _guess_mime(relative),
-                    "content": payload,
-                }
-            )
-
+        files, warnings = _read_side_files(
+            zf,
+            members,
+            root_dir=root_dir,
+            skill_md_path=skill_md_path,
+            total_uncompressed=total_uncompressed,
+        )
         return name, description, body, extras, files, warnings
 
 

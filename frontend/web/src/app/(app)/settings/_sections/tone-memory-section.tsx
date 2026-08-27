@@ -28,13 +28,8 @@ export const ToneMemorySection = () => {
   })
 
   const excludeMutation = useMutation({
-    mutationFn: ({
-      id,
-      is_excluded,
-    }: {
-      id: string
-      is_excluded: boolean
-    }) => api.replyMemory.setExcluded(id, is_excluded),
+    mutationFn: ({ id, is_excluded }: { id: string; is_excluded: boolean }) =>
+      api.replyMemory.setExcluded(id, is_excluded),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["reply-memory"] })
     },
@@ -60,8 +55,8 @@ export const ToneMemorySection = () => {
           Tone memory
         </h2>
         <p className="mt-1 text-sm text-gray-500">
-          Approved replies used as tone references when drafting. Exclude any
-          that should not influence future drafts.
+          Approved replies used as tone references when drafting. Exclude any that should not
+          influence future drafts.
         </p>
         {!isAdmin ? (
           <p className="mt-1 text-sm text-amber-700 dark:text-amber-400">
@@ -70,7 +65,7 @@ export const ToneMemorySection = () => {
         ) : null}
       </div>
 
-      <div className="overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+      <div className="bg-card ring-foreground/10 overflow-hidden rounded-xl ring-1">
         {replyMemoryLoading ? (
           <div className="space-y-3 p-4">
             <Skeleton className="h-16 w-full" />
@@ -87,16 +82,12 @@ export const ToneMemorySection = () => {
           </div>
         ) : replies.length === 0 ? (
           <p className="p-6 text-sm text-gray-500">
-            No approved replies yet. Approve a draft to start building tone
-            memory.
+            No approved replies yet. Approve a draft to start building tone memory.
           </p>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
             {replies.map((item) => (
-              <li
-                key={item.id}
-                className="flex flex-wrap items-start justify-between gap-3 p-4"
-              >
+              <li key={item.id} className="flex flex-wrap items-start justify-between gap-3 p-4">
                 <div className="min-w-0 flex-1 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge
@@ -109,11 +100,9 @@ export const ToneMemorySection = () => {
                     </span>
                   </div>
                   {item.original_email_preview ? (
-                    <p className="text-sm text-gray-500">
-                      Re: {item.original_email_preview}
-                    </p>
+                    <p className="text-sm text-gray-500">Re: {item.original_email_preview}</p>
                   ) : null}
-                  <p className="line-clamp-3 whitespace-pre-wrap text-sm text-gray-700 dark:text-gray-300">
+                  <p className="line-clamp-3 text-sm whitespace-pre-wrap text-gray-700 dark:text-gray-300">
                     {item.reply_text}
                   </p>
                 </div>

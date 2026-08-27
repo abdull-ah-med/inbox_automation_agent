@@ -89,17 +89,17 @@ async def import_skill(
     settings: AppSettings,
     openai_client: OpenAIClientDep,
     _admin: CurrentAdmin,
-    file: UploadFile = File(...),  # noqa: B008
-    overwrite: bool = Form(default=False),
-    overwrite_skill_id: uuid.UUID | None = Form(default=None),  # noqa: B008
-    name_override: str | None = Form(default=None),
-    category: str | None = Form(default="billing"),
+    file: Annotated[UploadFile, File()],
+    overwrite: Annotated[bool, Form()] = False,
+    overwrite_skill_id: Annotated[uuid.UUID | None, Form()] = None,
+    name_override: Annotated[str | None, Form()] = None,
+    category: Annotated[str | None, Form()] = "billing",
 ) -> ImportSkillResultSchema:
     """Import a Claude Agent Skill archive (.zip or .skill)."""
     _ = request, response
     filename = file.filename or "skill.zip"
     lower = filename.lower()
-    if not (lower.endswith(".zip") or lower.endswith(".skill")):
+    if not (lower.endswith((".zip", ".skill"))):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Upload a .zip or .skill archive",

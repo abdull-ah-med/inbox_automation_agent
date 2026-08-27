@@ -35,6 +35,7 @@ from app.repositories._vector_common import set_hnsw_session_defaults
 def _raise_name_conflict(exc: IntegrityError, name: object) -> NoReturn:
     raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
 
+
 # Caps how many standing instructions can be injected into every draft LLM call.
 MAX_ACTIVE_SKILLS = 20
 MAX_ACTIVE_SKILLS_CHARS = 200_000
@@ -290,7 +291,8 @@ async def upsert_imported(
             _raise_name_conflict(exc, name)
         await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
         refreshed = await get_by_id(session, row.id)
-        assert refreshed is not None
+        if refreshed is None:
+            raise RuntimeError(f"Skill missing after insert: {row.id}")
         return refreshed, False
 
     await _assert_active_budget(session, content=content, exclude_id=existing.id)
@@ -315,7 +317,8 @@ async def upsert_imported(
     await session.flush()
     await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
     refreshed = await get_by_id(session, row.id)
-    assert refreshed is not None
+    if refreshed is None:
+        raise RuntimeError(f"Skill missing after update: {row.id}")
     return refreshed, True
 
 

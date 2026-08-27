@@ -4,13 +4,7 @@ import { useMutation } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useAuthState } from "@/features/auth/use-auth"
@@ -66,10 +60,9 @@ export const AccountSection = () => {
       <CardHeader>
         <CardTitle className="text-lg">Account</CardTitle>
         <CardDescription>
-          Change your password. You will be signed out afterward and must log in
-          again.
+          Change your password. You will be signed out afterward and must log in again.
         </CardDescription>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-muted-foreground text-sm">
           Signed in as {auth.user?.email ?? "unknown"}
         </p>
       </CardHeader>
