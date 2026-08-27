@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, RedisDep, get_db
+from app.core.dependencies import (
+    AnthropicClientDep,
+    GraphClientDep,
+    OpenAIClientDep,
+    RedisDep,
+    get_db,
+)
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ThreadNotFoundError
 from app.core.rate_limit import limiter
@@ -18,6 +24,7 @@ from app.models.schemas.dashboard import (
     AuditEntry,
     DraftView,
     MessageDetail,
+    MessageHtmlBody,
     ThreadDetail,
     ThreadHeader,
 )
@@ -44,6 +51,7 @@ from app.models.schemas.urgency_hitl import (
 from app.repositories import thread_repo
 from app.services import (
     draft_regeneration_service,
+    message_html_service,
     not_spam_service,
     recurrence_service,
     related_thread_service,
@@ -71,6 +79,7 @@ async def get_thread(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> ThreadDetail:
+    _ = request, response
     return await thread_view_service.get_thread_detail(session, settings, thread_id)
 
 
@@ -106,7 +115,35 @@ async def get_thread_messages(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> list[MessageDetail]:
+    _ = request, response
     return await thread_view_service.list_thread_messages(session, settings, thread_id)
+
+
+@router.get(
+    "/{thread_id}/messages/{message_id}/html",
+    response_model=MessageHtmlBody,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("30/minute")
+async def get_message_html(
+    thread_id: uuid.UUID,
+    message_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    graph_client: GraphClientDep,
+    _user: CurrentUser,
+) -> MessageHtmlBody:
+    """On-demand Graph HTML for Outlook View. Not persisted; Mail.Read only."""
+    _ = request, response
+    return await message_html_service.get_message_html(
+        session,
+        settings,
+        graph_client,
+        thread_id,
+        message_id,
+    )
 
 
 @router.get(
@@ -123,6 +160,7 @@ async def get_thread_audit(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> list[AuditEntry]:
+    _ = request, response
     return await thread_view_service.list_thread_audit(session, settings, thread_id)
 
 
@@ -308,8 +346,6 @@ async def resolution_feedback(
     return ResolutionFeedbackResponse(state=state, action=body.action)
 
 
-
-
 @router.post(
     "/{thread_id}/urgency-feedback",
     response_model=UrgencyHitlFeedbackResponse,
@@ -343,6 +379,7 @@ async def urgency_feedback(
         action=body.action,
         urgency=urgency,
     )
+
 
 @router.post(
     "/{thread_id}/not-spam",

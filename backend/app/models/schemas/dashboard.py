@@ -142,6 +142,15 @@ class MessageDetail(BaseModel):
     received_at: datetime
     has_attachments: bool = False
     outlook_url: str | None = None
+    meeting_message_type: str | None = None
+    meeting_response_type: str | None = None
+
+
+class MessageHtmlBody(BaseModel):
+    """On-demand Graph HTML for Outlook View (not stored)."""
+
+    content_type: Literal["html", "text"]
+    html: str
 
 
 class ClassificationView(BaseModel):
