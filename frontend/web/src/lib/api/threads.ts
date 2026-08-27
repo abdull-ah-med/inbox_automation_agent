@@ -1,18 +1,22 @@
 import { apiFetch } from "@/lib/api/client"
-import type {
-  MarkNotSpamResponse,
-  RelatedThreadList,
-  ThreadDetail,
-} from "@/lib/types"
+import type { MarkNotSpamResponse, RelatedThreadList, ThreadDetail } from "@/lib/types"
+
+export type MessageHtmlBody = {
+  content_type: "html" | "text"
+  html: string
+}
 
 export const threadsApi = {
   detail(id: string) {
     return apiFetch<ThreadDetail>(`/api/threads/${id}`)
   },
   header(id: string) {
-    return apiFetch<{ subject: string; mailbox: string }>(
-      `/api/threads/${id}/header`,
-    )
+    return apiFetch<{ subject: string; mailbox: string }>(`/api/threads/${id}/header`)
+  },
+  getMessageHtml(threadId: string, messageId: string, signal?: AbortSignal) {
+    return apiFetch<MessageHtmlBody>(`/api/threads/${threadId}/messages/${messageId}/html`, {
+      signal,
+    })
   },
   related(id: string, purpose: "siblings" | "associated") {
     return apiFetch<RelatedThreadList>(
@@ -28,13 +32,10 @@ export const threadsApi = {
       urgency?: "CRITICAL" | "HIGH" | "NORMAL" | "LOW"
     },
   ) {
-    return apiFetch<{ applied_thread_ids: string[] }>(
-      `/api/threads/${id}/apply-treatment`,
-      {
-        method: "POST",
-        body: JSON.stringify(body),
-      },
-    )
+    return apiFetch<{ applied_thread_ids: string[] }>(`/api/threads/${id}/apply-treatment`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
   },
   reviewRelated(
     id: string,
@@ -62,22 +63,13 @@ export const threadsApi = {
       body: JSON.stringify(body ?? {}),
     })
   },
-  resolutionFeedback(
-    id: string,
-    body: { action: "reopen" | "wrong_reason"; note?: string },
-  ) {
-    return apiFetch<{ state: string; action: string }>(
-      `/api/threads/${id}/resolution-feedback`,
-      {
-        method: "POST",
-        body: JSON.stringify(body),
-      },
-    )
+  resolutionFeedback(id: string, body: { action: "reopen" | "wrong_reason"; note?: string }) {
+    return apiFetch<{ state: string; action: string }>(`/api/threads/${id}/resolution-feedback`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
   },
-  urgencyFeedback(
-    id: string,
-    body: { action: "wrong_escalation"; note?: string },
-  ) {
+  urgencyFeedback(id: string, body: { action: "wrong_escalation"; note?: string }) {
     return apiFetch<{ state: string; action: string; urgency?: string | null }>(
       `/api/threads/${id}/urgency-feedback`,
       {
