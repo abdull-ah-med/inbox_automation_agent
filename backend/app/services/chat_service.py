@@ -351,7 +351,7 @@ def _is_uncacheable_answer(answer: str) -> bool:
         return True
     if text in {NO_MATCH_ANSWER, OUT_OF_SCOPE_ANSWER, WRITE_REFUSAL_ANSWER}:
         return True
-    if text.startswith(WRITE_REFUSAL_ANSWER) or text.startswith(OUT_OF_SCOPE_ANSWER):
+    if text.startswith((WRITE_REFUSAL_ANSWER, OUT_OF_SCOPE_ANSWER)):
         return True
     return "no matching threads" in text.lower()
 
@@ -621,7 +621,8 @@ class ChatAskPipeline:
         )
 
     async def _cached_response(self) -> ChatAskResponse | None:
-        assert self.plan is not None
+        if self.plan is None:
+            raise RuntimeError("chat plan not classified")
         if not intent_uses_semantic_cache(self.plan.intent):
             return None
         cached, embedding = await _lookup_semantic_cache(
@@ -660,7 +661,8 @@ class ChatAskPipeline:
         return cached
 
     def prepare_agent(self) -> None:
-        assert self.plan is not None
+        if self.plan is None:
+            raise RuntimeError("chat plan not classified")
         self.tool_mailbox = self.mailbox or self.plan.mailbox
         self.question = _agent_question(self.cleaned, self.plan.thread_id)
 
@@ -736,7 +738,8 @@ class ChatAskPipeline:
                 mailbox=self.mailbox,
                 user_id=self.user_id,
             )
-        assert self.plan is not None
+        if self.plan is None:
+            raise RuntimeError("chat plan not classified")
         response = ChatAskResponse(
             answer=answer,
             citations=citations,
@@ -906,6 +909,104 @@ async def ask(
     return await pipe.complete_agent_result(result)
 
 
+@dataclass
+class _AskStreamState:
+    answer: str = ""
+    hits: list = field(default_factory=list)
+    grounded: bool = False
+    evidence_blocks: list = field(default_factory=list)
+    forwarded_delta: bool = False
+    meta_sent: bool = False
+    drafting_sent: bool = False
+    tool_used_first: str | None = None
+    tool_iterations: int = 0
+    ttft_ms: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+
+
+def _ask_retrieved_events(
+    state: _AskStreamState,
+    event: dict,
+    *,
+    delta_scrubber: ChatDeltaScrubber,
+    mailbox: str | None,
+) -> list[dict]:
+    out: list[dict] = []
+    state.hits = list(event.get("hits") or [])
+    delta_scrubber.known_thread_ids = {hit.thread_id for hit in state.hits}
+    if state.hits:
+        out.append({"type": "status", "text": _reading_status(len(state.hits))})
+    if not state.meta_sent:
+        out.append(
+            _meta_event(
+                citations=citations_from_hits(state.hits),
+                retrieval_count=len(state.hits),
+                mailbox=mailbox,
+                refused_write=False,
+            )
+        )
+        state.meta_sent = True
+    if not state.drafting_sent:
+        out.append({"type": "status", "text": STATUS_DRAFTING})
+        state.drafting_sent = True
+    return out
+
+
+def _ask_delta_events(
+    state: _AskStreamState,
+    event: dict,
+    *,
+    delta_scrubber: ChatDeltaScrubber,
+    mailbox: str | None,
+    started: float,
+) -> list[dict]:
+    out: list[dict] = []
+    piece = str(event.get("text") or "")
+    if not piece:
+        return out
+    if not state.drafting_sent:
+        out.append({"type": "status", "text": STATUS_DRAFTING})
+        state.drafting_sent = True
+    if not state.meta_sent:
+        out.append(
+            _meta_event(
+                citations=citations_from_hits(state.hits),
+                retrieval_count=len(state.hits),
+                mailbox=mailbox,
+                refused_write=False,
+            )
+        )
+        state.meta_sent = True
+    if state.ttft_ms is None:
+        state.ttft_ms = _elapsed_ms(started)
+    if state.hits:
+        delta_scrubber.known_thread_ids = {hit.thread_id for hit in state.hits}
+    text = delta_scrubber.feed(piece)
+    if not text:
+        return out
+    state.forwarded_delta = True
+    out.append({"type": "delta", "text": text})
+    return out
+
+
+def _ask_apply_result(state: _AskStreamState, event: dict, *, plan_tool: str | None) -> None:
+    state.answer = str(event.get("answer") or "")
+    state.hits = list(event.get("hits") or [])
+    state.grounded = bool(event.get("grounded"))
+    state.evidence_blocks = list(event.get("evidence_blocks") or [])
+    state.tool_used_first = event.get("tool_used_first") or plan_tool
+    state.tool_iterations = int(event.get("tool_iterations") or 0)
+    if event.get("ttft_ms") is not None:
+        state.ttft_ms = int(event["ttft_ms"])
+    state.input_tokens = event.get("input_tokens")
+    state.output_tokens = event.get("output_tokens")
+    state.cache_read_tokens = event.get("cache_read_tokens")
+    state.cache_write_tokens = event.get("cache_write_tokens")
+
+
 async def iter_ask_events(
     session: AsyncSession,
     settings: Settings,
@@ -946,24 +1047,12 @@ async def iter_ask_events(
     yield {"type": "status", "text": STATUS_SEARCHING}
     pipe.prepare_agent()
 
-    answer = ""
-    hits: list[SearchHit] = []
-    grounded = False
-    evidence_blocks: list[object] = []
-    forwarded_delta = False
-    meta_sent = False
-    drafting_sent = False
+    state = _AskStreamState()
     delta_scrubber = ChatDeltaScrubber(
         mailbox=pipe.mailbox,
         user_id=pipe.user_id,
     )
-    tool_used_first: str | None = None
-    tool_iterations = 0
-    ttft_ms: int | None = None
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_tokens: int | None = None
-    cache_write_tokens: int | None = None
+    plan_tool = pipe.plan.tool_name if pipe.plan else None
     try:
         async for event in iter_chat_agent(
             client=anthropic_client,
@@ -971,69 +1060,31 @@ async def iter_ask_events(
             question=pipe.question,
             execute_tool=pipe.execute_tool,
             history=pipe.prior,
-            initial_tool=pipe.plan.tool_name if pipe.plan else None,
+            initial_tool=plan_tool,
             mailbox=pipe.mailbox,
             user_id=pipe.user_id,
         ):
-            if event.get("type") == "status":
+            etype = event.get("type")
+            if etype == "status":
                 yield {"type": "status", "text": event.get("text") or ""}
-            elif event.get("type") == "retrieved":
-                hits = list(event.get("hits") or [])
-                delta_scrubber.known_thread_ids = {hit.thread_id for hit in hits}
-                if hits:
-                    yield {"type": "status", "text": _reading_status(len(hits))}
-                if not meta_sent:
-                    yield _meta_event(
-                        citations=citations_from_hits(hits),
-                        retrieval_count=len(hits),
-                        mailbox=mailbox,
-                        refused_write=False,
-                    )
-                    meta_sent = True
-                if not drafting_sent:
-                    yield {"type": "status", "text": STATUS_DRAFTING}
-                    drafting_sent = True
-            elif event.get("type") == "delta":
-                piece = str(event.get("text") or "")
-                if not piece:
-                    continue
-                if not drafting_sent:
-                    yield {"type": "status", "text": STATUS_DRAFTING}
-                    drafting_sent = True
-                if not meta_sent:
-                    yield _meta_event(
-                        citations=citations_from_hits(hits),
-                        retrieval_count=len(hits),
-                        mailbox=mailbox,
-                        refused_write=False,
-                    )
-                    meta_sent = True
-                if ttft_ms is None:
-                    ttft_ms = _elapsed_ms(pipe.started)
-                if hits:
-                    delta_scrubber.known_thread_ids = {hit.thread_id for hit in hits}
-                text = delta_scrubber.feed(piece)
-                if not text:
-                    continue
-                forwarded_delta = True
-                yield {"type": "delta", "text": text}
-            elif event.get("type") == "result":
-                answer = str(event.get("answer") or "")
-                hits = list(event.get("hits") or [])
-                grounded = bool(event.get("grounded"))
-                evidence_blocks = list(event.get("evidence_blocks") or [])
-                tool_used_first = event.get("tool_used_first") or (
-                    pipe.plan.tool_name if pipe.plan else None
-                )
-                tool_iterations = int(event.get("tool_iterations") or 0)
-                if event.get("ttft_ms") is not None:
-                    ttft_ms = int(event["ttft_ms"])
-                input_tokens = event.get("input_tokens")
-                output_tokens = event.get("output_tokens")
-                cache_read_tokens = event.get("cache_read_tokens")
-                cache_write_tokens = event.get("cache_write_tokens")
+            elif etype == "retrieved":
+                for item in _ask_retrieved_events(
+                    state, event, delta_scrubber=delta_scrubber, mailbox=mailbox
+                ):
+                    yield item
+            elif etype == "delta":
+                for item in _ask_delta_events(
+                    state,
+                    event,
+                    delta_scrubber=delta_scrubber,
+                    mailbox=mailbox,
+                    started=pipe.started,
+                ):
+                    yield item
+            elif etype == "result":
+                _ask_apply_result(state, event, plan_tool=plan_tool)
     except ChatError:
-        if forwarded_delta:
+        if state.forwarded_delta:
             yield {
                 "type": "error",
                 "message": "Claude chat failed",
@@ -1047,7 +1098,7 @@ async def iter_ask_events(
             mailbox=pipe.mailbox,
             user_id=str(pipe.user_id) if pipe.user_id is not None else None,
         )
-        if forwarded_delta:
+        if state.forwarded_delta:
             yield {
                 "type": "error",
                 "message": "Claude chat failed",
@@ -1058,32 +1109,32 @@ async def iter_ask_events(
 
     leftover = delta_scrubber.flush()
     if leftover:
-        forwarded_delta = True
+        state.forwarded_delta = True
         yield {"type": "delta", "text": leftover}
 
     text, citations, count, grounded_for_verify = pipe.compose_answer(
-        answer=answer,
-        hits=hits,
-        grounded=grounded,
+        answer=state.answer,
+        hits=state.hits,
+        grounded=state.grounded,
     )
     response = await pipe.finish(
         answer=text,
         citations=citations,
         count=count,
         verdict="",
-        hits=hits,
+        hits=state.hits,
         grounded=grounded_for_verify,
-        evidence=evidence_blocks,
-        tool_used_first=tool_used_first,
-        tool_iterations=tool_iterations,
-        ttft_ms=ttft_ms,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-        cache_read_tokens=cache_read_tokens,
-        cache_write_tokens=cache_write_tokens,
+        evidence=state.evidence_blocks,
+        tool_used_first=state.tool_used_first,
+        tool_iterations=state.tool_iterations,
+        ttft_ms=state.ttft_ms,
+        input_tokens=state.input_tokens,
+        output_tokens=state.output_tokens,
+        cache_read_tokens=state.cache_read_tokens,
+        cache_write_tokens=state.cache_write_tokens,
     )
     # H1: do not send a second meta; terminal done carries grounded_verifier.
-    if not meta_sent:
+    if not state.meta_sent:
         yield _meta_event(
             citations=citations,
             retrieval_count=count,
@@ -1091,6 +1142,6 @@ async def iter_ask_events(
             refused_write=False,
             grounded_verifier=response.grounded_verifier,
         )
-    if not forwarded_delta:
+    if not state.forwarded_delta:
         yield {"type": "delta", "text": text}
     yield {"type": "done", "grounded_verifier": response.grounded_verifier}

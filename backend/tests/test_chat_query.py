@@ -21,16 +21,12 @@ def test_filler_follow_up_reuses_last_user_content_query() -> None:
             content="The overdue billing dispute is waiting on review.",
         ),
     )
-    assert retrieval_message("tell me more", history) == (
-        "billing disputes waiting on review"
-    )
+    assert retrieval_message("tell me more", history) == ("billing disputes waiting on review")
 
 
 def test_new_topic_does_not_reuse_prior_query() -> None:
     history = (ChatHistoryTurn(role="user", content="billing disputes waiting on review"),)
-    assert retrieval_message("threads about SampleLab", history) == (
-        "threads about SampleLab"
-    )
+    assert retrieval_message("threads about SampleLab", history) == ("threads about SampleLab")
 
 
 def test_overview_ask_without_history_stays_the_overview_phrase() -> None:

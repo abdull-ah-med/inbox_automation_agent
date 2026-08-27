@@ -4,15 +4,9 @@ import { CircleAlert, ShieldAlert } from "lucide-react"
 
 import { AskCitationCard } from "@/components/ask-citation-card"
 import { StreamingEmailBody } from "@/components/streaming-email-body"
-import {
-  Alert,
-  AlertDescription,
-  AlertTitle,
-} from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import {
-  MessageScrollerItem,
-} from "@/components/ui/message-scroller"
+import { MessageScrollerItem } from "@/components/ui/message-scroller"
 import type { ChatGroundedVerifier } from "@/lib/chat-stream"
 import type { ChatCitation, MailboxOverview } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -41,11 +35,7 @@ const CitationList = ({
     <div className="space-y-2">
       {citations.map((citation, index) => (
         <div key={citation.thread_id} id={`inboxassistant-cite-${index + 1}`}>
-          <AskCitationCard
-            citation={citation}
-            index={index + 1}
-            mailboxes={mailboxes}
-          />
+          <AskCitationCard citation={citation} index={index + 1} mailboxes={mailboxes} />
         </div>
       ))}
     </div>
@@ -76,10 +66,7 @@ export const ChatTurnList = ({
       {turns.map((turn) => (
         <MessageScrollerItem
           key={turn.id}
-          className={cn(
-            "flex",
-            turn.role === "user" ? "justify-end" : "justify-start",
-          )}
+          className={cn("flex", turn.role === "user" ? "justify-end" : "justify-start")}
         >
           <div
             className={cn(
@@ -91,9 +78,7 @@ export const ChatTurnList = ({
               <Alert variant="warning" className="bg-background">
                 <ShieldAlert aria-hidden="true" />
                 <AlertTitle>Read-only</AlertTitle>
-                <AlertDescription>
-                  InboxAssistant cannot send, approve, or change mail.
-                </AlertDescription>
+                <AlertDescription>InboxAssistant cannot send, approve, or change mail.</AlertDescription>
               </Alert>
             ) : null}
             {turn.error ? (
@@ -103,21 +88,20 @@ export const ChatTurnList = ({
                 <AlertDescription>{turn.text}</AlertDescription>
               </Alert>
             ) : turn.role === "user" ? (
-              <p className="wrap-anywhere whitespace-pre-wrap rounded-2xl rounded-br-md bg-primary px-3.5 py-2.5 text-sm leading-relaxed text-primary-foreground">
+              <p className="bg-primary text-primary-foreground rounded-2xl rounded-br-md px-3.5 py-2.5 text-sm leading-relaxed wrap-anywhere whitespace-pre-wrap">
                 {turn.text}
               </p>
             ) : turn.text ? (
               <div
-                className="wrap-anywhere rounded-2xl rounded-bl-md bg-muted px-3.5 py-2.5 ring-1 ring-foreground/10"
+                className="bg-muted ring-foreground/10 rounded-2xl rounded-bl-md px-3.5 py-2.5 wrap-anywhere ring-1"
                 aria-describedby={
-                  turn.groundedVerifier === "UNSUPPORTED" ||
-                  turn.groundedVerifier === "UNKNOWN"
+                  turn.groundedVerifier === "UNSUPPORTED" || turn.groundedVerifier === "UNKNOWN"
                     ? `${turn.id}-groundedness`
                     : undefined
                 }
               >
                 {turn.cached ? (
-                  <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="text-muted-foreground mb-2 flex items-center gap-2 text-xs">
                     <span>Cached · Re-ask to refresh</span>
                     <Button
                       type="button"
@@ -134,22 +118,22 @@ export const ChatTurnList = ({
                 {turn.groundedVerifier === "UNSUPPORTED" ? (
                   <p
                     id={`${turn.id}-groundedness`}
-                    className="mb-2 text-xs text-muted-foreground"
+                    className="text-muted-foreground mb-2 text-xs"
                     tabIndex={0}
                     aria-label="Some claims in this answer could not be confirmed from the cited threads. Review the source threads to verify."
                   >
-                    Some claims in this answer could not be confirmed from the
-                    cited threads. Review the source threads to verify.
+                    Some claims in this answer could not be confirmed from the cited threads. Review
+                    the source threads to verify.
                   </p>
                 ) : turn.groundedVerifier === "UNKNOWN" ? (
                   <p
                     id={`${turn.id}-groundedness`}
-                    className="mb-2 text-xs text-muted-foreground"
+                    className="text-muted-foreground mb-2 text-xs"
                     tabIndex={0}
                     aria-label="This answer could not be verified in time. Review the source threads to confirm the details."
                   >
-                    This answer could not be verified in time. Review the
-                    source threads to confirm the details.
+                    This answer could not be verified in time. Review the source threads to confirm
+                    the details.
                   </p>
                 ) : null}
                 <StreamingEmailBody
@@ -159,21 +143,13 @@ export const ChatTurnList = ({
                 />
               </div>
             ) : null}
-            {turn.citations &&
-            turn.citations.length > 0 &&
-            !turn.streaming ? (
-              <CitationList
-                citations={turn.citations}
-                mailboxes={mailboxes}
-              />
+            {turn.citations && turn.citations.length > 0 && !turn.streaming ? (
+              <CitationList citations={turn.citations} mailboxes={mailboxes} />
             ) : null}
           </div>
         </MessageScrollerItem>
       ))}
-      {isAsking &&
-      !turns.some(
-        (turn) => turn.role === "assistant" && Boolean(turn.text),
-      ) ? (
+      {isAsking && !turns.some((turn) => turn.role === "assistant" && Boolean(turn.text)) ? (
         <MessageScrollerItem className="flex justify-start">
           <p
             role="status"

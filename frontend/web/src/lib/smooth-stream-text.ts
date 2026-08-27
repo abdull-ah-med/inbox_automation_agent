@@ -122,10 +122,7 @@ export class SmoothStreamText {
     const reveal = Math.floor(this.budget)
     if (reveal > 0) {
       this.budget -= reveal
-      this.visibleCount = Math.min(
-        this.graphemes.length,
-        this.visibleCount + reveal,
-      )
+      this.visibleCount = Math.min(this.graphemes.length, this.visibleCount + reveal)
     }
     return this.getVisible()
   }

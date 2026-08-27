@@ -3,26 +3,13 @@
 import { useRef, useState } from "react"
 import type { ChangeEvent, FormEvent, KeyboardEvent } from "react"
 import { useQuery } from "@tanstack/react-query"
-import {
-  Maximize2Icon,
-  MessageCircle,
-  MessageCircleDashedIcon,
-  Minimize2Icon,
-  RotateCwIcon,
-  X,
-} from "lucide-react"
+import { MessageCircle } from "lucide-react"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { ChatTurnList, type ChatTurn } from "@/components/chat-turn-list"
+import { InboxAssistantEmptyState } from "@/components/inbox-assistant-empty-state"
+import { InboxAssistantPanelHeader } from "@/components/inbox-assistant-panel-header"
 import { Button } from "@/components/ui/button"
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -31,25 +18,11 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 import { StarBorder } from "@/components/ui/star-border"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { api } from "@/lib/api-client"
-import { getErrorMessage } from "@/lib/error-messages"
 import { sanitizeUserText } from "@/lib/sanitize"
-import { useChatStream } from "@/hooks/use-chat-stream"
-import type { ChatAskRequest, ChatCitation, ChatHistoryTurn, MailboxOverview } from "@/lib/types"
-import type { ChatGroundedVerifier } from "@/lib/chat-stream"
-import { toChatHistoryPayload } from "@/lib/chat-history"
-import {
-  clearStoredSessionId,
-  readStoredSessionId,
-  writeStoredSessionId,
-} from "@/lib/chat-session-storage"
-import { createRafDeltaBatcher } from "@/lib/stream-delta-batcher"
+import { useInboxAssistantChat } from "@/hooks/use-inbox-assistant-chat"
+import type { MailboxOverview } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const ALL_MAILBOXES = ""
@@ -72,19 +45,6 @@ const composerRowCount = (value: string): number => {
   return lines
 }
 
-type PendingAskMeta = {
-  citations: ChatCitation[]
-  refusedWrite: boolean
-  cached: boolean
-  groundedVerifier?: ChatGroundedVerifier
-}
-
-const EXAMPLE_ASKS = [
-  "What should I focus on today?",
-  "Billing disputes waiting on review",
-  "Threads about SampleLab",
-] as const
-
 export const InboxAssistant = () => {
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState("")
@@ -96,12 +56,6 @@ export const InboxAssistant = () => {
   const [panelSize, setPanelSize] = useState<PanelSize>("compact")
   const [toolStatus, setToolStatus] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
-  const pendingMetaRef = useRef<PendingAskMeta | null>(null)
-  const deltaBatcherRef = useRef<ReturnType<typeof createRafDeltaBatcher> | null>(
-    null,
-  )
-  const askGenerationRef = useRef(0)
-  const stream = useChatStream()
   const sizeIndex = PANEL_SIZES.indexOf(panelSize)
   const canShrink = sizeIndex > 0
   const canGrow = sizeIndex < PANEL_SIZES.length - 1
@@ -113,25 +67,17 @@ export const InboxAssistant = () => {
   })
   const mailboxes: MailboxOverview[] = mailboxesQuery.data ?? []
 
-  const resumeStoredSessionIfEmpty = async () => {
-    if (turns.length > 0) return
-    const stored = readStoredSessionId(mailbox)
-    if (!stored) return
-    try {
-      const session = await api.chat.getSession(stored)
-      setSessionId((current) => current ?? session.session_id)
-      setTurns((current) => {
-        if (current.length > 0) return current
-        return session.messages.map((item, index) => ({
-          id: `restored-${session.session_id}-${index}`,
-          role: item.role,
-          text: item.content,
-        }))
-      })
-    } catch {
-      clearStoredSessionId(mailbox)
-    }
-  }
+  const { resumeStoredSessionIfEmpty, handleReset, handleStop, handleAsk } = useInboxAssistantChat({
+    mailbox,
+    turns,
+    setTurns,
+    sessionId,
+    setSessionId,
+    setMessage,
+    setValidation,
+    setIsAsking,
+    setToolStatus,
+  })
 
   const handleOpen = () => {
     setOpen(true)
@@ -141,31 +87,9 @@ export const InboxAssistant = () => {
     void resumeStoredSessionIfEmpty()
   }
 
-  const ensureSessionId = async (): Promise<string> => {
-    if (sessionId) return sessionId
-    const created = await api.chat.createSession({
-      mailbox: mailbox || null,
-    })
-    writeStoredSessionId(mailbox, created.session_id)
-    setSessionId(created.session_id)
-    return created.session_id
-  }
-
   const handleClose = () => {
-    stream.stop()
+    handleStop()
     setOpen(false)
-  }
-
-  const handleReset = () => {
-    stream.stop()
-    pendingMetaRef.current = null
-    clearStoredSessionId(mailbox)
-    setSessionId(null)
-    setToolStatus(null)
-    setTurns([])
-    setMessage("")
-    setValidation(null)
-    setIsAsking(false)
   }
 
   const handleShrink = () => {
@@ -181,10 +105,6 @@ export const InboxAssistant = () => {
   const handleReask = (turn: ChatTurn) => {
     if (!turn.lastQuestion) return
     void handleAsk(turn.lastQuestion, { bypassCache: true })
-  }
-
-  const handleStop = () => {
-    stream.stop()
   }
 
   const handleMailboxChange = (value: string | null) => {
@@ -203,206 +123,6 @@ export const InboxAssistant = () => {
     setMessage(event.target.value)
   }
 
-  const handleAsk = async (
-    nextMessage = message,
-    options?: { bypassCache?: boolean },
-  ) => {
-    const trimmed = sanitizeUserText(nextMessage)
-    if (!trimmed) {
-      setValidation("Enter a question")
-      return
-    }
-    setValidation(null)
-    setMessage("")
-    const generation = askGenerationRef.current + 1
-    askGenerationRef.current = generation
-    const history: ChatHistoryTurn[] = turns
-      .filter((turn) => !turn.error && turn.text.trim())
-      .map((turn) => {
-        if (turn.role !== "assistant" || !turn.citations?.length) {
-          return { role: turn.role, content: turn.text }
-        }
-        return {
-          role: turn.role,
-          content: turn.text,
-          citations: turn.citations.map((citation) => ({
-            thread_id: citation.thread_id,
-            subject: citation.subject,
-          })),
-        }
-      })
-    const userTurn: ChatTurn = {
-      id: `user-${Date.now()}`,
-      role: "user",
-      text: trimmed,
-    }
-    setTurns((current) => [...current, userTurn])
-    const assistantId = `assistant-${Date.now()}`
-    setToolStatus(null)
-    setIsAsking(true)
-    let receivedAnswer = false
-    deltaBatcherRef.current?.flushNow()
-    const deltaBatcher = createRafDeltaBatcher((chunk) => {
-      setTurns((current) => {
-        const existing = current.find((turn) => turn.id === assistantId)
-        const pendingCitations = pendingMetaRef.current?.citations
-        if (existing) {
-          return current.map((turn) =>
-            turn.id === assistantId
-              ? {
-                  ...turn,
-                  text: `${turn.text}${chunk}`,
-                  streaming: true,
-                  citations: turn.citations ?? pendingCitations,
-                }
-              : turn,
-          )
-        }
-        return [
-          ...current,
-          {
-            id: assistantId,
-            role: "assistant",
-            text: chunk,
-            streaming: true,
-            citations: pendingCitations,
-          },
-        ]
-      })
-    })
-    deltaBatcherRef.current = deltaBatcher
-    try {
-      const activeSessionId = await ensureSessionId()
-      const payload: ChatAskRequest = {
-        message: trimmed,
-        session_id: activeSessionId,
-      }
-      if (mailbox) payload.mailbox = mailbox
-      if (history.length > 0) payload.history = toChatHistoryPayload(history)
-      if (options?.bypassCache) payload.bypass_cache = true
-      const result = await stream.send(payload, {
-        onStatus: (text) => {
-          setToolStatus(text)
-        },
-        onMeta: (meta) => {
-          pendingMetaRef.current = {
-            citations: meta.citations,
-            refusedWrite: meta.refused_write,
-            cached: Boolean(meta.cached),
-            groundedVerifier: meta.grounded_verifier,
-          }
-          setTurns((current) =>
-            current.map((turn) =>
-              turn.id === assistantId
-                ? {
-                    ...turn,
-                    citations: meta.citations,
-                    refusedWrite: meta.refused_write,
-                    cached: Boolean(meta.cached),
-                    groundedVerifier: meta.grounded_verifier,
-                  }
-                : turn,
-            ),
-          )
-        },
-        onDelta: (text) => {
-          if (text) receivedAnswer = true
-          deltaBatcher.push(text)
-        },
-        onDone: (verdict) => {
-          const trailing = deltaBatcher.drain()
-          const pending = pendingMetaRef.current
-          pendingMetaRef.current = null
-          setToolStatus(null)
-          const citations = pending?.citations ?? []
-          const refusedWrite = pending?.refusedWrite ?? false
-          const cached = pending?.cached ?? false
-          // H1: the backend now sends the real, post-verification verdict on
-          // "done" (the eager "meta" only ever carries the placeholder
-          // "SKIPPED" before the answer finishes). Fall back to whatever meta
-          // carried only for older/alternate code paths that might omit it.
-          const groundedVerifier = verdict ?? pending?.groundedVerifier
-          setTurns((current) => {
-            const existing = current.find((turn) => turn.id === assistantId)
-            if (existing) {
-              return current.map((turn) =>
-                turn.id === assistantId
-                  ? {
-                      ...turn,
-                      text: trailing ? `${turn.text}${trailing}` : turn.text,
-                      citations,
-                      refusedWrite,
-                      cached,
-                      groundedVerifier,
-                      lastQuestion: trimmed,
-                      streaming: false,
-                    }
-                  : turn,
-              )
-            }
-            if (!trailing && citations.length === 0) {
-              return current
-            }
-            return [
-              ...current,
-              {
-                id: assistantId,
-                role: "assistant",
-                text: trailing,
-                citations,
-                refusedWrite,
-                cached,
-                groundedVerifier,
-                lastQuestion: trimmed,
-                streaming: false,
-              },
-            ]
-          })
-        },
-      })
-      deltaBatcher.flushNow()
-      if (result.aborted) {
-        if (askGenerationRef.current === generation) {
-          pendingMetaRef.current = null
-          setToolStatus(null)
-          setTurns((current) =>
-            current.map((turn) =>
-              turn.id === assistantId ? { ...turn, streaming: false } : turn,
-            ),
-          )
-        }
-        return
-      }
-      if (!receivedAnswer) {
-        throw new Error("InboxAssistant did not return an answer. Please try again.")
-      }
-    } catch (error) {
-      deltaBatcher.flushNow()
-      if (askGenerationRef.current !== generation) return
-      pendingMetaRef.current = null
-      setToolStatus(null)
-      setTurns((current) => [
-        ...current.map((turn) =>
-          turn.id === assistantId ? { ...turn, streaming: false } : turn,
-        ),
-        {
-          id: `error-${Date.now()}`,
-          role: "assistant",
-          text: getErrorMessage(error),
-          error: true,
-        },
-      ])
-    } finally {
-      if (deltaBatcherRef.current === deltaBatcher) {
-        deltaBatcherRef.current = null
-      }
-      if (askGenerationRef.current === generation) {
-        pendingMetaRef.current = null
-        setIsAsking(false)
-      }
-    }
-  }
-
   const handleExampleAsk = (prompt: string) => {
     setMessage(prompt)
     void handleAsk(prompt)
@@ -411,14 +131,14 @@ export const InboxAssistant = () => {
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (isAsking && !sanitizeUserText(message)) return
-    void handleAsk()
+    void handleAsk(message)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return
     event.preventDefault()
     if (isAsking && !sanitizeUserText(message)) return
-    void handleAsk()
+    void handleAsk(message)
   }
 
   const composerRows = composerRowCount(message)
@@ -429,9 +149,7 @@ export const InboxAssistant = () => {
       <div
         className={cn(
           "fixed right-4 bottom-4 z-40 transition duration-200 ease-out sm:right-6 sm:bottom-6",
-          open
-            ? "pointer-events-none scale-90 opacity-0"
-            : "scale-100 opacity-100",
+          open ? "pointer-events-none scale-90 opacity-0" : "scale-100 opacity-100",
         )}
       >
         <StarBorder color="#2563eb" thickness={2}>
@@ -443,7 +161,7 @@ export const InboxAssistant = () => {
             aria-expanded={open}
             aria-hidden={open}
             onClick={handleOpen}
-            className="h-12 gap-2.5 rounded-full bg-primary px-3.5 text-primary-foreground hover:bg-primary/80"
+            className="bg-primary text-primary-foreground hover:bg-primary/80 h-12 gap-2.5 rounded-full px-3.5"
           >
             <MessageCircle className="size-4" aria-hidden="true" />
             <span className="hidden sm:inline">InboxAssistant</span>
@@ -452,7 +170,6 @@ export const InboxAssistant = () => {
       </div>
 
       <dialog
-        role="dialog"
         aria-modal={open}
         aria-label="InboxAssistant"
         aria-hidden={!open}
@@ -469,125 +186,24 @@ export const InboxAssistant = () => {
         )}
       >
         <MessageScrollerProvider>
-          <div
-            data-slot="card"
-            className="flex min-h-0 flex-1 flex-col overflow-hidden"
-          >
-            <header className="flex shrink-0 items-start gap-3 border-b border-border px-4 py-3">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-sm font-semibold tracking-tight text-foreground">
-                  InboxAssistant
-                </h2>
-                <p className="text-xs text-muted-foreground">
-                  Read-only · cites matching threads
-                </p>
-              </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Make InboxAssistant smaller"
-                        disabled={!canShrink}
-                        onClick={handleShrink}
-                      >
-                        <Minimize2Icon />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    <p>Smaller</p>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        aria-label="Make InboxAssistant larger"
-                        disabled={!canGrow}
-                        onClick={handleGrow}
-                      >
-                        <Maximize2Icon />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    <p>Larger</p>
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        aria-label="Reset conversation"
-                        disabled={isAsking}
-                        onClick={handleReset}
-                      >
-                        <RotateCwIcon />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    <p>Reset</p>
-                  </TooltipContent>
-                </Tooltip>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Close InboxAssistant"
-                  onClick={handleClose}
-                >
-                  <X className="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </header>
+          <div data-slot="card" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <InboxAssistantPanelHeader
+              canShrink={canShrink}
+              canGrow={canGrow}
+              isAsking={isAsking}
+              onShrink={handleShrink}
+              onGrow={handleGrow}
+              onReset={handleReset}
+              onClose={handleClose}
+            />
 
             <div className="min-h-0 flex-1 overflow-hidden">
               {showEmpty ? (
-                <Empty className="h-full border-0">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <MessageCircleDashedIcon />
-                    </EmptyMedia>
-                    <EmptyTitle>Ask about the inbox</EmptyTitle>
-                    <EmptyDescription>
-                      InboxAssistant finds matching threads and cites them so you can
-                      jump into review. It never sends mail.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent>
-                    <div className="flex flex-wrap justify-center gap-2">
-                      {EXAMPLE_ASKS.map((prompt) => (
-                        <Button
-                          key={prompt}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="min-h-8 rounded-full"
-                          onClick={() => {
-                            handleExampleAsk(prompt)
-                          }}
-                        >
-                          {prompt}
-                        </Button>
-                      ))}
-                    </div>
-                  </EmptyContent>
-                </Empty>
+                <InboxAssistantEmptyState onExampleAsk={handleExampleAsk} />
               ) : (
                 <MessageScroller>
                   <MessageScrollerViewport>
-                    <MessageScrollerContent
-                      aria-busy={isAsking}
-                      className="gap-4 p-4"
-                    >
+                    <MessageScrollerContent aria-busy={isAsking} className="gap-4 p-4">
                       <ChatTurnList
                         turns={turns}
                         mailboxes={mailboxes}

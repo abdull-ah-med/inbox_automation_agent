@@ -859,9 +859,7 @@ async def test_get_thread_prepends_summary_for_long_threads() -> None:
 
     assert result.error is None
     snippet = result.hits[0].snippet
-    assert snippet.startswith(
-        "Thread summary: Alice and Bob agreed to send invoice 42 on Friday."
-    )
+    assert snippet.startswith("Thread summary: Alice and Bob agreed to send invoice 42 on Friday.")
     assert "MSG-00" in snippet
     packed = search_results_from_hits(result.hits)
     texts = [item["text"] for item in packed[0]["content"]]

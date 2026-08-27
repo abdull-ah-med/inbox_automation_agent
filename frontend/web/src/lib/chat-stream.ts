@@ -29,10 +29,7 @@ export type ChatStreamHandlers = {
 }
 
 const asGroundedVerifier = (value: unknown): ChatGroundedVerifier | undefined =>
-  value === "SUPPORTED" ||
-  value === "UNSUPPORTED" ||
-  value === "SKIPPED" ||
-  value === "UNKNOWN"
+  value === "SUPPORTED" || value === "UNSUPPORTED" || value === "SKIPPED" || value === "UNKNOWN"
     ? value
     : undefined
 
@@ -78,13 +75,11 @@ export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
       return {
         type: "meta",
         citations: Array.isArray(meta.citations) ? meta.citations : [],
-        retrieval_count:
-          typeof meta.retrieval_count === "number" ? meta.retrieval_count : 0,
+        retrieval_count: typeof meta.retrieval_count === "number" ? meta.retrieval_count : 0,
         mailbox: meta.mailbox ?? null,
-        refused_write: Boolean(meta.refused_write),
+        refused_write: meta.refused_write,
         cached: Boolean(meta.cached),
-        cache_similarity:
-          typeof meta.cache_similarity === "number" ? meta.cache_similarity : null,
+        cache_similarity: typeof meta.cache_similarity === "number" ? meta.cache_similarity : null,
         grounded_verifier: asGroundedVerifier(meta.grounded_verifier),
       }
     }

@@ -54,9 +54,7 @@ def _turns_from_json(raw: list) -> list[ChatHistoryTurn]:
                 )
             except (KeyError, ValueError, TypeError):
                 continue
-        turns.append(
-            ChatHistoryTurn(role=role, content=content, citations=citations)
-        )
+        turns.append(ChatHistoryTurn(role=role, content=content, citations=citations))
     return turns
 
 

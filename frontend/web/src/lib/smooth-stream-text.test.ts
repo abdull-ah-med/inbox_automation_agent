@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  SmoothStreamText,
-  charsPerSecondForLag,
-} from "@/lib/smooth-stream-text"
+import { SmoothStreamText, charsPerSecondForLag } from "@/lib/smooth-stream-text"
 
 describe("charsPerSecondForLag", () => {
   it("speeds up as the visible text falls behind the target", () => {

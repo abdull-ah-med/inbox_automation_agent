@@ -22,13 +22,10 @@ describe("api.chat.askStream abort", () => {
   it("passes the abort signal to fetch", async () => {
     const controller = new AbortController()
     const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        'data: {"type":"delta","text":"Hi"}\n\ndata: {"type":"done"}\n\n',
-        {
-          status: 200,
-          headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+      new Response('data: {"type":"delta","text":"Hi"}\n\ndata: {"type":"done"}\n\n', {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
     )
     vi.stubGlobal("fetch", fetchMock)
 
@@ -73,9 +70,9 @@ describe("api.chat.askStream abort", () => {
       ),
     )
     vi.stubGlobal("fetch", fetchMock)
-    await expect(
-      api.chat.askStream({ message: "billing disputes" }, {}),
-    ).rejects.toMatchObject({ status: 502 })
+    await expect(api.chat.askStream({ message: "billing disputes" }, {})).rejects.toMatchObject({
+      status: 502,
+    })
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
@@ -112,9 +109,7 @@ describe("api.chat.askStream abort", () => {
     let cancelCalls = 0
     const stream = new ReadableStream({
       start(streamController) {
-        streamController.enqueue(
-          new TextEncoder().encode('data: {"type":"delta","text":"Hi"}\n\n'),
-        )
+        streamController.enqueue(new TextEncoder().encode('data: {"type":"delta","text":"Hi"}\n\n'))
         // Deliberately never enqueue "done" or close — simulates an in-flight SSE body.
       },
       cancel() {
@@ -129,13 +124,11 @@ describe("api.chat.askStream abort", () => {
     )
     vi.stubGlobal("fetch", fetchMock)
 
-    const pending = api.chat.askStream(
-      { message: "billing disputes waiting on review" },
-      {},
-      controller.signal,
-    ).catch(() => {
-      // Aborting rejects the call; the cancellation side effect is what this test verifies.
-    })
+    const pending = api.chat
+      .askStream({ message: "billing disputes waiting on review" }, {}, controller.signal)
+      .catch(() => {
+        // Aborting rejects the call; the cancellation side effect is what this test verifies.
+      })
 
     await vi.waitFor(() => expect(cancelCalls).toBe(0))
     controller.abort()
@@ -156,11 +149,7 @@ describe("api.chat.askStream abort", () => {
     vi.stubGlobal("fetch", fetchMock)
 
     const started = Date.now()
-    const pending = api.chat.askStream(
-      { message: "billing disputes" },
-      {},
-      controller.signal,
-    )
+    const pending = api.chat.askStream({ message: "billing disputes" }, {}, controller.signal)
     // Abort well before the ~80-320ms jitter window would naturally elapse.
     setTimeout(() => controller.abort(), 5)
 

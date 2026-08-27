@@ -10,9 +10,7 @@ export const capChatHistory = <T>(turns: T[]): T[] => {
   return turns.slice(-CHAT_HISTORY_MAX_TURNS)
 }
 
-export const toChatHistoryPayload = (
-  turns: ChatHistoryTurn[],
-): ChatHistoryTurn[] => {
+export const toChatHistoryPayload = (turns: ChatHistoryTurn[]): ChatHistoryTurn[] => {
   return capChatHistory(turns).map((turn) => {
     if (turn.content.length <= CHAT_HISTORY_CONTENT_MAX_CHARS) {
       return turn

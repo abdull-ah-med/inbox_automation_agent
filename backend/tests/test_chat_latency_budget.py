@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import UTC, datetime
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,7 +36,7 @@ def _settings() -> Settings:
 
 
 class _CacheHit:
-    response_json = {
+    response_json: ClassVar[dict] = {
         "answer": "Focus on Invoice dispute — overdue billing.",
         "citations": [],
         "retrieval_count": 1,
@@ -44,7 +45,7 @@ class _CacheHit:
     }
     similarity = 0.96
     id = uuid.uuid4()
-    citation_thread_ids: list[uuid.UUID] = []
+    citation_thread_ids: ClassVar[list[uuid.UUID]] = []
 
 
 @pytest.mark.asyncio

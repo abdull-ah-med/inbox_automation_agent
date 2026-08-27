@@ -15,8 +15,8 @@ describe("createRafDeltaBatcher", () => {
       (chunk) => {
         flushed.push(chunk)
       },
-      schedule as unknown as typeof requestAnimationFrame,
-      cancel as unknown as typeof cancelAnimationFrame,
+      schedule,
+      cancel,
     )
 
     batcher.push("Hel")
@@ -41,8 +41,8 @@ describe("createRafDeltaBatcher", () => {
       (chunk) => {
         flushed.push(chunk)
       },
-      schedule as unknown as typeof requestAnimationFrame,
-      cancel as unknown as typeof cancelAnimationFrame,
+      schedule,
+      cancel,
     )
 
     batcher.push("partial")
@@ -61,8 +61,8 @@ describe("createRafDeltaBatcher", () => {
       (chunk) => {
         flushed.push(chunk)
       },
-      (() => 3) as unknown as typeof requestAnimationFrame,
-      cancel as unknown as typeof cancelAnimationFrame,
+      () => 3,
+      cancel,
     )
 
     batcher.push("tail")
@@ -74,12 +74,9 @@ describe("createRafDeltaBatcher", () => {
 
   it("ignores empty pushes", () => {
     const schedule = vi.fn()
-    const batcher = createRafDeltaBatcher(
-      () => {
-        throw new Error("should not flush")
-      },
-      schedule as unknown as typeof requestAnimationFrame,
-    )
+    const batcher = createRafDeltaBatcher(() => {
+      throw new Error("should not flush")
+    }, schedule)
     batcher.push("")
     expect(schedule).not.toHaveBeenCalled()
   })

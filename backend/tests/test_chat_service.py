@@ -837,18 +837,13 @@ async def test_ask_and_stream_produce_identical_final_response() -> None:
     ):
         asked = await chat_service.ask(session, settings, **kwargs)
         events = [
-            event
-            async for event in chat_service.iter_ask_events(session, settings, **kwargs)
+            event async for event in chat_service.iter_ask_events(session, settings, **kwargs)
         ]
 
-    stream_answer = "".join(
-        event["text"] for event in events if event.get("type") == "delta"
-    )
+    stream_answer = "".join(event["text"] for event in events if event.get("type") == "delta")
     meta = next(event for event in events if event.get("type") == "meta")
     done = next(event for event in events if event.get("type") == "done")
-    stream_citation_ids = [
-        uuid.UUID(str(citation["thread_id"])) for citation in meta["citations"]
-    ]
+    stream_citation_ids = [uuid.UUID(str(citation["thread_id"])) for citation in meta["citations"]]
 
     assert asked.answer == ANSWER_ASK_STREAM
     assert stream_answer == asked.answer

@@ -10,18 +10,13 @@ describe("useChatStream", () => {
     const afterStatus = new Promise<void>((resolve) => {
       releaseStatus = resolve
     })
-    const askStream = vi.fn(
-      async (
-        _body: unknown,
-        handlers: ChatStreamHandlers,
-      ) => {
-        handlers.onStatus?.("Searching mail")
-        await afterStatus
-        handlers.onDelta?.("Focus on ")
-        handlers.onDelta?.("billing.")
-        handlers.onDone?.("SUPPORTED")
-      },
-    )
+    const askStream = vi.fn(async (_body: unknown, handlers: ChatStreamHandlers) => {
+      handlers.onStatus?.("Searching mail")
+      await afterStatus
+      handlers.onDelta?.("Focus on ")
+      handlers.onDelta?.("billing.")
+      handlers.onDone?.("SUPPORTED")
+    })
 
     const { result } = renderHook(() => useChatStream({ askStream }))
     expect(result.current.phase).toBe("idle")

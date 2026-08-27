@@ -698,7 +698,8 @@ async def test_agent_does_not_retry_after_streaming_a_partial_answer() -> None:
         return ChatToolExecution(hits=[hit], status="Searching mail")
 
     events: list[dict] = []
-    with pytest.raises(ChatError, match="Claude chat failed"):
+
+    async def _drain() -> None:
         async for event in iter_chat_agent(
             client=client,
             settings=_settings(),
@@ -706,6 +707,9 @@ async def test_agent_does_not_retry_after_streaming_a_partial_answer() -> None:
             execute_tool=execute,
         ):
             events.append(event)
+
+    with pytest.raises(ChatError, match="Claude chat failed"):
+        await _drain()
 
     deltas = [event["text"] for event in events if event.get("type") == "delta"]
     assert "".join(deltas) == "The overdue "

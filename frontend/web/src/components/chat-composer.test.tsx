@@ -25,10 +25,7 @@ describe("ChatComposer", () => {
     )
 
     expect(screen.getByRole("alert")).toHaveTextContent("Enter a question")
-    expect(screen.getByLabelText("Message InboxAssistant")).toHaveAttribute(
-      "aria-invalid",
-      "true",
-    )
+    expect(screen.getByLabelText("Message InboxAssistant")).toHaveAttribute("aria-invalid", "true")
     expect(screen.getByLabelText("Message InboxAssistant")).toHaveAttribute(
       "aria-describedby",
       "inboxassistant-validation",

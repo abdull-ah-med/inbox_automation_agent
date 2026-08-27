@@ -102,9 +102,7 @@ async def get_session(
                 )
             except (KeyError, ValueError, TypeError):
                 continue
-        messages.append(
-            ChatSessionMessage(role=role, content=content, citations=citations)
-        )
+        messages.append(ChatSessionMessage(role=role, content=content, citations=citations))
     return ChatSessionResponse(
         session_id=row.id,
         mailbox=row.mailbox,

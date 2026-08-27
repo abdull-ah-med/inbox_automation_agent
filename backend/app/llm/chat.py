@@ -536,6 +536,233 @@ async def fit_chat_request(
         return fit_chat_messages(messages)
 
 
+@dataclass
+class _ChatAgentState:
+    hits_by_id: dict[Any, SearchHit]
+    grounded: bool = False
+    tools_used: bool = False
+    streamed_any: bool = False
+    tool_used_first: str | None = None
+    tool_iterations: int = 0
+    ttft_ms: int | None = None
+    usage: dict[str, int | None] = field(
+        default_factory=lambda: {
+            "input_tokens": None,
+            "output_tokens": None,
+            "cache_read_tokens": None,
+            "cache_write_tokens": None,
+        }
+    )
+
+
+def _tool_choice_for_turn(
+    *,
+    grounded: bool,
+    tools_used: bool,
+    first_choice: dict[str, Any],
+) -> dict[str, Any]:
+    if grounded:
+        return {"type": "none"}
+    if tools_used:
+        return {"type": "auto"}
+    return first_choice
+
+
+def _log_chat_agent_complete(
+    *,
+    settings: Settings,
+    hits: list[SearchHit],
+    started: float,
+    usage: dict[str, int | None],
+    mailbox: str | None,
+    user_id: uuid.UUID | None,
+) -> None:
+    input_tokens = usage["input_tokens"]
+    cache_read = usage["cache_read_tokens"]
+    cache_hit_ratio: float | None = None
+    if isinstance(input_tokens, int) and input_tokens > 0 and isinstance(cache_read, int):
+        cache_hit_ratio = round(cache_read / input_tokens, 3)
+    logger.info(
+        "chat_agent_complete",
+        model=settings.chat_model,
+        hit_count=len(hits),
+        latency_ms=int((time.perf_counter() - started) * 1000),
+        cache_read_input_tokens=cache_read,
+        cache_creation_input_tokens=usage["cache_write_tokens"],
+        input_tokens=input_tokens,
+        cache_hit_ratio=cache_hit_ratio,
+        mailbox=mailbox,
+        user_id=str(user_id) if user_id is not None else None,
+    )
+
+
+def _answer_for_stop(
+    *,
+    grounded: bool,
+    streamed_any: bool,
+    raw: str,
+    hits: list[SearchHit],
+    mailbox: str | None,
+    user_id: uuid.UUID | None,
+) -> str:
+    # Streamed deltas already reached the client; do not re-sanitize
+    # the public answer (would diverge from what was displayed).
+    # Non-stream path and cache writers still sanitize downstream.
+    if not grounded:
+        return ""
+    if streamed_any:
+        return raw
+    return sanitize_chat_answer(
+        raw,
+        known_thread_ids={hit.thread_id for hit in hits},
+        mailbox=mailbox,
+        user_id=user_id,
+    )
+
+
+async def _emit_final_answer(
+    *,
+    state: _ChatAgentState,
+    settings: Settings,
+    started: float,
+    response: object,
+    streamed: list[str],
+    mailbox: str | None,
+    user_id: uuid.UUID | None,
+) -> AsyncIterator[dict[str, Any]]:
+    hits = list(state.hits_by_id.values())
+    raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
+    answer = _answer_for_stop(
+        grounded=state.grounded,
+        streamed_any=state.streamed_any,
+        raw=raw,
+        hits=hits,
+        mailbox=mailbox,
+        user_id=user_id,
+    )
+    state.usage = _usage_fields(response)
+    _log_chat_agent_complete(
+        settings=settings,
+        hits=hits,
+        started=started,
+        usage=state.usage,
+        mailbox=mailbox,
+        user_id=user_id,
+    )
+    yield _agent_result_event(
+        answer=answer,
+        hits=hits,
+        grounded=state.grounded,
+        tool_used_first=state.tool_used_first,
+        tool_iterations=state.tool_iterations,
+        ttft_ms=state.ttft_ms,
+        started=started,
+        usage=state.usage,
+    )
+
+
+async def _emit_tool_status_and_results(
+    *,
+    tool_use_blocks: list[Any],
+    execute_tool: Callable[[str, dict], Awaitable[Any]],
+    state: _ChatAgentState,
+    tag: str,
+    messages: list[dict[str, Any]],
+) -> AsyncIterator[dict[str, Any]]:
+    announced_status: set[str] = set()
+    for block in tool_use_blocks:
+        status = _TOOL_STATUS.get(str(getattr(block, "name", "") or ""), "")
+        if status and status not in announced_status:
+            announced_status.add(status)
+            yield {"type": "status", "text": status}
+    # Sequential, not gather(): every tool call shares the one
+    # request-scoped AsyncSession via the execute_tool closure,
+    # and SQLAlchemy's AsyncSession is documented as unsafe for
+    # concurrent use (IllegalStateChangeError / corrupted reads).
+    # Claude issues 1-2 tool calls per turn in practice, so this
+    # is cheap; revisit only if p95 latency traces show otherwise.
+    executed = [await _execute_tool_block(block, execute_tool) for block in tool_use_blocks]
+    tool_results: list[dict[str, Any]] = []
+    for _block, execution in executed:
+        status = str(getattr(execution, "status", "") or "")
+        if status and status not in announced_status:
+            announced_status.add(status)
+            yield {"type": "status", "text": status}
+        if not getattr(execution, "error", None):
+            for hit in getattr(execution, "hits", []) or []:
+                state.hits_by_id[hit.thread_id] = hit
+            if getattr(execution, "overview", None) or getattr(execution, "hits", None):
+                state.grounded = True
+        state.tools_used = True
+        tool_results.append(
+            _tool_result_payload(
+                tool_use_id=str(getattr(_block, "id", "") or ""),
+                execution=execution,
+                untrusted_tag=tag,
+            )
+        )
+    messages.append({"role": "user", "content": tool_results})
+
+
+async def _exhaustion_synthesis(
+    *,
+    client: AsyncAnthropic,
+    request: dict[str, Any],
+    messages: list[dict[str, Any]],
+    settings: Settings,
+    state: _ChatAgentState,
+    started: float,
+) -> AsyncIterator[dict[str, Any]]:
+    hits = list(state.hits_by_id.values())
+    if hits:
+        request["tool_choice"] = {"type": "none"}
+        request["messages"] = await fit_chat_request(
+            client=client,
+            request=request,
+            messages=messages,
+            settings=settings,
+        )
+        yield {"type": "retrieved", "hits": hits}
+        streamed: list[str] = []
+        try:
+            async with client.messages.stream(**request) as stream:
+                async for text in smooth_deltas(stream.text_stream):
+                    if not text:
+                        continue
+                    streamed.append(text)
+                    state.streamed_any = True
+                    if state.ttft_ms is None:
+                        state.ttft_ms = int((time.perf_counter() - started) * 1000)
+                    yield {"type": "delta", "text": text}
+                response = await stream.get_final_message()
+            state.usage = _usage_fields(response)
+            raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
+            if raw.strip():
+                yield _agent_result_event(
+                    answer=raw,
+                    hits=hits,
+                    grounded=True,
+                    tool_used_first=state.tool_used_first,
+                    tool_iterations=state.tool_iterations,
+                    ttft_ms=state.ttft_ms,
+                    started=started,
+                    usage=state.usage,
+                )
+                return
+        except Exception:
+            logger.warning("chat_exhaustion_synthesis_failed")
+    yield _agent_result_event(
+        answer=_exhaustion_fallback_answer(hits),
+        hits=hits,
+        grounded=state.grounded,
+        tool_used_first=state.tool_used_first,
+        tool_iterations=state.tool_iterations,
+        ttft_ms=state.ttft_ms,
+        started=started,
+        usage=state.usage,
+    )
+
+
 async def iter_chat_agent(
     *,
     client: AsyncAnthropic,
@@ -570,21 +797,9 @@ async def iter_chat_agent(
         "messages": messages,
         "tool_choice": first_choice,
     }
-    hits_by_id: dict[Any, SearchHit] = {}
-    grounded = False
-    tools_used = False
-    streamed_any = False
+    state = _ChatAgentState(hits_by_id={}, tool_used_first=initial_tool)
     last_error: Exception | None = None
     started = time.perf_counter()
-    tool_used_first: str | None = initial_tool
-    tool_iterations = 0
-    ttft_ms: int | None = None
-    usage: dict[str, int | None] = {
-        "input_tokens": None,
-        "output_tokens": None,
-        "cache_read_tokens": None,
-        "cache_write_tokens": None,
-    }
 
     for attempt in range(2):
         try:
@@ -595,77 +810,38 @@ async def iter_chat_agent(
                     messages=messages,
                     settings=settings,
                 )
-                if grounded:
-                    request["tool_choice"] = {"type": "none"}
-                elif tools_used:
-                    request["tool_choice"] = {"type": "auto"}
-                else:
-                    request["tool_choice"] = first_choice
+                request["tool_choice"] = _tool_choice_for_turn(
+                    grounded=state.grounded,
+                    tools_used=state.tools_used,
+                    first_choice=first_choice,
+                )
                 streamed: list[str] = []
-                if grounded:
-                    yield {"type": "retrieved", "hits": list(hits_by_id.values())}
+                if state.grounded:
+                    yield {"type": "retrieved", "hits": list(state.hits_by_id.values())}
                     async with client.messages.stream(**request) as stream:
                         async for text in smooth_deltas(stream.text_stream):
                             if not text:
                                 continue
                             streamed.append(text)
-                            streamed_any = True
-                            if ttft_ms is None:
-                                ttft_ms = int((time.perf_counter() - started) * 1000)
+                            state.streamed_any = True
+                            if state.ttft_ms is None:
+                                state.ttft_ms = int((time.perf_counter() - started) * 1000)
                             yield {"type": "delta", "text": text}
                         response = await stream.get_final_message()
                 else:
                     response = await client.messages.create(**request)
 
                 if getattr(response, "stop_reason", None) != "tool_use":
-                    hits = list(hits_by_id.values())
-                    raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
-                    # Streamed deltas already reached the client; do not re-sanitize
-                    # the public answer (would diverge from what was displayed).
-                    # Non-stream path and cache writers still sanitize downstream.
-                    if not grounded:
-                        answer = ""
-                    elif streamed_any:
-                        answer = raw
-                    else:
-                        answer = sanitize_chat_answer(
-                            raw,
-                            known_thread_ids={hit.thread_id for hit in hits},
-                            mailbox=mailbox,
-                            user_id=user_id,
-                        )
-                    usage = _usage_fields(response)
-                    input_tokens = usage["input_tokens"]
-                    cache_read = usage["cache_read_tokens"]
-                    cache_hit_ratio: float | None = None
-                    if (
-                        isinstance(input_tokens, int)
-                        and input_tokens > 0
-                        and isinstance(cache_read, int)
-                    ):
-                        cache_hit_ratio = round(cache_read / input_tokens, 3)
-                    logger.info(
-                        "chat_agent_complete",
-                        model=settings.chat_model,
-                        hit_count=len(hits),
-                        latency_ms=int((time.perf_counter() - started) * 1000),
-                        cache_read_input_tokens=cache_read,
-                        cache_creation_input_tokens=usage["cache_write_tokens"],
-                        input_tokens=input_tokens,
-                        cache_hit_ratio=cache_hit_ratio,
-                        mailbox=mailbox,
-                        user_id=str(user_id) if user_id is not None else None,
-                    )
-                    yield _agent_result_event(
-                        answer=answer,
-                        hits=hits,
-                        grounded=grounded,
-                        tool_used_first=tool_used_first,
-                        tool_iterations=tool_iterations,
-                        ttft_ms=ttft_ms,
+                    async for event in _emit_final_answer(
+                        state=state,
+                        settings=settings,
                         started=started,
-                        usage=usage,
-                    )
+                        response=response,
+                        streamed=streamed,
+                        mailbox=mailbox,
+                        user_id=user_id,
+                    ):
+                        yield event
                     return
 
                 tool_use_blocks = [
@@ -676,95 +852,29 @@ async def iter_chat_agent(
                 if not tool_use_blocks:
                     break
 
-                tool_iterations += 1
-                if tool_used_first is None:
-                    tool_used_first = getattr(tool_use_blocks[0], "name", None)
-                usage = _usage_fields(response)
+                state.tool_iterations += 1
+                if state.tool_used_first is None:
+                    state.tool_used_first = getattr(tool_use_blocks[0], "name", None)
+                state.usage = _usage_fields(response)
                 messages.append({"role": "assistant", "content": response.content})
-                announced_status: set[str] = set()
-                for block in tool_use_blocks:
-                    status = _TOOL_STATUS.get(str(getattr(block, "name", "") or ""), "")
-                    if status and status not in announced_status:
-                        announced_status.add(status)
-                        yield {"type": "status", "text": status}
-                # Sequential, not gather(): every tool call shares the one
-                # request-scoped AsyncSession via the execute_tool closure,
-                # and SQLAlchemy's AsyncSession is documented as unsafe for
-                # concurrent use (IllegalStateChangeError / corrupted reads).
-                # Claude issues 1-2 tool calls per turn in practice, so this
-                # is cheap; revisit only if p95 latency traces show otherwise.
-                executed = [
-                    await _execute_tool_block(block, execute_tool) for block in tool_use_blocks
-                ]
-                tool_results: list[dict[str, Any]] = []
-                for _block, execution in executed:
-                    status = str(getattr(execution, "status", "") or "")
-                    if status and status not in announced_status:
-                        announced_status.add(status)
-                        yield {"type": "status", "text": status}
-                    if not getattr(execution, "error", None):
-                        for hit in getattr(execution, "hits", []) or []:
-                            hits_by_id[hit.thread_id] = hit
-                        if getattr(execution, "overview", None) or getattr(execution, "hits", None):
-                            grounded = True
-                    tools_used = True
-                    tool_results.append(
-                        _tool_result_payload(
-                            tool_use_id=str(getattr(_block, "id", "") or ""),
-                            execution=execution,
-                            untrusted_tag=tag,
-                        )
-                    )
-                messages.append({"role": "user", "content": tool_results})
-
-            hits = list(hits_by_id.values())
-            if hits:
-                request["tool_choice"] = {"type": "none"}
-                request["messages"] = await fit_chat_request(
-                    client=client,
-                    request=request,
+                async for event in _emit_tool_status_and_results(
+                    tool_use_blocks=tool_use_blocks,
+                    execute_tool=execute_tool,
+                    state=state,
+                    tag=tag,
                     messages=messages,
-                    settings=settings,
-                )
-                yield {"type": "retrieved", "hits": hits}
-                streamed = []
-                try:
-                    async with client.messages.stream(**request) as stream:
-                        async for text in smooth_deltas(stream.text_stream):
-                            if not text:
-                                continue
-                            streamed.append(text)
-                            streamed_any = True
-                            if ttft_ms is None:
-                                ttft_ms = int((time.perf_counter() - started) * 1000)
-                            yield {"type": "delta", "text": text}
-                        response = await stream.get_final_message()
-                    usage = _usage_fields(response)
-                    raw = "".join(streamed) or _text_from_content(getattr(response, "content", []))
-                    if raw.strip():
-                        yield _agent_result_event(
-                            answer=raw,
-                            hits=hits,
-                            grounded=True,
-                            tool_used_first=tool_used_first,
-                            tool_iterations=tool_iterations,
-                            ttft_ms=ttft_ms,
-                            started=started,
-                            usage=usage,
-                        )
-                        return
-                except Exception:
-                    logger.warning("chat_exhaustion_synthesis_failed")
-            yield _agent_result_event(
-                answer=_exhaustion_fallback_answer(hits),
-                hits=hits,
-                grounded=grounded,
-                tool_used_first=tool_used_first,
-                tool_iterations=tool_iterations,
-                ttft_ms=ttft_ms,
+                ):
+                    yield event
+
+            async for event in _exhaustion_synthesis(
+                client=client,
+                request=request,
+                messages=messages,
+                settings=settings,
+                state=state,
                 started=started,
-                usage=usage,
-            )
+            ):
+                yield event
             return
         except APIError as exc:
             logger.warning(
@@ -772,11 +882,11 @@ async def iter_chat_agent(
                 attempt=attempt,
                 error=str(exc),
                 status_code=getattr(exc, "status_code", None),
-                streamed=streamed_any,
+                streamed=state.streamed_any,
                 mailbox=mailbox,
                 user_id=str(user_id) if user_id is not None else None,
             )
-            if streamed_any:
+            if state.streamed_any:
                 raise ChatError("Claude chat failed") from exc
             last_error = exc
 

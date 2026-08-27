@@ -8,13 +8,8 @@ import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-t
 import { cn } from "@/lib/utils"
 import type { ChatCitation, MailboxOverview } from "@/lib/types"
 
-const mailboxKeyFor = (
-  mailbox: string,
-  mailboxes: MailboxOverview[],
-): string => {
-  const match = mailboxes.find(
-    (item) => item.email_address === mailbox || item.mailbox === mailbox,
-  )
+const mailboxKeyFor = (mailbox: string, mailboxes: MailboxOverview[]): string => {
+  const match = mailboxes.find((item) => item.email_address === mailbox || item.mailbox === mailbox)
   if (match) return match.mailbox
   const local = mailbox.split("@")[0]
   return local || mailbox
@@ -60,10 +55,7 @@ export const AskCitationCard = ({
         </span>
         <div className="min-w-0 flex-1">
           <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            <span
-              className={inboxChipClassName}
-              style={inboxAccentStyle(key)}
-            >
+            <span className={inboxChipClassName} style={inboxAccentStyle(key)}>
               {label}
             </span>
             <StatusBadge label={stateLabel(citation.state)} tone={stateTone(citation.state)} />
@@ -71,15 +63,13 @@ export const AskCitationCard = ({
               <StatusBadge label={citation.urgency} tone={urgencyTone(citation.urgency)} />
             ) : null}
           </div>
-          <p className="truncate text-sm font-medium text-card-foreground">{subject}</p>
+          <p className="text-card-foreground truncate text-sm font-medium">{subject}</p>
           {citation.snippet ? (
-            <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-              {citation.snippet}
-            </p>
+            <p className="text-muted-foreground mt-1 line-clamp-2 text-xs">{citation.snippet}</p>
           ) : null}
         </div>
         <ArrowUpRight
-          className="size-4 shrink-0 text-muted-foreground group-hover:text-blue-600 dark:group-hover:text-blue-400"
+          className="text-muted-foreground size-4 shrink-0 group-hover:text-blue-600 dark:group-hover:text-blue-400"
           aria-hidden="true"
         />
       </div>

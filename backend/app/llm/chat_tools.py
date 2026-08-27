@@ -91,8 +91,7 @@ CHAT_TOOLS: list[dict[str, Any]] = [
                 "page": {
                     "type": "integer",
                     "description": (
-                        "0 = most recent messages plus summary; "
-                        "1+ = older windows with no overlap."
+                        "0 = most recent messages plus summary; 1+ = older windows with no overlap."
                     ),
                 },
             },

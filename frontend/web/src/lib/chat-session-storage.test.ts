@@ -14,13 +14,9 @@ describe("chatSessionStorage", () => {
 
   it("stores and reads a session id per mailbox key", () => {
     expect(chatSessionStorageKey("")).toBe("inboxassistant_session_all")
-    expect(chatSessionStorageKey("sales@example.com")).toBe(
-      "inboxassistant_session_sales@example.com",
-    )
+    expect(chatSessionStorageKey("sales@example.com")).toBe("inboxassistant_session_sales@example.com")
     writeStoredSessionId("sales@example.com", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    expect(readStoredSessionId("sales@example.com")).toBe(
-      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-    )
+    expect(readStoredSessionId("sales@example.com")).toBe("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     clearStoredSessionId("sales@example.com")
     expect(readStoredSessionId("sales@example.com")).toBeNull()
   })
