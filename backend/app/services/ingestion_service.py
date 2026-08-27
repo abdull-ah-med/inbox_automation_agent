@@ -813,6 +813,7 @@ async def _heal_completed_outbound(
     Happens when conversation sync ingested the send (direction=outbound) and
     triage completed the dedup key before Sent Items ever called resolve.
     """
+    _ = mailbox
     from app.services import sent_reply_service
 
     existing = await message_repo.get_by_graph_id(session, message_id)

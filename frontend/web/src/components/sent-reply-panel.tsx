@@ -79,15 +79,20 @@ const ProposedDraftColumn = ({
   proposed,
   showLineHighlights,
   removed,
+  rejected,
 }: {
   proposed: string
   showLineHighlights: boolean
   removed: Set<string>
+  rejected: boolean
 }) => (
   <div className="min-w-0">
-    <h3 className="text-muted-foreground mb-2.5 text-[11px] font-medium tracking-wider uppercase">
-      Proposed draft
-    </h3>
+    <div className="mb-2.5 flex flex-wrap items-center gap-2">
+      <h3 className="text-muted-foreground text-[11px] font-medium tracking-wider uppercase">
+        Proposed draft
+      </h3>
+      {rejected ? <StatusBadge label="Rejected" tone="red" /> : null}
+    </div>
     {proposed ? (
       <BodyBox>
         {showLineHighlights && removed.size > 0 ? (
@@ -131,9 +136,13 @@ const SentBodyColumn = ({
   </div>
 )
 
+const isProposedRejected = (draft: DraftView | null): boolean =>
+  draft?.feedback_action === "reject" || draft?.rejected_at != null
+
 export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) => {
   const [open, setOpen] = useState(true)
   const proposed = draft?.edited_body || draft?.body || ""
+  const proposedRejected = isProposedRejected(draft)
   const sentBody = sentReply.sent_body_snapshot
   const showLearningNote = sentBody.trim().length > 0
   const { main: sentMain } = splitQuotedHistory(sentBody)
@@ -199,6 +208,7 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
             proposed={proposed}
             showLineHighlights={showLineHighlights}
             removed={removed}
+            rejected={proposedRejected}
           />
           <SentBodyColumn
             sentBody={sentBody}

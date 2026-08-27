@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.repositories._vector_common import cap_limit
 Urgency = Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
 _VALID_URGENCY = frozenset({"CRITICAL", "HIGH", "NORMAL", "LOW"})
 FeedbackAction = Literal["approve", "reject", "wrong"]
+_OUTLOOK_CATCHUP_NOTE = "Learned from Outlook send"
 
 
 def _recipients_payload(draft: DraftSchema) -> dict[str, Any]:
@@ -496,16 +497,26 @@ async def latest_teaching_notes_by_threads(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],
 ) -> dict[uuid.UUID, str]:
-    """Bulk-fetch each thread's most recent non-empty teaching note.
+    """Bulk-fetch each thread's most recent non-empty LLM teaching note.
 
     Powers the Teaching Note preview on thread list/cards without an N+1 —
     one query for every thread on the page, keyed by ``thread_id``.
+    Excludes Outlook catch-up learning drafts so the UI never shows
+    ``Learned from Outlook send`` as the proposed teaching note.
     """
     if not thread_ids:
         return {}
+    proposed_only = and_(
+        Draft.teaching_note.is_not(None),
+        Draft.teaching_note != _OUTLOOK_CATCHUP_NOTE,
+        or_(
+            Draft.approval_note.is_(None),
+            Draft.approval_note != _OUTLOOK_CATCHUP_NOTE,
+        ),
+    )
     latest_id = (
         select(Draft.thread_id, func.max(Draft.created_at).label("max_created_at"))
-        .where(Draft.thread_id.in_(thread_ids), Draft.teaching_note.is_not(None))
+        .where(Draft.thread_id.in_(thread_ids), proposed_only)
         .group_by(Draft.thread_id)
         .subquery()
     )
@@ -558,6 +569,31 @@ async def get_latest_by_thread(
     """Return the most recent draft for a thread, if any."""
     stmt = (
         select(Draft).where(Draft.thread_id == thread_id).order_by(Draft.created_at.desc()).limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _to_response(row)
+
+
+async def get_latest_proposed_by_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> DraftResponseSchema | None:
+    """Latest LLM proposal — excludes Outlook catch-up learning drafts."""
+    stmt = (
+        select(Draft)
+        .where(
+            Draft.thread_id == thread_id,
+            Draft.teaching_note != _OUTLOOK_CATCHUP_NOTE,
+            or_(
+                Draft.approval_note.is_(None),
+                Draft.approval_note != _OUTLOOK_CATCHUP_NOTE,
+            ),
+        )
+        .order_by(Draft.created_at.desc())
+        .limit(1)
     )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()

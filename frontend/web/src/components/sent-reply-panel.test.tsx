@@ -122,6 +122,29 @@ describe("SentReplyPanel", () => {
     ).not.toBeInTheDocument()
   })
 
+  it("shows Rejected on the proposed column when the draft was rejected", () => {
+    render(
+      <SentReplyPanel
+        sentReply={sentReply}
+        draft={{
+          ...draft,
+          rejected_at: "2026-07-09T13:00:00Z",
+          feedback_action: "reject",
+          body: "Hi Beau,\n\nThank you for checking on that.",
+        }}
+        diff={null}
+      />,
+    )
+    expect(screen.getByText("Rejected")).toBeInTheDocument()
+    expect(screen.getByText(/Thank you for checking on that/)).toBeInTheDocument()
+  })
+
+  it("shows empty proposed when no draft exists instead of the sent body", () => {
+    render(<SentReplyPanel sentReply={sentReply} draft={null} diff={null} />)
+    expect(screen.getByText("No proposed draft available.")).toBeInTheDocument()
+    expect(screen.queryByText("Hello client\nExtra line")).not.toBeInTheDocument()
+  })
+
   it("wraps long unbroken tokens in the sent reply column", () => {
     const longToken = "info@sample-services.example.com<mailto:info@sample-services.example.com>"
     render(

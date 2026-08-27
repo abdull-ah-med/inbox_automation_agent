@@ -103,7 +103,15 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
+            "app.services.pipeline.service.sent_reply_service.thread_tip_already_replied",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
             "app.services.pipeline.service.sent_reply_repo.get_by_thread",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
             new=AsyncMock(return_value=None),
         ),
         patch(

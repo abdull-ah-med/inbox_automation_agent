@@ -25,6 +25,7 @@ _FALLBACK_TITLES: dict[str, str] = {
     "thread.urgency.recurrence_escalated": "Urgency raised for recurring alert",
     "thread.urgency.recurrence_wrong": "Automatic urgency bump marked wrong",
     "thread.reopened.resolution_feedback": "Reopened after feedback",
+    "thread.reopened.inbound_followup": "Reopened after new inbound",
     "thread.resolved.wrong_reason": "Resolution reason corrected",
 }
 

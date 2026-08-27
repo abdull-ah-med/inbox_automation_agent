@@ -413,7 +413,15 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
+            "app.services.pipeline.service.sent_reply_service.thread_tip_already_replied",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
             "app.services.pipeline.service.sent_reply_repo.get_by_thread",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
             new=AsyncMock(return_value=None),
         ),
         patch(

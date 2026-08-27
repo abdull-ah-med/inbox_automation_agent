@@ -430,3 +430,109 @@ async def test_meeting_accepted_does_not_resolve_thread() -> None:
     drafts_mock.assert_not_awaited()
     insert_mock.assert_not_awaited()
     outcome_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_thread_tip_already_replied_true_when_tip_is_resolved_outbound() -> None:
+    thread_id = uuid.uuid4()
+    outbound_id = uuid.uuid4()
+    sent_at = datetime(2026, 8, 27, 19, 0, tzinfo=UTC)
+    messages = [
+        MessageSchema(
+            id=uuid.uuid4(),
+            thread_id=thread_id,
+            graph_message_id="in-1",
+            direction="inbound",
+            sender="client@example.com",
+            body_text="Question",
+            received_at=datetime(2026, 8, 27, 18, 0, tzinfo=UTC),
+            to_recipients=["elise@example.com"],
+            cc_recipients=[],
+        ),
+        MessageSchema(
+            id=outbound_id,
+            thread_id=thread_id,
+            graph_message_id="out-1",
+            direction="outbound",
+            sender="elise@example.com",
+            body_text="Answer",
+            received_at=sent_at,
+            to_recipients=["client@example.com"],
+            cc_recipients=[],
+        ),
+    ]
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=outbound_id,
+        draft_id=None,
+        sent_body_snapshot="Answer",
+        sent_at=sent_at,
+        matched_by="time_window",
+        created_at=sent_at,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=messages),
+        ),
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+    ):
+        assert await sent_reply_service.thread_tip_already_replied(session, thread_id) is True
+
+
+@pytest.mark.asyncio
+async def test_thread_tip_already_replied_false_when_newer_inbound_after_send() -> None:
+    thread_id = uuid.uuid4()
+    outbound_id = uuid.uuid4()
+    sent_at = datetime(2026, 8, 27, 19, 0, tzinfo=UTC)
+    messages = [
+        MessageSchema(
+            id=outbound_id,
+            thread_id=thread_id,
+            graph_message_id="out-1",
+            direction="outbound",
+            sender="elise@example.com",
+            body_text="Answer",
+            received_at=sent_at,
+            to_recipients=["client@example.com"],
+            cc_recipients=[],
+        ),
+        MessageSchema(
+            id=uuid.uuid4(),
+            thread_id=thread_id,
+            graph_message_id="in-2",
+            direction="inbound",
+            sender="beau@example.com",
+            body_text="Follow-up answers",
+            received_at=datetime(2026, 8, 28, 0, 25, tzinfo=UTC),
+            to_recipients=["elise@example.com"],
+            cc_recipients=[],
+        ),
+    ]
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=outbound_id,
+        draft_id=None,
+        sent_body_snapshot="Answer",
+        sent_at=sent_at,
+        matched_by="time_window",
+        created_at=sent_at,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=messages),
+        ),
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+    ):
+        assert await sent_reply_service.thread_tip_already_replied(session, thread_id) is False

@@ -29,6 +29,16 @@ logger = structlog.get_logger(__name__)
 LEARNED_FROM_OUTLOOK_NOTE = "Learned from Outlook send"
 
 
+def is_outlook_catchup_draft(draft: DraftResponseSchema | None) -> bool:
+    """True when the draft was synthesized from an Outlook send for learning."""
+    if draft is None:
+        return False
+    return (
+        draft.teaching_note == LEARNED_FROM_OUTLOOK_NOTE
+        or draft.approval_note == LEARNED_FROM_OUTLOOK_NOTE
+    )
+
+
 async def thread_needs_catchup_triage(
     session: AsyncSession,
     *,
@@ -36,9 +46,10 @@ async def thread_needs_catchup_triage(
     mailbox: str,
     conversation_id: str,
 ) -> bool:
-    """True when a human reply exists, inbound exists, and triage never ran."""
-    sent = await sent_reply_repo.get_by_thread(session, thread_id)
-    if sent is None:
+    """True when tip is still the Outlook send, inbound exists, and triage never ran."""
+    from app.services.sent_reply_service import thread_tip_already_replied
+
+    if not await thread_tip_already_replied(session, thread_id):
         return False
     flags = await audit_repo.get_latest_triage_flags(
         session,
@@ -80,6 +91,7 @@ async def promote_sent_reply_as_approved(
     _ = openai_client
     _ = anthropic_client
 
+    linked_llm_draft: DraftResponseSchema | None = None
     if sent_reply.draft_id is not None:
         existing = await draft_repo.get_draft_by_id(session, sent_reply.draft_id)
         if (
@@ -88,6 +100,8 @@ async def promote_sent_reply_as_approved(
             and existing.feedback_action == "approve"
         ):
             return existing
+        if existing is not None and not is_outlook_catchup_draft(existing):
+            linked_llm_draft = existing
 
     if not (sent_reply.sent_body_snapshot or "").strip():
         logger.info(
@@ -148,12 +162,14 @@ async def promote_sent_reply_as_approved(
         actor="system",
         settings=None,
     )
-    await sent_reply_repo.link_draft(
-        session,
-        sent_reply_id=sent_reply.id,
-        draft_id=approved.id,
-        matched_by="approved_draft",
-    )
+    # Keep a prior LLM draft as the comparison target; catch-up is for memory only.
+    if linked_llm_draft is None:
+        await sent_reply_repo.link_draft(
+            session,
+            sent_reply_id=sent_reply.id,
+            draft_id=approved.id,
+            matched_by="approved_draft",
+        )
     return approved
 
 

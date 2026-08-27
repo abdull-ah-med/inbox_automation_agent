@@ -391,21 +391,13 @@ def resolve_reply_addressee(
         salute = salute_name_from_party(raw)
         tip_body = getattr(msg, "body_text", None)
         tip_signed = (
-            _tip_person_name(tip_body, reject_names=reject)
-            if direction == "inbound"
-            else None
+            _tip_person_name(tip_body, reject_names=reject) if direction == "inbound" else None
         )
         if tip_signed:
             salute = tip_signed
-        elif is_role_mailbox_salute(salute_name=salute, email=email):
-            better = _better_salute_for_email(
-                email=email,
-                messages=message_list,
-                reject_names=reject,
-            )
-            if better:
-                salute = better
-        elif owner and salute.casefold() == owner.casefold():
+        elif is_role_mailbox_salute(salute_name=salute, email=email) or (
+            owner and salute.casefold() == owner.casefold()
+        ):
             better = _better_salute_for_email(
                 email=email,
                 messages=message_list,

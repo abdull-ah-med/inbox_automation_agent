@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
-from app.repositories import draft_repo, sent_reply_repo, thread_repo
+from app.repositories import draft_repo, message_repo, sent_reply_repo, thread_repo
 from app.repositories.message_repo import MessageSchema
 from app.repositories.sent_reply_repo import MatchedBy, SentReplySchema
 from app.services import audit_service
@@ -36,6 +36,26 @@ _MEETING_MESSAGE_TYPES = frozenset(
 def is_meeting_message(message: MessageSchema) -> bool:
     """True when Graph identified this row as an event/meeting message."""
     return (message.meeting_message_type or "") in _MEETING_MESSAGE_TYPES
+
+
+async def thread_tip_already_replied(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> bool:
+    """True when the tip message is still the Outlook send we resolved on.
+
+    A newer inbound after resolve must return False so drafting can reopen.
+    """
+    messages = await message_repo.list_by_thread(session, thread_id)
+    if not messages:
+        return False
+    tip = max(messages, key=lambda m: m.received_at)
+    if tip.direction != "outbound":
+        return False
+    sent = await sent_reply_repo.get_by_thread(session, thread_id)
+    if sent is None:
+        return False
+    return tip.id == sent.message_id
 
 
 def _cap_body(body: str) -> str:

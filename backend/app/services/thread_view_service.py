@@ -220,7 +220,7 @@ async def get_thread_detail(
     messages = await message_repo.list_by_thread(session, thread_id)
     message_details = [_message_detail(m) for m in messages]
     classification = await classification_repo.get_latest_for_thread(session, thread_id)
-    draft_row = await draft_repo.get_latest_by_thread(session, thread_id)
+    draft_row = await draft_repo.get_latest_proposed_by_thread(session, thread_id)
     draft: DraftView | None = None
     if draft_row is not None:
         draft = draft_response_to_view(draft_row)

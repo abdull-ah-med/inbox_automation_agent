@@ -378,7 +378,7 @@ async def upsert_thread(
         constraint="uq_threads_mailbox_conversation",
         set_={
             "subject": subject,
-            "last_message_at": last_message_at,
+            "last_message_at": func.greatest(Thread.last_message_at, last_message_at),
         },
     ).returning(Thread)
     result = await session.execute(upsert_stmt)

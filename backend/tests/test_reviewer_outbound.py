@@ -244,9 +244,10 @@ async def test_reviewer_copy_landing_in_target_inbox_completes_dedup() -> None:
     assert ttl == DEDUP_TTL_SECONDS
 
 
-def _persisted_from_create(session, **kwargs):  # noqa: ANN001
+def _persisted_from_create(session, **kwargs):
     """Stand-in row for create_message — mirrors fields resolve needs."""
     row = MagicMock()
+    _ = session
     row.id = uuid.uuid4()
     row.graph_message_id = kwargs["graph_message_id"]
     row.direction = kwargs["direction"]

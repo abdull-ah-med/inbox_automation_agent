@@ -35,6 +35,7 @@ from app.services import (
     rejection_memory_service,
     reply_memory_service,
     sent_reply_learning_service,
+    sent_reply_service,
     skill_selection_service,
     slack_service,
     summary_service,
@@ -1100,9 +1101,34 @@ async def _run_phased_post_ingest(
     already_replied = False
     if parsed_thread_id is not None:
         async with session_factory() as session:
-            already_replied = (
-                await sent_reply_repo.get_by_thread(session, parsed_thread_id) is not None
+            already_replied = await sent_reply_service.thread_tip_already_replied(
+                session,
+                parsed_thread_id,
             )
+            if not already_replied:
+                prior = await thread_repo.get_by_id_trusted(session, parsed_thread_id)
+                prior_sent = await sent_reply_repo.get_by_thread(session, parsed_thread_id)
+                if (
+                    prior is not None
+                    and prior.state
+                    in {
+                        "RESOLVED",
+                        "NO_ACTION",
+                    }
+                    and prior_sent is not None
+                ):
+                    await _safe_audit(
+                        session,
+                        state=state,
+                        event_type="thread.reopened.inbound_followup",
+                        payload={
+                            "prior_state": prior.state,
+                            "sent_reply_id": str(prior_sent.id),
+                            "message_id": ingest_result.message_id,
+                        },
+                    )
+                    if session.in_transaction():
+                        await session.commit()
 
     state = await _phased_triage_summarize(
         state=state,

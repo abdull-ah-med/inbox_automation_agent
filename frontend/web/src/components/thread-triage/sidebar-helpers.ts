@@ -39,7 +39,7 @@ export const isActivationKey = (key: string): boolean => key === "Enter" || key 
 export const teachingNoteFor = (
   threadNote: string | null | undefined,
   draftNote: string | null | undefined,
-): string | null => threadNote ?? draftNote ?? null
+): string | null => draftNote ?? threadNote ?? null
 
 export const isFeedbackDone = (draft: DraftView | null): boolean => {
   if (!draft) return false
