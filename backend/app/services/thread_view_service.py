@@ -103,18 +103,25 @@ def reply_text_for_message(
 ) -> str:
     """Unique new content for review. Empty string means no new text.
 
-    Stored ``unique_body_text`` (including "") wins. NULL old rows fall back
-    to quote-split of ``body_text``, then preview.
+    Prefer stored ``unique_body_text`` (including "") over ``body_text``. Always
+    quote-split so Zendesk/ticket dumps that Graph left in uniqueBody still
+    show only the newest comment. NULL old rows fall back to ``body_text``,
+    then preview. Display artifacts are stripped for reviewers.
     """
+    from app.llm.email_clean import strip_plain_text_artifacts
+
     if unique_body_text is not None:
-        return unique_body_text
-    main, quoted = split_quoted_history(body_text or "")
+        candidate = unique_body_text
+    else:
+        candidate = (body_text or "").strip() or (body_preview or "")
+
+    main, quoted = split_quoted_history(candidate or "")
     if quoted is not None:
-        return main.strip()
-    stripped = (body_text or "").strip()
-    if stripped:
-        return stripped
-    return body_preview or ""
+        return strip_plain_text_artifacts(main.strip())
+    raw = (candidate or "").strip()
+    if not raw and unique_body_text is None:
+        raw = (body_preview or "").strip()
+    return strip_plain_text_artifacts(raw)
 
 
 def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
@@ -135,6 +142,8 @@ def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
         received_at=m.received_at,
         has_attachments=bool(m.has_attachments),
         outlook_url=outlook_web_link(m.graph_message_id),
+        meeting_message_type=m.meeting_message_type,
+        meeting_response_type=m.meeting_response_type,
     )
 
 
@@ -167,7 +176,7 @@ def compute_draft_vs_sent_diff(
         lineterm="",
         n=0,
     ):
-        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
+        if line.startswith(("+++", "---", "@@")):
             continue
         if line.startswith("+"):
             added.append(line[1:])
@@ -227,19 +236,28 @@ async def get_thread_detail(
             matched_by = "manual"
         else:
             matched_by = "time_window"
+        sent_snapshot = sent_row.sent_body_snapshot
+        if not (sent_snapshot or "").strip():
+            linked = next((m for m in messages if m.id == sent_row.message_id), None)
+            if linked is not None:
+                sent_snapshot = reply_text_for_message(
+                    body_text=linked.body_text,
+                    unique_body_text=linked.unique_body_text,
+                    body_preview=linked.body_preview,
+                )
         sent_reply = SentReplyView(
             id=sent_row.id,
             thread_id=sent_row.thread_id,
             message_id=sent_row.message_id,
             draft_id=sent_row.draft_id,
-            sent_body_snapshot=sent_row.sent_body_snapshot,
+            sent_body_snapshot=sent_snapshot,
             sent_at=sent_row.sent_at,
             matched_by=matched_by,
             created_at=sent_row.created_at,
         )
         draft_vs_sent_diff = compute_draft_vs_sent_diff(
             _proposed_body(draft),
-            sent_row.sent_body_snapshot,
+            sent_snapshot,
         )
 
     associated_threads = await related_thread_service.list_stored_associations(
@@ -270,15 +288,10 @@ async def get_thread_detail(
     )
     closing = looks_like_closing_mail(last_inbound_body)
     draft_finished = bool(
-        draft is not None
-        and (
-            draft.approved_at is not None
-            or draft.feedback_action == "wrong"
-        )
+        draft is not None and (draft.approved_at is not None or draft.feedback_action == "wrong")
     )
     reason_corrected = any(
-        str(ev.get("event_type") or "") == "thread.resolved.wrong_reason"
-        for ev in raw_events
+        str(ev.get("event_type") or "") == "thread.resolved.wrong_reason" for ev in raw_events
     )
     summary = thread_repo.with_presentation(
         summary,

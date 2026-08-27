@@ -18,7 +18,7 @@ from app.llm._vendor.talon.signature import bruteforce as talon_bruteforce
 logger = structlog.get_logger(__name__)
 
 # Bump when cleaning heuristics change so backfills can find stale rows.
-CLEAN_VERSION: int = 1
+CLEAN_VERSION: int = 2
 
 _DISCLAIMER_TRIGGERS: tuple[str, ...] = (
     "this email and any files transmitted with it",
@@ -38,6 +38,55 @@ _DISCLAIMER_RE = re.compile(
 _DISCLAIMER_TAIL_CHARS = 2_000
 _DISCLAIMER_TAIL_LINES = 40
 _EXCESS_BLANK_RE = re.compile(r"\n{3,}")
+
+# Zendesk / ticket delimiter and Graph Prefer-text artifacts.
+_REPLY_DELIMITER_RE = re.compile(
+    r"(?im)^\s*(?:##-\s*)?Please type your reply above this line(?:\s*-##)?\s*$"
+    r"|^\s*--\s*reply above this line\s*--\s*$"
+)
+_CID_TOKEN_RE = re.compile(r"\[cid:[^\]]+\]", re.IGNORECASE)
+_IMAGE_URL_PLACEHOLDER_RE = re.compile(
+    r"\[https?://[^\]]+\.(?:png|jpe?g|gif|webp|svg)(?:\?[^\]]*)?\]",
+    re.IGNORECASE,
+)
+# Nested mailto / angle-bracket link junk from Graph text conversion.
+_MAILTO_ANGLE_RE = re.compile(r"<mailto:[^<>]*(?:<[^>]*>[^<>]*)*>", re.IGNORECASE)
+_MAILTO_SIMPLE_RE = re.compile(r"<mailto:[^>]+>", re.IGNORECASE)
+_ANGLE_URL_RE = re.compile(
+    r"(?P<label>[^\s<>]+)\s*<(?P<url>https?://[^>]+)>",
+    re.IGNORECASE,
+)
+
+
+def strip_plain_text_artifacts(text: str) -> str:
+    """Remove Zendesk delimiters, cid/image placeholders, and nested mailto junk."""
+    if not text:
+        return text
+    out = _normalize_newlines(text)
+    out = "\n".join(line for line in out.split("\n") if not _REPLY_DELIMITER_RE.match(line))
+    out = _CID_TOKEN_RE.sub("", out)
+    out = _IMAGE_URL_PLACEHOLDER_RE.sub("", out)
+
+    # Peel nested mailto angle clusters (Graph Prefer-text duplication).
+    for _ in range(6):
+        nxt = _MAILTO_ANGLE_RE.sub("", out)
+        nxt = _MAILTO_SIMPLE_RE.sub("", nxt)
+        if nxt == out:
+            break
+        out = nxt
+
+    def _url_repl(match: re.Match[str]) -> str:
+        label = match.group("label").strip()
+        url = match.group("url").strip()
+        if label.lower() in {"web", "w", "link"} or label.startswith("http"):
+            return f"{label} {url}".strip() if label.lower() in {"web", "w"} else url
+        return label
+
+    out = _ANGLE_URL_RE.sub(_url_repl, out)
+    # Drop leftover angle brackets from broken nested mailto expansions.
+    out = re.sub(r"(?<=\S)>+\s*$", "", out, flags=re.MULTILINE)
+    out = re.sub(r"^\s*<+(?=\S)", "", out, flags=re.MULTILINE)
+    return _collapse_blank_lines(out)
 
 
 class CleanedEmailBody(BaseModel):
@@ -153,7 +202,8 @@ def clean_email_body(raw_body: str, *, content_type: str = "text") -> CleanedEma
             return CleanedEmailBody(body_clean="")
 
         after_quotes, quote_stripped = _strip_quotes(normalized, content_type=ctype)
-        after_disclaimer, disclaimer_stripped = _strip_legal_disclaimer(after_quotes)
+        after_artifacts = strip_plain_text_artifacts(after_quotes)
+        after_disclaimer, disclaimer_stripped = _strip_legal_disclaimer(after_artifacts)
         after_signature, signature_stripped = _strip_signature(after_disclaimer)
         body_clean = _collapse_blank_lines(after_signature)
 

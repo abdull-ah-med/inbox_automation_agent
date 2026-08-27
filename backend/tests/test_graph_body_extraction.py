@@ -78,6 +78,44 @@ def test_unique_body_is_new_reply_not_quoted_history() -> None:
     assert email.body_text == FULL_REPLY_WITH_QUOTE
 
 
+# Graph uniqueBody ≈ full Zendesk notification (conversation-diff fails for ticket dumps).
+_ZENDESK_UNIQUE_WALL = (
+    "Your request (40197) has been updated. To add additional comments, "
+    "reply to this email.\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 25, 2026, 8:55 AM MDT\n\n"
+    "Elise,\n\n"
+    "Can you provide a search ID that I can look into?\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+    "info\n\n"
+    "Aug 25, 2026, 8:19 AM MDT\n\n"
+    "This is a follow-up to your previous request #40155\n\n"
+    "Hi there.\n\n"
+    "I updated the method for delivery last week.\n\n"
+    "Thanks,\n"
+    "Elise\n"
+)
+
+
+def test_zendesk_graph_unique_body_is_quote_split_to_newest_comment() -> None:
+    """Graph uniqueBody still embeds prior ticket comments — persist tip only."""
+    email = _to_email(
+        _graph_message(
+            body={"contentType": "text", "content": _ZENDESK_UNIQUE_WALL},
+            uniqueBody={"contentType": "text", "content": _ZENDESK_UNIQUE_WALL},
+            bodyPreview="Your request (40197) has been updated.",
+        )
+    )
+
+    assert "search ID that I can look into" in email.unique_body_text
+    assert "Alex Taylor" in email.unique_body_text
+    assert "follow-up to your previous request" not in email.unique_body_text
+    assert "I updated the method for delivery" not in email.unique_body_text
+    assert "Thanks,\nElise" not in email.unique_body_text
+
+
 def test_html_unique_body_is_stored_as_plain_text() -> None:
     email = _to_email(
         _graph_message(
@@ -99,3 +137,47 @@ def test_quote_only_body_without_unique_body_has_empty_unique_text() -> None:
 
     assert email.unique_body_text == ""
     assert "From: Alice" in email.body_text
+
+
+def test_graph_schema_parses_meeting_message_fields() -> None:
+    message = GraphMessageSchema.model_validate(
+        {
+            "@odata.type": "#microsoft.graph.eventMessageResponse",
+            "id": "AAMk-meeting-1",
+            "subject": "Accepted: 365BGC Web site review",
+            "bodyPreview": "",
+            "body": {"contentType": "text", "content": ""},
+            "meetingMessageType": "meetingAccepted",
+            "responseType": "accepted",
+            "from": {"emailAddress": {"name": "Elise", "address": MAILBOX}},
+            "receivedDateTime": "2026-08-26T15:39:54Z",
+            "conversationId": CONVERSATION_ID,
+        }
+    )
+
+    assert message.odata_type == "#microsoft.graph.eventMessageResponse"
+    assert message.meeting_message_type == "meetingAccepted"
+    assert message.response_type == "accepted"
+
+
+def test_meeting_accepted_is_mapped_onto_email_schema() -> None:
+    email = _to_email(
+        GraphMessageSchema.model_validate(
+            {
+                "@odata.type": "#microsoft.graph.eventMessageResponse",
+                "id": "AAMk-meeting-2",
+                "subject": "Accepted: IDME - Quick Sync",
+                "bodyPreview": "",
+                "body": {"contentType": "text", "content": ""},
+                "meetingMessageType": "meetingAccepted",
+                "responseType": "accepted",
+                "from": {"emailAddress": {"name": "Elise", "address": MAILBOX}},
+                "receivedDateTime": "2026-08-20T16:05:08Z",
+                "conversationId": CONVERSATION_ID,
+            }
+        )
+    )
+
+    assert email.meeting_message_type == "meetingAccepted"
+    assert email.meeting_response_type == "accepted"
+    assert email.body_text == ""

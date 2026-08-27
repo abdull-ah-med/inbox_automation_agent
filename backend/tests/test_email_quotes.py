@@ -24,8 +24,7 @@ from app.services import embedding_service
 def _gmail_thread_newest_reply() -> str:
     """12-message Gmail reply: newest body sits above the full quoted chain."""
     quoted = "\n".join(
-        f"> On day {i} Alice wrote:\n> invoice 1 line {i} of quoted history"
-        for i in range(11)
+        f"> On day {i} Alice wrote:\n> invoice 1 line {i} of quoted history" for i in range(11)
     )
     return (
         "Please send invoice 42 today.\n\n"
@@ -242,3 +241,32 @@ def test_frontend_quote_pattern_file_matches_python_sources() -> None:
     text = ts_path.read_text()
     for name, source, _flags in QUOTE_PATTERN_SOURCES:
         assert source in text, name
+
+
+_ZENDESK_TICKET_UPDATE = (
+    "##- Please type your reply above this line -##\n\n"
+    "Your request (40155) has been updated. To add additional comments, reply to this email.\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 19, 2026, 10:54 AM MDT\n\n"
+    "Elise,\n\n"
+    "Can you give me a search ID example where a completed report email was not received?\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+    "info\n\n"
+    "Aug 19, 2026, 10:49 AM MDT\n\n"
+    "INTERNAL: This message originated inside the organization.\n"
+    "Hello,\n\n"
+    "National Risk Services notifications are missing.\n"
+)
+
+
+def test_split_quoted_history_zendesk_keeps_newest_comment_only() -> None:
+    main, quoted = split_quoted_history(_ZENDESK_TICKET_UPDATE)
+    assert "search ID example" in main
+    assert "Alex Taylor" in main
+    assert quoted is not None
+    assert "National Risk Services" in quoted
+    assert "default-avatar" in quoted
+    assert "search ID example" not in quoted

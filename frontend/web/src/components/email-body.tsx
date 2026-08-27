@@ -30,15 +30,21 @@ const ON_WROTE_PATTERN = new RegExp(
   EMAIL_QUOTE_PATTERNS.onWrote.source,
   EMAIL_QUOTE_PATTERNS.onWrote.flags,
 )
+const ZENDESK_DEFAULT_AVATAR_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.zendeskDefaultAvatar.source,
+  EMAIL_QUOTE_PATTERNS.zendeskDefaultAvatar.flags,
+)
+const ZENDESK_FOLLOW_UP_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.zendeskFollowUp.source,
+  EMAIL_QUOTE_PATTERNS.zendeskFollowUp.flags,
+)
 
 /**
  * Splits a plain-text email body into the latest reply and any quoted history
  * that Outlook/Gmail typically append (Original Message, From/Sent headers, etc.).
  * An empty unique reply is valid — quote-only bodies must not restore the wall.
  */
-export const splitQuotedHistory = (
-  text: string,
-): { main: string; quoted: string | null } => {
+export const splitQuotedHistory = (text: string): { main: string; quoted: string | null } => {
   const normalized = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n")
   const candidates: number[] = []
 
@@ -47,6 +53,8 @@ export const splitQuotedHistory = (
     UNDERSCORE_SEP_PATTERN,
     OUTLOOK_HEADERS_PATTERN,
     ON_WROTE_PATTERN,
+    ZENDESK_DEFAULT_AVATAR_PATTERN,
+    ZENDESK_FOLLOW_UP_PATTERN,
   ]) {
     const match = pattern.exec(normalized)
     if (!match) continue
@@ -122,9 +130,7 @@ const linkify = (
     const index = Number(match[1])
     const citation = Number.isFinite(index) ? citations[index - 1] : undefined
     if (match.index > lastIndex) {
-      nodes.push(
-        ...linkifyUrls(text.slice(lastIndex, match.index), `${keyPrefix}-t${key}`),
-      )
+      nodes.push(...linkifyUrls(text.slice(lastIndex, match.index), `${keyPrefix}-t${key}`))
     }
     if (citation) {
       const subject = citation.subject?.trim() || `thread ${index}`
@@ -135,7 +141,7 @@ const linkify = (
           href={href}
           aria-label={`Citation ${index}: ${subject}`}
           title={subject}
-          className="mx-0.5 inline-flex translate-y-[-0.05em] items-center rounded-sm bg-primary/15 px-1 py-0 text-[0.7rem] font-semibold text-primary no-underline hover:bg-primary/25"
+          className="bg-primary/15 text-primary hover:bg-primary/25 mx-0.5 inline-flex translate-y-[-0.05em] items-center rounded-sm px-1 py-0 text-[0.7rem] font-semibold no-underline"
         >
           [{index}]
         </Link>,
@@ -151,10 +157,7 @@ const linkify = (
   return nodes
 }
 
-const renderInline = (
-  text: string,
-  citations?: ChatCitation[],
-): React.ReactNode[] => {
+const renderInline = (text: string, citations?: ChatCitation[]): React.ReactNode[] => {
   const nodes: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -166,10 +169,7 @@ const renderInline = (
       nodes.push(...linkify(text.slice(lastIndex, match.index), `t${key}`, citations))
     }
     nodes.push(
-      <strong
-        key={`bold-${key++}`}
-        className="font-semibold text-gray-800 dark:text-gray-100"
-      >
+      <strong key={`bold-${key++}`} className="font-semibold text-gray-800 dark:text-gray-100">
         {linkify(match[1], `b${key}`, citations)}
       </strong>,
     )
@@ -181,19 +181,220 @@ const renderInline = (
   return nodes
 }
 
-const BodyText = ({
-  text,
-  citations,
-}: {
-  text: string
-  citations?: ChatCitation[]
-}) => {
+const BodyText = ({ text, citations }: { text: string; citations?: ChatCitation[] }) => {
   return (
     <>
       {renderInline(text, citations).map((node, index) => (
         <Fragment key={index}>{node}</Fragment>
       ))}
     </>
+  )
+}
+
+const TICKET_UPDATED_RE = /^Your request \(\d+\) has been updated\b.*$/i
+const AGENT_BYLINE_RE =
+  /^[A-Z][a-zA-Z'\u2019-]{1,40}(?:\s+[A-Z][a-zA-Z'\u2019-]{1,40})?\s*\([^)\n]{2,80}\)\s*$/
+const TIP_DATE_RE = /^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},\s+\d{4}\b/i
+
+type TipSegment =
+  | { kind: "chrome"; text: string }
+  | { kind: "byline"; text: string }
+  | { kind: "date"; text: string }
+  | { kind: "body"; text: string }
+
+/**
+ * Light structure for Zendesk-style tips: mute ticket chrome, emphasize agent
+ * byline + date. Returns null when the tip does not look like ticket mail.
+ */
+export const parseTicketTipSegments = (text: string): TipSegment[] | null => {
+  const normalized = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").trim()
+  if (!normalized) return null
+
+  const lines = normalized.split("\n")
+  const bylineIndex = lines.findIndex((line) => AGENT_BYLINE_RE.test(line.trim()))
+  if (bylineIndex < 0) return null
+
+  const segments: TipSegment[] = []
+  let cursor = 0
+
+  const pushBody = (from: number, to: number) => {
+    const chunk = lines.slice(from, to).join("\n").trim()
+    if (chunk) segments.push({ kind: "body", text: chunk })
+  }
+
+  // Leading chrome (ticket updated line + blanks) before byline.
+  while (cursor < bylineIndex) {
+    const line = lines[cursor] ?? ""
+    const trimmed = line.trim()
+    if (!trimmed) {
+      cursor += 1
+      continue
+    }
+    if (TICKET_UPDATED_RE.test(trimmed)) {
+      segments.push({ kind: "chrome", text: trimmed })
+      cursor += 1
+      continue
+    }
+    break
+  }
+  if (cursor < bylineIndex) {
+    pushBody(cursor, bylineIndex)
+  }
+
+  segments.push({ kind: "byline", text: (lines[bylineIndex] ?? "").trim() })
+  cursor = bylineIndex + 1
+  while (cursor < lines.length && !(lines[cursor] ?? "").trim()) {
+    cursor += 1
+  }
+
+  const dateLine = (lines[cursor] ?? "").trim()
+  if (dateLine && TIP_DATE_RE.test(dateLine)) {
+    segments.push({ kind: "date", text: dateLine })
+    cursor += 1
+    while (cursor < lines.length && !(lines[cursor] ?? "").trim()) {
+      cursor += 1
+    }
+  }
+
+  pushBody(cursor, lines.length)
+  return segments.some((s) => s.kind === "byline") ? segments : null
+}
+
+const StructuredTipBody = ({
+  segments,
+  citations,
+}: {
+  segments: TipSegment[]
+  citations?: ChatCitation[]
+}) => {
+  return (
+    <div className="flex flex-col gap-2">
+      {segments.map((segment, index) => {
+        if (segment.kind === "chrome") {
+          return (
+            <p
+              key={`chrome-${index}`}
+              data-email-chrome
+              className="text-muted-foreground text-xs leading-relaxed"
+            >
+              {segment.text}
+            </p>
+          )
+        }
+        if (segment.kind === "byline") {
+          return (
+            <p
+              key={`byline-${index}`}
+              data-email-byline
+              className="text-sm font-medium text-gray-900 dark:text-gray-100"
+            >
+              {segment.text}
+            </p>
+          )
+        }
+        if (segment.kind === "date") {
+          return (
+            <p key={`date-${index}`} data-email-date className="text-muted-foreground text-xs">
+              {segment.text}
+            </p>
+          )
+        }
+        return (
+          <div key={`body-${index}`} className="break-words wrap-anywhere whitespace-pre-wrap">
+            <BodyText text={segment.text} citations={citations} />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+const MainBody = ({ text, citations }: { text: string; citations?: ChatCitation[] }) => {
+  const segments = parseTicketTipSegments(text)
+  if (segments) {
+    return <StructuredTipBody segments={segments} citations={citations} />
+  }
+  return (
+    <div className="break-words wrap-anywhere whitespace-pre-wrap">
+      <BodyText text={text} citations={citations} />
+    </div>
+  )
+}
+
+const resolveBodyParts = ({
+  text,
+  collapseQuotes,
+  quotedText,
+}: {
+  text: string | null | undefined
+  collapseQuotes: boolean
+  quotedText?: string | null
+}): { main: string; quoted: string | null } => {
+  if (!collapseQuotes) {
+    return { main: text ?? "", quoted: null }
+  }
+
+  const split = splitQuotedHistory(text ?? "")
+  const provided = quotedText != null ? quotedText.trim() || null : null
+
+  // Prefer split of text for main — never force full text as main when a quote
+  // boundary exists (quotedText used to override main and re-show the wall).
+  if (split.quoted) {
+    return {
+      main: split.main,
+      quoted: provided ?? split.quoted,
+    }
+  }
+
+  if (provided) {
+    return { main: text ?? "", quoted: provided }
+  }
+
+  return split
+}
+
+const QuotedHistoryToggle = ({
+  quoted,
+  citations,
+}: {
+  quoted: string
+  citations?: ChatCitation[]
+}) => {
+  const [showQuoted, setShowQuoted] = useState(false)
+
+  const handleToggleQuoted = () => {
+    setShowQuoted((value) => !value)
+  }
+
+  const handleQuotedKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault()
+      handleToggleQuoted()
+    }
+  }
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        tabIndex={0}
+        aria-expanded={showQuoted}
+        aria-label={showQuoted ? "Hide quoted earlier messages" : "Show quoted earlier messages"}
+        className={cn(textLinkClass, "text-sm")}
+        onClick={handleToggleQuoted}
+        onKeyDown={handleQuotedKeyDown}
+      >
+        {showQuoted ? "Hide quoted earlier" : "Quoted earlier"}
+      </button>
+      {showQuoted ? (
+        <div
+          data-quoted-history
+          className="border-border dark:text-muted-foreground mt-3 border-l-2 pl-3 break-words wrap-anywhere whitespace-pre-wrap text-gray-500"
+        >
+          <BodyText text={quoted} citations={citations} />
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -222,32 +423,14 @@ export const EmailBody = ({
   trailing?: ReactNode
   citations?: ChatCitation[]
 }) => {
-  const [showQuoted, setShowQuoted] = useState(false)
-
-  const split = collapseQuotes
-    ? splitQuotedHistory(text ?? "")
-    : { main: text ?? "", quoted: null as string | null }
-  const main = quotedText != null ? (text ?? "") : split.main
-  const quoted =
-    quotedText != null ? (quotedText.trim() || null) : split.quoted
+  const { main, quoted } = resolveBodyParts({ text, collapseQuotes, quotedText })
   const uniqueEmpty = Boolean(quoted) && !main.trim()
-
-  const handleToggleQuoted = () => {
-    setShowQuoted((value) => !value)
-  }
-
-  const handleQuotedKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault()
-      handleToggleQuoted()
-    }
-  }
 
   if (!main.trim() && !quoted) {
     if (trailing) {
       return <div className={cn("text-sm leading-relaxed", className)}>{trailing}</div>
     }
-    return <p className={`text-sm text-muted-foreground italic ${className}`}>{emptyLabel}</p>
+    return <p className={`text-muted-foreground text-sm italic ${className}`}>{emptyLabel}</p>
   }
 
   return (
@@ -257,39 +440,15 @@ export const EmailBody = ({
         className,
       )}
     >
-      <div className="wrap-anywhere whitespace-pre-wrap break-words">
+      <div>
         {uniqueEmpty ? (
-          <p className="text-sm italic text-muted-foreground">No new text in this reply</p>
+          <p className="text-muted-foreground text-sm italic">No new text in this reply</p>
         ) : (
-          <BodyText text={main} citations={citations} />
+          <MainBody text={main} citations={citations} />
         )}
         {trailing}
       </div>
-      {quoted ? (
-        <div className="mt-3">
-          <button
-            type="button"
-            tabIndex={0}
-            aria-expanded={showQuoted}
-            aria-label={
-              showQuoted ? "Hide quoted earlier messages" : "Show quoted earlier messages"
-            }
-            className={cn(textLinkClass, "text-sm")}
-            onClick={handleToggleQuoted}
-            onKeyDown={handleQuotedKeyDown}
-          >
-            {showQuoted ? "Hide quoted earlier" : "Quoted earlier"}
-          </button>
-          {showQuoted ? (
-            <div
-              data-quoted-history
-              className="mt-3 wrap-anywhere whitespace-pre-wrap break-words border-l-2 border-border pl-3 text-gray-500 dark:text-muted-foreground"
-            >
-              <BodyText text={quoted} citations={citations} />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {quoted ? <QuotedHistoryToggle quoted={quoted} citations={citations} /> : null}
     </div>
   )
 }

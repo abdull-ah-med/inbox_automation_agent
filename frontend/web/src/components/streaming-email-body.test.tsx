@@ -20,8 +20,7 @@ describe("StreamingEmailBody", () => {
   })
 
   it("does not dump a large chunk in a single paint while streaming", async () => {
-    const full =
-      "The overdue billing dispute is waiting on review for Bonnie Moore."
+    const full = "The overdue billing dispute is waiting on review for Bonnie Moore."
     render(<StreamingEmailBody text={full} streaming />)
 
     await act(async () => {

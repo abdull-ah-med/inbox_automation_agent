@@ -43,9 +43,7 @@ def _settings() -> Settings:
 def test_invoice_42_reply_beats_quoted_invoice_1_history() -> None:
     quoted = "\n".join(f"> invoice 1 line {i}" for i in range(400))
     newest = (
-        "New reply about invoice 42\n\n"
-        "On Thu, Aug 14, 2026 at 3:00 PM Alice wrote:\n"
-        f"{quoted}\n"
+        f"New reply about invoice 42\n\nOn Thu, Aug 14, 2026 at 3:00 PM Alice wrote:\n{quoted}\n"
     )
     standalone = "Please pay invoice 1 by Friday."
     stripped_new = strip_quoted_reply(newest).text
@@ -64,9 +62,7 @@ async def test_search_ranks_invoice_42_thread_first_after_quote_strip(db_session
     now = datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
     quoted = "\n".join(f"> invoice 1 line {i}" for i in range(400))
     newest = (
-        "New reply about invoice 42\n\n"
-        "On Thu, Aug 14, 2026 at 3:00 PM Alice wrote:\n"
-        f"{quoted}\n"
+        f"New reply about invoice 42\n\nOn Thu, Aug 14, 2026 at 3:00 PM Alice wrote:\n{quoted}\n"
     )
     standalone = "Please pay invoice 1 by Friday."
     db_session.add_all(

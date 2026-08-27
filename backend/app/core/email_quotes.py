@@ -26,6 +26,15 @@ _OUTLOOK_HEADERS_RE = re.compile(
     re.IGNORECASE,
 )
 _ON_WROTE_LOOSE_RE = re.compile(r"(^|\n)On .+ wrote:\s*\n", re.IGNORECASE)
+# Zendesk prior-comment chrome: default avatar block or "follow-up to previous request".
+_ZENDESK_DEFAULT_AVATAR_RE = re.compile(
+    r"(^|\n)\[https?://[^\]]*default-avatar[^\]]*\]\s*\n",
+    re.IGNORECASE,
+)
+_ZENDESK_FOLLOWUP_RE = re.compile(
+    r"(^|\n)This is a follow-up to your previous request\b",
+    re.IGNORECASE,
+)
 
 # Shared with frontend/web/src/lib/email-quote-patterns.ts (M14). Flags are
 # separate so the generated TS file can `new RegExp(source, flags)`.
@@ -34,6 +43,8 @@ QUOTE_PATTERN_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("underscoreSep", _UNDERSCORE_SEP_RE.pattern, ""),
     ("outlookHeaders", _OUTLOOK_HEADERS_RE.pattern, "i"),
     ("onWrote", _ON_WROTE_LOOSE_RE.pattern, "i"),
+    ("zendeskDefaultAvatar", _ZENDESK_DEFAULT_AVATAR_RE.pattern, "i"),
+    ("zendeskFollowUp", _ZENDESK_FOLLOWUP_RE.pattern, "i"),
 )
 
 
@@ -65,11 +76,13 @@ def split_quoted_history(text: str) -> tuple[str, str | None]:
         _UNDERSCORE_SEP_RE,
         _OUTLOOK_HEADERS_RE,
         _ON_WROTE_LOOSE_RE,
+        _ZENDESK_DEFAULT_AVATAR_RE,
+        _ZENDESK_FOLLOWUP_RE,
     ):
         match = pattern.search(normalized)
         if match is None:
             continue
-        at = match.start() + (len(match.group(1)) if match.group(1) else 0)
+        at = match.start() + (len(match.group(1)) if match.lastindex and match.group(1) else 0)
         candidates.append(at)
 
     if not candidates:

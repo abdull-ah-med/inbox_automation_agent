@@ -32,10 +32,7 @@ export const StreamingEmailBody = ({
   className,
   citations,
 }: StreamingEmailBodyProps) => {
-  const { visible, animating } = useSmoothStreamText(
-    unwrapWrappingFence(text),
-    streaming,
-  )
+  const { visible, animating } = useSmoothStreamText(unwrapWrappingFence(text), streaming)
 
   return (
     <EmailBody
@@ -46,7 +43,7 @@ export const StreamingEmailBody = ({
         animating ? (
           <span
             aria-label="Generating answer"
-            className="ml-0.5 inline-block h-[1.05em] w-0.5 translate-y-0.5 bg-foreground align-text-bottom motion-safe:animate-pulse"
+            className="bg-foreground ml-0.5 inline-block h-[1.05em] w-0.5 translate-y-0.5 align-text-bottom motion-safe:animate-pulse"
           />
         ) : null
       }

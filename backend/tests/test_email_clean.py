@@ -67,10 +67,7 @@ def test_corporate_disclaimer_stripped() -> None:
 
 def test_html_gmail_quote_stripped() -> None:
     html = (
-        "<div>Reply body only</div>"
-        '<div class="gmail_quote">'
-        "On Mon Bob wrote:<br>Quoted prior"
-        "</div>"
+        '<div>Reply body only</div><div class="gmail_quote">On Mon Bob wrote:<br>Quoted prior</div>'
     )
     result = clean_email_body(html, content_type="html")
     assert "Reply body only" in result.body_clean
@@ -131,3 +128,44 @@ def test_effective_body_text_falls_back_and_cleans() -> None:
     )
     assert "Thanks" in text
     assert "Original Message" not in text
+
+
+# Worked example: SampleHelpdesk/Zendesk ticket update (Alex Taylor 8/19).
+_SAMPLEHELPDESK_ALEX = (
+    "##- Please type your reply above this line -##\n\n"
+    "Your request (40155) has been updated. To add additional comments, reply to this email.\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 19, 2026, 10:54 AM MDT\n\n"
+    "Elise,\n\n"
+    "Can you give me a search ID example where a completed report email was not received?\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[cid:bd159b21-be5a-4db7-b36f-9b45a3317bb0]\n\n"
+    "E: info@sample-services.example.com"
+    "<mailto:info@sample-services.example.com>"
+    "<mailto:info@sample-services.example.com"
+    "<mailto:info@sample-services.example.com>>\n"
+)
+
+
+def test_zendesk_delimiter_and_artifacts_stripped() -> None:
+    result = clean_email_body(_SAMPLEHELPDESK_ALEX, content_type="text")
+    assert "Please type your reply above this line" not in result.body_clean
+    assert "cid:" not in result.body_clean
+    assert "purple_flower" not in result.body_clean
+    assert "mailto:" not in result.body_clean
+    assert "search ID example" in result.body_clean
+    assert result.clean_version == 2
+
+
+def test_strip_plain_text_artifacts_unmangles_mailto() -> None:
+    from app.llm.email_clean import strip_plain_text_artifacts
+
+    cleaned = strip_plain_text_artifacts(
+        "E: info@sample-services.example.com"
+        "<mailto:info@sample-services.example.com>"
+        "<mailto:info@sample-services.example.com<mailto:info@sample-services.example.com>>"
+    )
+    assert cleaned == "E: info@sample-services.example.com"
+    assert "mailto:" not in cleaned

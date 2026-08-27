@@ -8,4 +8,12 @@ export const EMAIL_QUOTE_PATTERNS = {
     flags: "i",
   },
   onWrote: { source: String.raw`(^|\n)On .+ wrote:\s*\n`, flags: "i" },
+  zendeskDefaultAvatar: {
+    source: String.raw`(^|\n)\[https?://[^\]]*default-avatar[^\]]*\]\s*\n`,
+    flags: "i",
+  },
+  zendeskFollowUp: {
+    source: String.raw`(^|\n)This is a follow-up to your previous request\b`,
+    flags: "i",
+  },
 } as const
