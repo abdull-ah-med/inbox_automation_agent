@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import dataclass
 
 import structlog
 from anthropic import AsyncAnthropic
@@ -237,7 +238,8 @@ async def _embed_non_spam_safe(
 ) -> None:
     if not _should_embed(state, openai_client):
         return
-    assert openai_client is not None  # narrowed by _should_embed
+    if openai_client is None:
+        raise RuntimeError("openai_client required when embedding is enabled")
     await embedding_service.embed_and_store_safe(
         session,
         email=state.original_email,
@@ -256,7 +258,8 @@ async def _embed_in_fresh_session(
     """Embed in its own short transaction (safe to gather with draft work)."""
     if not _should_embed(state, openai_client):
         return
-    assert openai_client is not None  # narrowed by _should_embed
+    if openai_client is None:
+        raise RuntimeError("openai_client required when embedding is enabled")
     async with session_factory() as session, session.begin():
         await embedding_service.embed_and_store_safe(
             session,
@@ -542,32 +545,27 @@ async def run_phased_after_ingest(
     )
 
 
-async def _run_phased_post_ingest(
+@dataclass
+class _DraftPhaseInputs:
+    existing: object | None
+    skill_contents: list[str]
+    skill_ids: list[uuid.UUID]
+    applied_skills: list
+    tone_references: list[str]
+    tone_profile_block: str | None
+    negative_constraints: list[str]
+    urgency_hints: list[str]
+
+
+async def _phased_triage_summarize(
     *,
-    redis: Redis,
-    settings: Settings,
+    state: EmailTriageState,
+    email: EmailMessageSchema,
     client: AsyncAnthropic,
-    openai_client: AsyncOpenAI | None,
-    ingest_result: IngestResultSchema,
+    settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
-    graph_client: GraphClient | None = None,
-    post_slack: bool = True,
+    parsed_thread_id: uuid.UUID | None,
 ) -> EmailTriageState:
-    """Triage/draft LLMs outside DB transactions; short txns for writes; Slack after commit."""
-    context = ingest_result.thread_context
-    if context is None:
-        raise ValueError("thread_context is required for post-ingest triage")
-
-    email = _select_original_email(
-        message_id=ingest_result.message_id,
-        thread_context=context,
-    )
-    state = EmailTriageState(
-        original_email=email,
-        thread_context=context,
-        draft_status="PENDING",
-    )
-
     async with session_factory() as session:
         allowlisted = await _allowlisted_senders(session, email.mailbox)
 
@@ -578,7 +576,6 @@ async def _run_phased_post_ingest(
         settings=settings,
         allowlisted_senders=allowlisted,
     )
-    parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     async with session_factory() as session, session.begin():
         await _invalidate_chat_cache_mailbox(session, email.mailbox)
@@ -605,7 +602,18 @@ async def _run_phased_post_ingest(
                 settings=settings,
                 session_factory=session_factory,
             )
+    return state
 
+
+async def _phased_early_draft_exit(
+    *,
+    state: EmailTriageState,
+    ingest_result: IngestResultSchema,
+    openai_client: AsyncOpenAI | None,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> EmailTriageState | None:
+    """Return a terminal state when draft work should not continue; else None."""
     if state.draft_status != "PENDING":
         await _embed_in_fresh_session(
             state=state,
@@ -634,11 +642,20 @@ async def _run_phased_post_ingest(
             session_factory=session_factory,
         )
         return state
+    return None
 
-    thread_id = uuid.UUID(ingest_result.thread_id)
-    message_id = email.message_id
-    needs_context = bool(state.triage and state.triage.needs_context)
 
+async def _phased_resolve_cross_thread(
+    *,
+    state: EmailTriageState,
+    email: EmailMessageSchema,
+    message_id: str,
+    needs_context: bool,
+    openai_client: AsyncOpenAI | None,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    graph_client: GraphClient | None,
+) -> CrossThreadContextSchema | None:
     cross_thread: CrossThreadContextSchema | None = None
     if needs_context and openai_client is not None:
         # OpenAI + Graph run inside context_service without holding a DB txn.
@@ -676,15 +693,61 @@ async def _run_phased_post_ingest(
             mailbox=email.mailbox,
             message_id=message_id,
         )
+    return cross_thread
 
-    # --- Short DB reads, then release before OpenAI / Haiku ---
+
+async def _phased_append_recurrence_hint(
+    session: AsyncSession,
+    *,
+    email: EmailMessageSchema,
+    thread_id: uuid.UUID,
+    urgency_hints: list[str],
+) -> list[str]:
+    from app.services import recurrence_service
+
+    try:
+        count = await recurrence_service.count_automated_inbound_48h(session, thread_id)
+        similar = None
+        thread_row = await thread_repo.get_by_id(
+            session, thread_id, TenantScope.single(email.mailbox)
+        )
+        if thread_row is not None and thread_row.alert_fingerprint:
+            from datetime import UTC, datetime
+
+            cluster = await thread_repo.list_open_alert_cluster(
+                session,
+                mailbox=thread_row.mailbox,
+                fingerprint=thread_row.alert_fingerprint,
+                signature=thread_row.alert_signature,
+                sender_norm=thread_row.alert_sender_norm,
+                now=datetime.now(UTC),
+            )
+            similar = len(cluster) if cluster else None
+        hint = recurrence_service.recurrence_hint(count, similar_thread_count=similar)
+        if hint:
+            return [hint, *urgency_hints]
+    except Exception:
+        logger.warning(
+            "recurrence_hint_failed",
+            thread_id=str(thread_id),
+        )
+    return urgency_hints
+
+
+async def _phased_load_draft_inputs(
+    *,
+    state: EmailTriageState,
+    email: EmailMessageSchema,
+    message_id: str,
+    thread_id: uuid.UUID,
+    client: AsyncAnthropic,
+    openai_client: AsyncOpenAI | None,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> _DraftPhaseInputs:
     skill_contents: list[str] = []
     skill_ids: list[uuid.UUID] = []
     applied_skills: list = []
-    tone_references: list[str] = []
-    tone_profile_block: str | None = None
-    negative_constraints: list[str] = []
-    urgency_hints: list[str] = []
     email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
     routing_category = state.triage.routing_category if state.triage is not None else "general"
 
@@ -763,181 +826,158 @@ async def _run_phased_post_ingest(
             routing_category=routing_category,
             limit=3,
         )
-        if thread_id is not None:
-            from app.services import recurrence_service
-
-            try:
-                count = await recurrence_service.count_automated_inbound_48h(session, thread_id)
-                similar = None
-                thread_row = await thread_repo.get_by_id(
-                    session, thread_id, TenantScope.single(email.mailbox)
-                )
-                if thread_row is not None and thread_row.alert_fingerprint:
-                    from datetime import UTC, datetime
-
-                    cluster = await thread_repo.list_open_alert_cluster(
-                        session,
-                        mailbox=thread_row.mailbox,
-                        fingerprint=thread_row.alert_fingerprint,
-                        signature=thread_row.alert_signature,
-                        sender_norm=thread_row.alert_sender_norm,
-                        now=datetime.now(UTC),
-                    )
-                    similar = len(cluster) if cluster else None
-                hint = recurrence_service.recurrence_hint(count, similar_thread_count=similar)
-                if hint:
-                    urgency_hints = [hint, *urgency_hints]
-            except Exception:
-                logger.warning(
-                    "recurrence_hint_failed",
-                    thread_id=str(thread_id),
-                )
-        await session.commit()
-
-    async def _generate_and_persist_draft(
-        current: EmailTriageState,
-        *,
-        cross_thread_context: CrossThreadContextSchema | None = None,
-        tone_references: list[str] | None = None,
-        tone_profile: str | None = None,
-        negative_constraints: list[str] | None = None,
-        urgency_hints: list[str] | None = None,
-    ) -> EmailTriageState:
-        if existing is not None:
-            current.draft = DraftSchema.model_validate(
-                existing.model_dump(include=set(DraftSchema.model_fields))
-            )
-            current.draft_status = "DRAFTED"
-            return current
-
-        if current.triage is None:
-            current.draft_status = "REQUIRES_HUMAN"
-            current.error_logs.append("draft_skipped:missing_triage")
-            return current
-
-        try:
-            from app.services.skill_reference_service import make_reference_loader
-
-            reference_loader = None
-            if skill_ids:
-                reference_loader, _ = make_reference_loader(
-                    active_skill_ids=set(skill_ids),
-                    session_factory=session_factory,
-                )
-            from app.services import related_thread_service
-
-            async with session_factory() as assoc_session:
-                confirmed_associations = await related_thread_service.load_confirmed_contexts(
-                    assoc_session,
-                    thread_id,
-                )
-            generated = await draft_llm.generate_draft(
-                current.original_email,
-                current.thread_context,
-                current.triage,
-                client=client,
-                settings=settings,
-                cross_thread_context=cross_thread_context,
-                tone_references=tone_references,
-                tone_profile=tone_profile,
-                skills=skill_contents,
-                negative_constraints=negative_constraints,
-                urgency_hints=urgency_hints,
-                reference_loader=reference_loader,
-                confirmed_associations=confirmed_associations,
-            )
-        except DraftGenerationError as exc:
-            logger.warning(
-                "draft_generation_failed",
-                conversation_id=email.conversation_id,
-                mailbox=email.mailbox,
-                message_id=message_id,
-                error_type=type(exc).__name__,
-            )
-            current.draft_status = "REQUIRES_HUMAN"
-            current.error_logs.append(f"draft_failed:{type(exc).__name__}")
-            return current
-
-        confidence = (
-            cross_thread_context.similarity_score if cross_thread_context is not None else None
-        )
-        async with session_factory() as session, session.begin():
-            persisted = await draft_repo.create_draft(
-                session,
-                thread_id=thread_id,
-                message_id=message_id,
-                draft=generated.draft,
-                prompt_version=generated.prompt_version,
-                context_match_confidence=confidence,
-                routing_category=(
-                    state.triage.routing_category if state.triage is not None else None
-                ),
-                tool_calls=generated.tool_calls or None,
-                applied_skills=applied_skills or None,
-            )
-            if generated.tool_calls:
-                try:
-                    await audit_service.log_event(
-                        session,
-                        event_type="draft.skill_reference_read",
-                        conversation_id=email.conversation_id,
-                        mailbox=email.mailbox,
-                        payload={
-                            "draft_id": str(persisted.id),
-                            "tool_calls": generated.tool_calls,
-                        },
-                        actor="system",
-                    )
-                except Exception:
-                    logger.warning(
-                        "draft_skill_reference_audit_failed",
-                        message_id=message_id,
-                    )
-            current.draft = DraftSchema.model_validate(
-                persisted.model_dump(include=set(DraftSchema.model_fields))
-            )
-            current.draft_status = "DRAFTED"
-            logger.info(
-                "draft_persisted",
-                conversation_id=email.conversation_id,
-                mailbox=email.mailbox,
-                message_id=message_id,
-                prompt_version=generated.prompt_version,
-                urgency=generated.draft.urgency,
-                model=generated.model,
-                latency_ms=generated.latency_ms,
-                context_match_confidence=confidence,
-                skills_count=len(skill_contents),
-            )
-            return current
-
-    if needs_context:
-        state = await _generate_and_persist_draft(
-            state,
-            cross_thread_context=cross_thread,
-            tone_references=tone_references,
-            tone_profile=tone_profile_block,
-            negative_constraints=negative_constraints,
+        urgency_hints = await _phased_append_recurrence_hint(
+            session,
+            email=email,
+            thread_id=thread_id,
             urgency_hints=urgency_hints,
         )
-    else:
-        _embed_result, state = await asyncio.gather(
-            _embed_in_fresh_session(
-                state=state,
-                openai_client=openai_client,
-                settings=settings,
-                session_factory=session_factory,
-            ),
-            _generate_and_persist_draft(
-                state,
-                tone_references=tone_references,
-                tone_profile=tone_profile_block,
-                negative_constraints=negative_constraints,
-                urgency_hints=urgency_hints,
-            ),
-        )
-        _ = _embed_result
+        await session.commit()
 
+    return _DraftPhaseInputs(
+        existing=existing,
+        skill_contents=skill_contents,
+        skill_ids=skill_ids,
+        applied_skills=applied_skills,
+        tone_references=tone_references,
+        tone_profile_block=tone_profile_block,
+        negative_constraints=negative_constraints,
+        urgency_hints=urgency_hints,
+    )
+
+
+async def _phased_generate_and_persist_draft(
+    current: EmailTriageState,
+    *,
+    inputs: _DraftPhaseInputs,
+    email: EmailMessageSchema,
+    message_id: str,
+    thread_id: uuid.UUID,
+    client: AsyncAnthropic,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    cross_thread_context: CrossThreadContextSchema | None = None,
+    tone_references: list[str] | None = None,
+    tone_profile: str | None = None,
+    negative_constraints: list[str] | None = None,
+    urgency_hints: list[str] | None = None,
+) -> EmailTriageState:
+    if inputs.existing is not None:
+        current.draft = DraftSchema.model_validate(
+            inputs.existing.model_dump(include=set(DraftSchema.model_fields))
+        )
+        current.draft_status = "DRAFTED"
+        return current
+
+    if current.triage is None:
+        current.draft_status = "REQUIRES_HUMAN"
+        current.error_logs.append("draft_skipped:missing_triage")
+        return current
+
+    try:
+        from app.services.skill_reference_service import make_reference_loader
+
+        reference_loader = None
+        if inputs.skill_ids:
+            reference_loader, _ = make_reference_loader(
+                active_skill_ids=set(inputs.skill_ids),
+                session_factory=session_factory,
+            )
+        from app.services import related_thread_service
+
+        async with session_factory() as assoc_session:
+            confirmed_associations = await related_thread_service.load_confirmed_contexts(
+                assoc_session,
+                thread_id,
+            )
+        generated = await draft_llm.generate_draft(
+            current.original_email,
+            current.thread_context,
+            current.triage,
+            client=client,
+            settings=settings,
+            cross_thread_context=cross_thread_context,
+            tone_references=tone_references,
+            tone_profile=tone_profile,
+            skills=inputs.skill_contents,
+            negative_constraints=negative_constraints,
+            urgency_hints=urgency_hints,
+            reference_loader=reference_loader,
+            confirmed_associations=confirmed_associations,
+        )
+    except DraftGenerationError as exc:
+        logger.warning(
+            "draft_generation_failed",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=message_id,
+            error_type=type(exc).__name__,
+        )
+        current.draft_status = "REQUIRES_HUMAN"
+        current.error_logs.append(f"draft_failed:{type(exc).__name__}")
+        return current
+
+    confidence = cross_thread_context.similarity_score if cross_thread_context is not None else None
+    async with session_factory() as session, session.begin():
+        persisted = await draft_repo.create_draft(
+            session,
+            thread_id=thread_id,
+            message_id=message_id,
+            draft=generated.draft,
+            prompt_version=generated.prompt_version,
+            context_match_confidence=confidence,
+            routing_category=(
+                current.triage.routing_category if current.triage is not None else None
+            ),
+            tool_calls=generated.tool_calls or None,
+            applied_skills=inputs.applied_skills or None,
+        )
+        if generated.tool_calls:
+            try:
+                await audit_service.log_event(
+                    session,
+                    event_type="draft.skill_reference_read",
+                    conversation_id=email.conversation_id,
+                    mailbox=email.mailbox,
+                    payload={
+                        "draft_id": str(persisted.id),
+                        "tool_calls": generated.tool_calls,
+                    },
+                    actor="system",
+                )
+            except Exception:
+                logger.warning(
+                    "draft_skill_reference_audit_failed",
+                    message_id=message_id,
+                )
+        current.draft = DraftSchema.model_validate(
+            persisted.model_dump(include=set(DraftSchema.model_fields))
+        )
+        current.draft_status = "DRAFTED"
+        logger.info(
+            "draft_persisted",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=message_id,
+            prompt_version=generated.prompt_version,
+            urgency=generated.draft.urgency,
+            model=generated.model,
+            latency_ms=generated.latency_ms,
+            context_match_confidence=confidence,
+            skills_count=len(inputs.skill_contents),
+        )
+        return current
+
+
+async def _phased_finalize_draft_and_slack(
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID,
+    redis: Redis,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    post_slack: bool,
+) -> EmailTriageState:
     draft_event = "draft.generated" if state.draft_status == "DRAFTED" else "draft.requires_human"
     async with session_factory() as session, session.begin():
         await _safe_audit(
@@ -959,8 +999,119 @@ async def _run_phased_post_ingest(
             )
         else:
             state.slack_delivery = "not_required"
-
     return state
+
+
+async def _run_phased_post_ingest(
+    *,
+    redis: Redis,
+    settings: Settings,
+    client: AsyncAnthropic,
+    openai_client: AsyncOpenAI | None,
+    ingest_result: IngestResultSchema,
+    session_factory: async_sessionmaker[AsyncSession],
+    graph_client: GraphClient | None = None,
+    post_slack: bool = True,
+) -> EmailTriageState:
+    """Triage/draft LLMs outside DB transactions; short txns for writes; Slack after commit."""
+    context = ingest_result.thread_context
+    if context is None:
+        raise ValueError("thread_context is required for post-ingest triage")
+
+    email = _select_original_email(
+        message_id=ingest_result.message_id,
+        thread_context=context,
+    )
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=context,
+        draft_status="PENDING",
+    )
+    parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
+    state = await _phased_triage_summarize(
+        state=state,
+        email=email,
+        client=client,
+        settings=settings,
+        session_factory=session_factory,
+        parsed_thread_id=parsed_thread_id,
+    )
+
+    early = await _phased_early_draft_exit(
+        state=state,
+        ingest_result=ingest_result,
+        openai_client=openai_client,
+        settings=settings,
+        session_factory=session_factory,
+    )
+    if early is not None:
+        return early
+
+    thread_id = uuid.UUID(ingest_result.thread_id)
+    message_id = email.message_id
+    needs_context = bool(state.triage and state.triage.needs_context)
+    cross_thread = await _phased_resolve_cross_thread(
+        state=state,
+        email=email,
+        message_id=message_id,
+        needs_context=needs_context,
+        openai_client=openai_client,
+        settings=settings,
+        session_factory=session_factory,
+        graph_client=graph_client,
+    )
+
+    # --- Short DB reads, then release before OpenAI / Haiku ---
+    inputs = await _phased_load_draft_inputs(
+        state=state,
+        email=email,
+        message_id=message_id,
+        thread_id=thread_id,
+        client=client,
+        openai_client=openai_client,
+        settings=settings,
+        session_factory=session_factory,
+    )
+
+    draft_kwargs = {
+        "inputs": inputs,
+        "email": email,
+        "message_id": message_id,
+        "thread_id": thread_id,
+        "client": client,
+        "settings": settings,
+        "session_factory": session_factory,
+        "tone_references": inputs.tone_references,
+        "tone_profile": inputs.tone_profile_block,
+        "negative_constraints": inputs.negative_constraints,
+        "urgency_hints": inputs.urgency_hints,
+    }
+    if needs_context:
+        state = await _phased_generate_and_persist_draft(
+            state,
+            cross_thread_context=cross_thread,
+            **draft_kwargs,
+        )
+    else:
+        _embed_result, state = await asyncio.gather(
+            _embed_in_fresh_session(
+                state=state,
+                openai_client=openai_client,
+                settings=settings,
+                session_factory=session_factory,
+            ),
+            _phased_generate_and_persist_draft(state, **draft_kwargs),
+        )
+        _ = _embed_result
+
+    return await _phased_finalize_draft_and_slack(
+        state=state,
+        thread_id=thread_id,
+        redis=redis,
+        settings=settings,
+        session_factory=session_factory,
+        post_slack=post_slack,
+    )
 
 
 async def run_post_ingest_triage(

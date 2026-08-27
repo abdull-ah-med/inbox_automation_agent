@@ -94,18 +94,14 @@ def _name_level_tool_score(
         prefix = expected.get("path_prefix")
         if not prefix:
             continue
-        path_ok = any(
-            str(t.get("path") or "").startswith(str(prefix)) for t in tools_called
-        )
+        path_ok = any(str(t.get("path") or "").startswith(str(prefix)) for t in tools_called)
         if not path_ok:
             break
 
     if not expected_tools:
         return (1.0 if not tools_called else 0.0), path_ok
 
-    expected_names = {
-        str(t.get("name") or "read_skill_reference") for t in expected_tools
-    }
+    expected_names = {str(t.get("name") or "read_skill_reference") for t in expected_tools}
     called_names = {str(t.get("name")) for t in tools_called}
     if not (expected_names & called_names):
         return 0.0, path_ok
@@ -257,6 +253,4 @@ async def test_ragas_suite_c_tool_accuracy(
         )
         assert path_ok, "Expected reference path_prefix not found in tools_called"
     else:
-        assert not payload.tools_called, (
-            f"Decoy case expected no tools, got {payload.tools_called}"
-        )
+        assert not payload.tools_called, f"Decoy case expected no tools, got {payload.tools_called}"

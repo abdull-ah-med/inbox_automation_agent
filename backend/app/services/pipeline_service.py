@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from app.services.pipeline.service import (  # noqa: F401
     _allowlisted_senders,
-    _invalidate_chat_cache_mailbox,  # noqa: F401
+    _invalidate_chat_cache_mailbox,
     _post_slack_card_after_commit,
     _resolve_graph_client,
     _run_phased_post_ingest,

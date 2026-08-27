@@ -90,8 +90,7 @@ def _session_factory() -> MagicMock:
     factory_cm = AsyncMock()
     factory_cm.__aenter__ = AsyncMock(return_value=session)
     factory_cm.__aexit__ = AsyncMock(return_value=None)
-    factory = MagicMock(return_value=factory_cm)
-    return factory
+    return MagicMock(return_value=factory_cm)
 
 
 @pytest.mark.asyncio

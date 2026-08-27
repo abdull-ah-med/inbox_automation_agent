@@ -43,9 +43,7 @@ def test_pipeline_suites_exclude_chat_shaped_v1_fixtures() -> None:
         "long-thread-summary-query",
         "quoted-reply-new-topic",
     }
-    pipeline_ids = {c["id"] for c in cases_for_suite("B")} | {
-        c["id"] for c in cases_for_suite("C")
-    }
+    pipeline_ids = {c["id"] for c in cases_for_suite("B")} | {c["id"] for c in cases_for_suite("C")}
     assert chat_shaped.isdisjoint(pipeline_ids)
     assert "courtesy-close-olivia" in {c["id"] for c in cases_for_suite("B")}
 

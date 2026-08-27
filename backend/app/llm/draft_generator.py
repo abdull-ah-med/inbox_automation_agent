@@ -76,6 +76,7 @@ READ_SKILL_REFERENCE_TOOL: dict[str, Any] = {
     },
 }
 
+
 @dataclass(frozen=True, slots=True)
 class DraftCallResult:
     draft: DraftSchema
@@ -142,9 +143,7 @@ def _build_user_content(
         if cross_block == "(none)":
             cross_block = f"Confirmed associated threads:\n{packed}{hints}"
         else:
-            cross_block = (
-                f"{cross_block}\n\nConfirmed associated threads:\n{packed}{hints}"
-            )
+            cross_block = f"{cross_block}\n\nConfirmed associated threads:\n{packed}{hints}"
     if tone_references:
         tone_block = "\n".join(f"- {ref}" for ref in tone_references if ref.strip())
         if not tone_block:
@@ -191,6 +190,7 @@ def _build_user_content(
     addressee = resolve_reply_addressee(
         mailbox=email.mailbox,
         messages=cast(Any, list(thread_context.messages) or [email]),
+        mailbox_owner=mailbox_owner,
     )
     addressee_block = ""
     if addressee is not None:

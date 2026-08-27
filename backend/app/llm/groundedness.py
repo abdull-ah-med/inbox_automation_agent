@@ -105,10 +105,7 @@ async def verify_grounded(
     if not settings.anthropic_api_key.strip():
         return _supported()
 
-    user = (
-        f"Answer:\n{answer.strip()}\n\n"
-        f"Citations:\n{_citation_text(citations) or '(none)'}"
-    )
+    user = f"Answer:\n{answer.strip()}\n\nCitations:\n{_citation_text(citations) or '(none)'}"
 
     async def _call() -> Groundedness:
         response = await client.messages.create(

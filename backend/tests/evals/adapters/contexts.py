@@ -147,9 +147,7 @@ def flow_b_chunks(cross: CrossThreadContextSchema | None) -> list[str]:
     chunks: list[str] = []
     for msg in cross.thread_messages:
         body = (msg.body_clean or msg.body_text or msg.body_preview or "").strip()
-        chunks.append(
-            f"[{msg.direction.value}] from={msg.sender} subject={msg.subject!r}\n{body}"
-        )
+        chunks.append(f"[{msg.direction.value}] from={msg.sender} subject={msg.subject!r}\n{body}")
     return chunks
 
 

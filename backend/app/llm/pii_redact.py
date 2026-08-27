@@ -69,7 +69,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         TOKEN_BANK,
     ),
-    # Labeled bank / account number (6–17 digits)
+    # Labeled bank / account number (6-17 digits)
     (
         re.compile(
             r"(?i)\b(?:bank\s+)?(?:account|acct)(?:\s+(?:number|no\.?|#))?\s*[:#]?\s*"
@@ -117,7 +117,7 @@ _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
 )
 
-# Payment-card candidates: 13–19 digits with optional separators; validated by Luhn.
+# Payment-card candidates: 13-19 digits with optional separators; validated by Luhn.
 _CARD_CANDIDATE = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")
 
 
@@ -153,8 +153,7 @@ def scrub_text(text: str) -> str:
     result = text
     for pattern, token in _PATTERNS:
         result = pattern.sub(token, result)
-    result = _scrub_cards(result)
-    return result
+    return _scrub_cards(result)
 
 
 def scrub_email_for_llm(email: EmailMessageSchema) -> EmailMessageSchema:
@@ -166,13 +165,9 @@ def scrub_email_for_llm(email: EmailMessageSchema) -> EmailMessageSchema:
             "body_preview": (
                 scrub_text(email.body_preview) if email.body_preview is not None else None
             ),
-            "body_clean": (
-                scrub_text(email.body_clean) if email.body_clean is not None else None
-            ),
+            "body_clean": (scrub_text(email.body_clean) if email.body_clean is not None else None),
             "summary_one_line": (
-                scrub_text(email.summary_one_line)
-                if email.summary_one_line is not None
-                else None
+                scrub_text(email.summary_one_line) if email.summary_one_line is not None else None
             ),
         }
     )

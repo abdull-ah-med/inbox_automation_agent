@@ -116,7 +116,7 @@ def test_build_user_content_includes_owner_signoff_when_set() -> None:
         _triage(),
         mailbox_owner="Elise",
     )
-    assert 'Sign the reply as Elise' in content
+    assert "Sign the reply as Elise" in content
     assert 'Closing name must be exactly "Elise"' in content
 
 

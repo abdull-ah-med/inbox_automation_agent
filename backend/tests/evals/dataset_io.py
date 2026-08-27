@@ -52,9 +52,7 @@ def list_chat_v1_cases() -> list[dict[str, Any]]:
 
 def chat_cases_for_suite(suite: str) -> list[dict[str, Any]]:
     tag = suite.upper()
-    return [
-        c for c in list_chat_v1_cases() if tag in {t.upper() for t in c.get("suite_tags", [])}
-    ]
+    return [c for c in list_chat_v1_cases() if tag in {t.upper() for t in c.get("suite_tags", [])}]
 
 
 def new_run_dir(prefix: str = "run") -> Path:

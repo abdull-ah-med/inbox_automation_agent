@@ -46,6 +46,7 @@ def salted_untrusted_tag() -> str:
     """Per-request delimiter so retrieved mail cannot close a static XML tag."""
     return f"untrusted_content_{secrets.token_hex(4)}"
 
+
 URGENCY_LEVELS: tuple[str, ...] = ("CRITICAL", "HIGH", "NORMAL", "LOW")
 
 URGENCY_TAXONOMY = """\
@@ -141,11 +142,11 @@ Determine has_action_items based on the sender, recipients, and CC list:
 - If the PoI mailbox is in To or CC, consider whether the email asks something of them.
 - If the PoI mailbox is the sender, this is outbound — has_action_items is false.
 - Automated confirmations, newsletters, and FYI forwards typically have no action items.
-- Acknowledgment or courtesy close is not an action item: “sounds good”, “thanks”,
-  or “let me know if you’re unable” with no new ask. Conditional courtesy
-  (“if you can’t, tell me”) is not a task for the PoI unless they were asked to
+- Acknowledgment or courtesy close is not an action item: "sounds good", "thanks",
+  or "let me know if you're unable" with no new ask. Conditional courtesy
+  ("if you can't, tell me") is not a task for the PoI unless they were asked to
   do something now.
-- If the ball is already in the other party’s court, has_action_items is false.
+- If the ball is already in the other party's court, has_action_items is false.
 
 For needs_context: look for references to prior conversations, "as discussed",
 "following up on", "per our earlier email", or any indication the email is part of
@@ -226,7 +227,7 @@ Do not invent IDs.
 SKILL_CANDIDATE_SYSTEM_PROMPT = """\
 You propose one standing skill instruction from recurring rejection feedback notes.
 Return JSON with proposed_name (short, title case) and proposed_content (imperative
-standing rule the draft model should follow). Keep content concise (2–6 sentences).
+standing rule the draft model should follow). Keep content concise (2-6 sentences).
 Do not invent mailbox-specific secrets. Base the skill only on the provided notes.
 """
 

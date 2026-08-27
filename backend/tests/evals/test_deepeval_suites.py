@@ -71,7 +71,6 @@ async def _measure_scores(test_case: Any, metrics: list[Any]) -> dict[str, Any]:
     return await measure_metric_scores(test_case, metrics)
 
 
-
 def _to_tool_calls(items: list[dict[str, Any]], ToolCall: Any) -> list[Any]:
     out: list[Any] = []
     for item in items:
@@ -91,8 +90,7 @@ def _expected_tool_calls(payload: EvalPayload, ToolCall: Any) -> list[Any]:
     if not payload.expected_tools:
         return []
     return [
-        ToolCall(name=str(t.get("name") or "read_skill_reference"))
-        for t in payload.expected_tools
+        ToolCall(name=str(t.get("name") or "read_skill_reference")) for t in payload.expected_tools
     ]
 
 
@@ -165,9 +163,7 @@ async def test_deepeval_suite_b_generator(
         retrieval_context=contexts,
     )
     metrics = [
-        de["FaithfulnessMetric"](
-            threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
-        ),
+        de["FaithfulnessMetric"](threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True),
         de["AnswerRelevancyMetric"](
             threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
         ),
@@ -207,9 +203,7 @@ async def test_deepeval_suite_c_tools_and_geval(
         tools_called=tools_called,
         expected_tools=expected_tools,
     )
-    tool_metric = de["ToolCorrectnessMetric"](
-        threshold=_PERMISSIVE_THRESHOLD, include_reason=True
-    )
+    tool_metric = de["ToolCorrectnessMetric"](threshold=_PERMISSIVE_THRESHOLD, include_reason=True)
     tool_scores = await _measure_scores(tool_case, [tool_metric])
 
     criteria = payload.metadata.get("geval_criteria") or (

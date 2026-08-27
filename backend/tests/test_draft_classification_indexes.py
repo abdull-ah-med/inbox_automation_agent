@@ -52,8 +52,7 @@ async def test_recent_approved_drafts_use_approved_at_index(db_session) -> None:
 
     plan = await _explain(
         db_session,
-        "SELECT id FROM drafts WHERE approved_at IS NOT NULL "
-        "ORDER BY approved_at DESC LIMIT 20",
+        "SELECT id FROM drafts WHERE approved_at IS NOT NULL ORDER BY approved_at DESC LIMIT 20",
         {},
     )
     assert "ix_drafts_approved_at" in plan
@@ -86,8 +85,7 @@ async def test_latest_teaching_note_uses_thread_created_index(db_session) -> Non
 
     plan = await _explain(
         db_session,
-        "SELECT teaching_note FROM drafts "
-        "WHERE thread_id = :tid ORDER BY created_at DESC LIMIT 1",
+        "SELECT teaching_note FROM drafts WHERE thread_id = :tid ORDER BY created_at DESC LIMIT 1",
         {"tid": thread.id},
     )
     assert "ix_drafts_thread_id_created_at" in plan
@@ -134,8 +132,7 @@ async def test_latest_classification_uses_message_created_index(db_session) -> N
 
     plan = await _explain(
         db_session,
-        "SELECT id FROM classifications "
-        "WHERE message_id = :mid ORDER BY created_at DESC LIMIT 1",
+        "SELECT id FROM classifications WHERE message_id = :mid ORDER BY created_at DESC LIMIT 1",
         {"mid": message.id},
     )
     assert "ix_classifications_message_id_created_at" in plan

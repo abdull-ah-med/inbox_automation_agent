@@ -62,9 +62,7 @@ async def _apply_draft_outcome_state(
                 )
 
             try:
-                await related_thread_service.propose_drip_associations(
-                    session, thread_id=thread_id
-                )
+                await related_thread_service.propose_drip_associations(session, thread_id=thread_id)
             except Exception:
                 logger.warning(
                     "drip_association_propose_failed",

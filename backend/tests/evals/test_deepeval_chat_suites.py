@@ -139,9 +139,7 @@ async def test_deepeval_chat_suite_b_generator(
         retrieval_context=contexts,
     )
     metrics = [
-        de["FaithfulnessMetric"](
-            threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
-        ),
+        de["FaithfulnessMetric"](threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True),
         de["AnswerRelevancyMetric"](
             threshold=_PERMISSIVE_THRESHOLD, model=model, include_reason=True
         ),

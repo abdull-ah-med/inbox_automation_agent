@@ -88,8 +88,7 @@ async def test_faithfulness_gate_meets_baseline_thresholds() -> None:
             scores[name].append(float(metric.score or 0.0))
 
     averages = {
-        name: (sum(values) / len(values) if values else 0.0)
-        for name, values in scores.items()
+        name: (sum(values) / len(values) if values else 0.0) for name, values in scores.items()
     }
     write_json(run_dir / "gate_scores.json", averages)
     for name, floor in thresholds.items():

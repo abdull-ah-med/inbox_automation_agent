@@ -17,9 +17,7 @@ from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
 
 AUG12_ANSWER = "Ashley signed the deal on Aug 12."
 CITATION_WITHOUT_DATE = "Ashley asked us to review the contract this week."
-PARAPHRASE_ANSWER = (
-    "Ashley asked the team to look over the contract during this week."
-)
+PARAPHRASE_ANSWER = "Ashley asked the team to look over the contract during this week."
 
 
 def _settings(**overrides: object) -> Settings:
@@ -32,9 +30,7 @@ def _settings(**overrides: object) -> Settings:
         "anthropic_api_key": "sk-ant-test",
         "chat_model": "claude-haiku-4-5",
         "classification_model": "claude-haiku-4-5",
-        "database_url": (
-            "postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"
-        ),
+        "database_url": ("postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"),
         "redis_url": "redis://localhost:6379/15",
     }
     values.update(overrides)
@@ -66,9 +62,7 @@ async def test_date_claim_missing_from_citations_is_unsupported() -> None:
     from app.llm.groundedness import verify_grounded
 
     assert "Aug 12" not in CITATION_WITHOUT_DATE
-    client = _client(
-        '{"verdict":"UNSUPPORTED","unsupported_spans":["Aug 12"]}'
-    )
+    client = _client('{"verdict":"UNSUPPORTED","unsupported_spans":["Aug 12"]}')
     result = await verify_grounded(
         AUG12_ANSWER,
         [{"text": CITATION_WITHOUT_DATE}],

@@ -88,10 +88,7 @@ def test_build_user_content_includes_mailbox_owner_when_set() -> None:
         mailbox_owner="Elise",
     )
     assert "Mailbox: sampleagent@sample-site.example.com" in content
-    assert (
-        "Mailbox owner: Elise (personal inbox — mail here is for Elise specifically)"
-        in content
-    )
+    assert "Mailbox owner: Elise (personal inbox — mail here is for Elise specifically)" in content
 
 
 def test_build_user_content_omits_mailbox_owner_when_unset() -> None:
