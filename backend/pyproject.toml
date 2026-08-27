@@ -77,11 +77,83 @@ target-version = "py311"
 line-length = 100
 extend-exclude = ["app/llm/_vendor"]
 
+[tool.ruff.format]
+# Black-compatible defaults (https://docs.astral.sh/ruff/formatter/).
+docstring-code-format = true
+
 [tool.ruff.lint]
-# E/F = pyflakes+pycodestyle, I = import sorting, UP = pyupgrade,
-# B = bugbear (real-bug patterns), ASYNC = async correctness (critical here),
-# C4 = comprehensions, SIM = simplifications.
-select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM"]
+# Prefer an explicit select over ALL so upgrades do not silently expand the
+# gate (https://docs.astral.sh/ruff/linter/#rule-selection).
+# E/W/F = pycodestyle+pyflakes, I = isort, UP = pyupgrade,
+# B = bugbear, ASYNC = async correctness, C4 = comprehensions, SIM = simplify,
+# S = bandit security, FAST = FastAPI, RUF = Ruff-specific, PERF/PIE = perf/pie,
+# RET/ARG = returns/unused args, PTH = pathlib, T20 = no print, DTZ = tz-aware
+# datetimes, LOG/G = logging, A = builtin shadowing, ERA = commented-out code
+# (AI/slop residue), PT = pytest style, C90 = McCabe complexity,
+# PLR = pylint refactor (branches/statements/returns).
+# Budgets: misc/lint-budgets.toml
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "ASYNC",
+    "C4",
+    "C90",
+    "SIM",
+    "S",
+    "FAST",
+    "RUF",
+    "PERF",
+    "PIE",
+    "RET",
+    "ARG",
+    "PTH",
+    "T20",
+    "DTZ",
+    "LOG",
+    "G",
+    "A",
+    "ERA",
+    "PT",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+]
+ignore = [
+    # Formatter owns wrapping (https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules).
+    "E501",
+    # Bandit flags common credential *field names* (password=, redis URL placeholders)
+    # as hardcoded secrets; real secrets stay out of git via .env / CI secrets.
+    "S105",
+    "S106",
+    # Existing tests often combine related asserts; enable gradually after triage.
+    "PT018",
+    # Micro-style; prefer clarity over forced comprehensions in hot paths.
+    "PERF401",
+    "PERF403",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.lint.pylint]
+max-branches = 20
+max-statements = 80
+max-returns = 8
+
+[tool.ruff.lint.per-file-ignores]
+# pytest asserts are the API; bandit S101 is for production assert misuse.
+# Live/integration tests intentionally exercise long happy-path flows.
+"tests/**" = ["S101", "T20", "ARG", "S603", "S607", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"scripts/**" = ["T20", "C901", "PLR0911", "PLR0912", "PLR0915"]
+# FastAPI Depends() defaults are intentional (https://docs.astral.sh/ruff/rules/function-call-in-default-argument/).
+"app/api/**" = ["B008"]
+# Vendored / migration surfaces.
+"app/db/migrations/**" = ["ARG", "ERA", "RUF", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"app/llm/_vendor/**" = ["C901", "PLR0911", "PLR0912", "PLR0915"]
 
 [tool.mypy]
 python_version = "3.11"

@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from "next"
 
 /**
  * Security headers for every response.
@@ -13,7 +13,7 @@ import type { NextConfig } from "next";
  * - https://nextjs.org/docs/app/api-reference/config/next-config-js/rewrites
  */
 
-const rawApiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "";
+const rawApiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? ""
 
 if (
   process.env.NODE_ENV === "production" &&
@@ -21,20 +21,18 @@ if (
   !process.env.NEXT_PUBLIC_API_BASE_URL.startsWith("https://") &&
   !process.env.NEXT_PUBLIC_API_BASE_URL.includes("localhost")
 ) {
-  throw new Error("NEXT_PUBLIC_API_BASE_URL must be an https:// URL in production");
+  throw new Error("NEXT_PUBLIC_API_BASE_URL must be an https:// URL in production")
 }
 
-const isProd = process.env.NODE_ENV === "production";
+const isProd = process.env.NODE_ENV === "production"
 
 const scriptSrc = isProd
   ? "script-src 'self' 'unsafe-inline'"
-  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'"
 
 // Same-origin (empty API base) uses connect-src 'self' only — matches local
 // Next rewrites and production nginx. Cross-origin API base is listed explicitly.
-const connectSrc = rawApiBase
-  ? `connect-src 'self' ${rawApiBase}`
-  : "connect-src 'self'";
+const connectSrc = rawApiBase ? `connect-src 'self' ${rawApiBase}` : "connect-src 'self'"
 
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -46,7 +44,7 @@ const contentSecurityPolicy = [
   "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
-].join("; ");
+].join("; ")
 
 const securityHeaders: { key: string; value: string }[] = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -57,7 +55,7 @@ const securityHeaders: { key: string; value: string }[] = [
   },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Content-Security-Policy", value: contentSecurityPolicy },
-];
+]
 
 if (isProd) {
   // HSTS: only when production HTTPS is guaranteed.
@@ -65,7 +63,7 @@ if (isProd) {
   securityHeaders.push({
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
-  });
+  })
 }
 
 const nextConfig: NextConfig = {
@@ -86,7 +84,7 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: securityHeaders,
       },
-    ];
+    ]
   },
   /**
    * Local: proxy /auth and /api to FastAPI so cookies (including CSRF) are
@@ -97,15 +95,14 @@ const nextConfig: NextConfig = {
    */
   async rewrites() {
     if (isProd) {
-      return [];
+      return []
     }
-    const backend =
-      process.env.BACKEND_PROXY_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
+    const backend = process.env.BACKEND_PROXY_URL?.replace(/\/$/, "") ?? "http://localhost:8000"
     return [
       { source: "/auth/:path*", destination: `${backend}/auth/:path*` },
       { source: "/api/:path*", destination: `${backend}/api/:path*` },
-    ];
+    ]
   },
-};
+}
 
-export default nextConfig;
+export default nextConfig
