@@ -33,22 +33,16 @@ export const DraftSection = ({
     <Panel title="Draft reply">
       {draft ? (
         <div className="space-y-3">
-          {badge ? (
-            <StatusBadge label={badge.label} tone={badge.tone} />
-          ) : null}
+          {badge ? <StatusBadge label={badge.label} tone={badge.tone} /> : null}
           <Field label="Subject" value={draft.subject} />
           <div>
-            <p className="text-xs text-muted-foreground">Body</p>
+            <p className="text-muted-foreground text-xs">Body</p>
             <div className="mt-1 overflow-auto">
               <EmailBody text={draft.body} />
             </div>
           </div>
-          {draft.forward_to ? (
-            <Field label="Forward to" value={draft.forward_to} />
-          ) : null}
-          {draft.feedback_note ? (
-            <Field label="Feedback note" value={draft.feedback_note} />
-          ) : null}
+          {draft.forward_to ? <Field label="Forward to" value={draft.forward_to} /> : null}
+          {draft.feedback_note ? <Field label="Feedback note" value={draft.feedback_note} /> : null}
           {draft.approval_note ? (
             <div className="space-y-1">
               <Field label="Learning context" value={draft.approval_note} />
@@ -66,20 +60,15 @@ export const DraftSection = ({
           ) : null}
 
           <div>
-            <p className="text-xs text-muted-foreground">Skills used</p>
+            <p className="text-muted-foreground text-xs">Skills used</p>
             {(draft.applied_skills?.length ?? 0) === 0 ? (
-              <p className="mt-1 text-sm text-gray-500">
-                No skills applied for this draft
-              </p>
+              <p className="mt-1 text-sm text-gray-500">No skills applied for this draft</p>
             ) : (
               <ul className="mt-2 space-y-2">
                 {draft.applied_skills.map((skill) => {
                   const refs = (draft.tool_calls ?? [])
                     .filter(
-                      (call) =>
-                        call.skill_id === skill.id &&
-                        !call.is_error &&
-                        Boolean(call.path),
+                      (call) => call.skill_id === skill.id && !call.is_error && Boolean(call.path),
                     )
                     .map((call) => call.path)
                   const uniqueRefs = [...new Set(refs)]
@@ -87,7 +76,7 @@ export const DraftSection = ({
                     <li key={skill.id} className="space-y-1">
                       <StatusBadge label={skill.name} tone="blue" />
                       {uniqueRefs.length > 0 ? (
-                        <ul className="ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600 dark:text-muted-foreground">
+                        <ul className="dark:text-muted-foreground ml-1 list-disc space-y-0.5 pl-4 text-xs text-gray-600">
                           {uniqueRefs.map((path) => (
                             <li key={path}>{path}</li>
                           ))}

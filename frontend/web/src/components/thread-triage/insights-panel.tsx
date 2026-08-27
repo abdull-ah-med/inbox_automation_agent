@@ -38,14 +38,14 @@ export const InsightsPanel = ({
     <Panel title="Insights">
       <div className="space-y-4">
         <div>
-          <p className="text-xs text-muted-foreground">Teaching note</p>
+          <p className="text-muted-foreground text-xs">Teaching note</p>
           {teachingNote ? (
             <EmailBody
               text={teachingNote}
               className="mt-1 rounded-md bg-blue-50 px-3 py-2 text-gray-800 dark:bg-blue-950/30 dark:text-gray-100"
             />
           ) : (
-            <p className="mt-1 text-sm text-muted-foreground italic">
+            <p className="text-muted-foreground mt-1 text-sm italic">
               No teaching note yet. This thread hasn&apos;t produced a draft.
             </p>
           )}
@@ -81,7 +81,7 @@ export const InsightsPanel = ({
                       }
                     />
                     {presentation && !presentation.urgency_active ? (
-                      <span className="text-xs text-muted-foreground">inactive</span>
+                      <span className="text-muted-foreground text-xs">inactive</span>
                     ) : null}
                     {draftId && !feedbackDone && presentation?.urgency_active !== false ? (
                       <UrgencyEditPopover
@@ -95,9 +95,7 @@ export const InsightsPanel = ({
                       />
                     ) : null}
                   </div>
-                  {urgencyReason ? (
-                    <p className="text-xs text-gray-500">{urgencyReason}</p>
-                  ) : null}
+                  {urgencyReason ? <p className="text-xs text-gray-500">{urgencyReason}</p> : null}
                 </div>
               ) : (
                 "—"
@@ -108,22 +106,21 @@ export const InsightsPanel = ({
 
         {activity.length > 0 ? (
           <div>
-            <p className="text-xs text-muted-foreground">Activity</p>
+            <p className="text-muted-foreground text-xs">Activity</p>
             <ul className="mt-2 space-y-2">
               {activity
-                .slice()
-                .reverse()
+                .toReversed()
                 .slice(0, 5)
                 .map((entry) => (
                   <li
                     key={`${entry.event_type}-${entry.timestamp}`}
-                    className="rounded-md border border-border/60 px-2.5 py-2"
+                    className="border-border/60 rounded-md border px-2.5 py-2"
                   >
                     <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                       {entry.title}
                     </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{entry.body}</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className="text-muted-foreground mt-0.5 text-xs">{entry.body}</p>
+                    <p className="text-muted-foreground mt-1 text-[11px]">
                       {formatRelativeTime(entry.timestamp)}
                     </p>
                   </li>

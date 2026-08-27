@@ -5,9 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 const threadDetail = vi.fn()
 const threadHeader = vi.fn()
 const relatedThreads = vi.fn()
-const searchParamsString = vi.fn(
-  () => "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-)
+const searchParamsString = vi.fn(() => "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ thread_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" }),
@@ -72,9 +70,7 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
     threadDetail.mockReset()
     threadHeader.mockReset()
     relatedThreads.mockReset()
-    searchParamsString.mockReturnValue(
-      "from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
-    )
+    searchParamsString.mockReturnValue("from=bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
   })
 
   it("renders the origin banner derived from the ?from= query param without bailing out", async () => {
@@ -150,9 +146,7 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
         name: "Invoice dispute — overdue billing",
       }),
     ).toBeInTheDocument()
-    expect(
-      await screen.findByText("SampleClient follow-up"),
-    ).toBeInTheDocument()
+    expect(await screen.findByText("SampleClient follow-up")).toBeInTheDocument()
     expect(relatedThreads).not.toHaveBeenCalled()
   })
 })

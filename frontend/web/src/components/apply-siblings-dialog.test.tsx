@@ -97,9 +97,7 @@ describe("ApplySiblingsDialog", () => {
     const user = userEvent.setup()
     renderDialog([sampleclient, invoice])
     const dialog = await screen.findByRole("dialog")
-    await user.click(
-      within(dialog).getByRole("checkbox", { name: /January invoice/ }),
-    )
+    await user.click(within(dialog).getByRole("checkbox", { name: /January invoice/ }))
     await user.click(within(dialog).getByRole("button", { name: "Apply to selected" }))
     await waitFor(() => {
       expect(applyTreatmentMock).toHaveBeenCalledWith("thread-src", {

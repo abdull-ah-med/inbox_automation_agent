@@ -48,14 +48,11 @@ export const ApplySiblingsDialog = ({
     treatment === "no_reply"
       ? "Apply no reply to related threads"
       : "Apply urgency to related threads"
-  const actionLabel =
-    treatment === "no_reply" ? "no reply needed" : `urgency ${urgency ?? ""}`
+  const actionLabel = treatment === "no_reply" ? "no reply needed" : `urgency ${urgency ?? ""}`
 
   const handleToggle = (threadId: string) => {
     setSelected((current) =>
-      current.includes(threadId)
-        ? current.filter((id) => id !== threadId)
-        : [...current, threadId],
+      current.includes(threadId) ? current.filter((id) => id !== threadId) : [...current, threadId],
     )
   }
 
@@ -101,7 +98,9 @@ export const ApplySiblingsDialog = ({
           }),
         ),
       )
-      setSuccess(`Applied ${actionLabel.trim()} to ${selected.length} thread${selected.length === 1 ? "" : "s"}.`)
+      setSuccess(
+        `Applied ${actionLabel.trim()} to ${selected.length} thread${selected.length === 1 ? "" : "s"}.`,
+      )
       await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
       await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
       await queryClient.invalidateQueries({ queryKey: ["thread"] })
@@ -133,8 +132,8 @@ export const ApplySiblingsDialog = ({
         <DialogHeader>
           <DialogTitle className="text-pretty">{title}</DialogTitle>
           <DialogDescription>
-            Apply {actionLabel.trim()} to the threads checked below. Uncheck any
-            thread that should stay as-is. Nothing is sent in Outlook.
+            Apply {actionLabel.trim()} to the threads checked below. Uncheck any thread that should
+            stay as-is. Nothing is sent in Outlook.
           </DialogDescription>
         </DialogHeader>
         <ul className="max-h-64 space-y-2 overflow-y-auto overscroll-contain">

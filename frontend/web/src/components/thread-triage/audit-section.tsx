@@ -16,20 +16,16 @@ export const AuditSection = ({ auditLog }: AuditSectionProps) => {
           auditLog.map((entry) => (
             <li
               key={`${entry.timestamp}|${entry.event}|${entry.source}|${entry.detail}`}
-              className="rounded-xl bg-muted/40 p-3 ring-1 ring-foreground/10"
+              className="bg-muted/40 ring-foreground/10 rounded-xl p-3 ring-1"
             >
               <div className="flex justify-between gap-2">
-                <span className="text-xs font-medium">
-                  {formatEventName(entry.event)}
-                </span>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs font-medium">{formatEventName(entry.event)}</span>
+                <span className="text-muted-foreground text-xs">
                   {formatRelativeTime(entry.timestamp)}
                 </span>
               </div>
               {entry.detail ? (
-                <p className="mt-1 line-clamp-3 text-xs text-gray-500">
-                  {entry.detail}
-                </p>
+                <p className="mt-1 line-clamp-3 text-xs text-gray-500">{entry.detail}</p>
               ) : null}
             </li>
           ))

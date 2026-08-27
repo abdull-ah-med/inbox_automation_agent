@@ -174,10 +174,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.type(
-      within(dialog).getByLabelText("Approval learning note"),
-      "Soften the tone",
-    )
+    await user.type(within(dialog).getByLabelText("Approval learning note"), "Soften the tone")
     const confirm = within(dialog).getByRole("button", { name: "Confirm approve draft" })
     expect(confirm).toBeDisabled()
     expect(within(dialog).getByRole("status")).toHaveTextContent(
@@ -217,10 +214,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Approve draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.type(
-      within(dialog).getByLabelText("Approval learning note"),
-      "One-off exception",
-    )
+    await user.type(within(dialog).getByLabelText("Approval learning note"), "One-off exception")
     await user.click(
       within(dialog).getByRole("button", {
         name: "Apply learning to this thread only",
@@ -243,9 +237,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     const dialog = await screen.findByRole("dialog")
     const confirm = within(dialog).getByRole("button", { name: "Confirm reject draft" })
     expect(confirm).toBeDisabled()
-    await user.click(
-      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
-    )
+    await user.click(within(dialog).getByRole("combobox", { name: "Rejection reason" }))
     await user.click(await screen.findByRole("option", { name: "Tone off" }))
     expect(confirm).toBeDisabled()
     await user.type(within(dialog).getByLabelText("Rejection note"), "Too curt")
@@ -258,16 +250,9 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.click(
-      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
-    )
-    await user.click(
-      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
-    )
-    await user.type(
-      within(dialog).getByLabelText("Rejection note"),
-      "No reply needed",
-    )
+    await user.click(within(dialog).getByRole("combobox", { name: "Rejection reason" }))
+    await user.click(await screen.findByRole("option", { name: "Wrong action / no reply needed" }))
+    await user.type(within(dialog).getByLabelText("Rejection note"), "No reply needed")
     await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
     await waitFor(() => {
       expect(markWrongMock).toHaveBeenCalledWith("draft-1", {
@@ -298,16 +283,9 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const rejectDialog = await screen.findByRole("dialog")
-    await user.click(
-      within(rejectDialog).getByRole("combobox", { name: "Rejection reason" }),
-    )
-    await user.click(
-      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
-    )
-    await user.type(
-      within(rejectDialog).getByLabelText("Rejection note"),
-      "No reply needed",
-    )
+    await user.click(within(rejectDialog).getByRole("combobox", { name: "Rejection reason" }))
+    await user.click(await screen.findByRole("option", { name: "Wrong action / no reply needed" }))
+    await user.type(within(rejectDialog).getByLabelText("Rejection note"), "No reply needed")
     await user.click(within(rejectDialog).getByRole("button", { name: "Confirm reject draft" }))
     const siblingDialog = await screen.findByRole("dialog")
     expect(siblingDialog).toHaveTextContent("Apply no reply")
@@ -329,24 +307,17 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.click(
-      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
-    )
-    await user.click(
-      await screen.findByRole("option", { name: "Wrong action / no reply needed" }),
-    )
-    await user.type(
-      within(dialog).getByLabelText("Rejection note"),
-      "No reply needed",
-    )
+    await user.click(within(dialog).getByRole("combobox", { name: "Rejection reason" }))
+    await user.click(await screen.findByRole("option", { name: "Wrong action / no reply needed" }))
+    await user.type(within(dialog).getByLabelText("Rejection note"), "No reply needed")
     await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
     await waitFor(() => {
       expect(markWrongMock).toHaveBeenCalled()
     })
     expect(client.getQueryState(["dashboard", "overview"])?.isInvalidated).toBe(true)
-    expect(
-      client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated,
-    ).toBe(true)
+    expect(client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated).toBe(
+      true,
+    )
   })
 
   it("refreshes dashboard after approve so the thread leaves Needs Attention", async () => {
@@ -360,9 +331,9 @@ describe("ThreadTriageSidebar feedback buttons", () => {
       expect(approveMock).toHaveBeenCalled()
     })
     expect(client.getQueryState(["dashboard", "overview"])?.isInvalidated).toBe(true)
-    expect(
-      client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated,
-    ).toBe(true)
+    expect(client.getQueryState(["mailbox", "elise@example.com", "threads"])?.isInvalidated).toBe(
+      true,
+    )
   })
 
   it("reject with other reason calls reject", async () => {
@@ -371,9 +342,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     await openDraftTab(user)
     await user.click(screen.getByRole("button", { name: "Reject draft" }))
     const dialog = await screen.findByRole("dialog")
-    await user.click(
-      within(dialog).getByRole("combobox", { name: "Rejection reason" }),
-    )
+    await user.click(within(dialog).getByRole("combobox", { name: "Rejection reason" }))
     await user.click(await screen.findByRole("option", { name: "Tone off" }))
     await user.type(within(dialog).getByLabelText("Rejection note"), "Tone off")
     await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
@@ -415,9 +384,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     renderSidebar()
     await openDraftTab(user)
     expect(screen.getByText("Skills used")).toBeInTheDocument()
-    expect(
-      screen.getByText("No skills applied for this draft"),
-    ).toBeInTheDocument()
+    expect(screen.getByText("No skills applied for this draft")).toBeInTheDocument()
   })
 
   it("lists applied skills and successful reference reads", async () => {
