@@ -10,3 +10,7 @@ backend/app/db/migrations/
 # with fixture-controlled names, not request input.
 backend/tests/ops_metrics_fixtures.py
 backend/tests/test_draft_classification_indexes.py
+
+# Deploy-dev checks out the CI-verified SHA on protected `dev` pushes only, and
+# refuses workflow-file changes before any AWS/SSM steps (see deploy-dev.yml).
+.github/workflows/deploy-dev.yml
