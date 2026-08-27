@@ -155,37 +155,41 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
 
   return (
     <Card className="mb-5 min-w-0 gap-0 py-0" aria-label="Sent reply comparison">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3.5">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
-          <CardTitle className="text-sm leading-none font-semibold">Sent reply</CardTitle>
-          <StatusBadge label="Resolved" tone="green" />
-          <span className="text-muted-foreground text-xs leading-none">
-            Matched by: {MATCHED_BY_LABEL[sentReply.matched_by]}
-          </span>
+      <CardHeader className="gap-2 px-5 py-3.5">
+        <div className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <CardTitle className="text-sm leading-none font-semibold">Sent reply</CardTitle>
+            <StatusBadge label="Resolved" tone="green" />
+            <span className="text-muted-foreground text-xs leading-none">
+              Matched by: {MATCHED_BY_LABEL[sentReply.matched_by]}
+            </span>
+          </div>
+          <button
+            type="button"
+            tabIndex={0}
+            aria-label={open ? "Collapse sent reply panel" : "Expand sent reply panel"}
+            aria-expanded={open}
+            onClick={handleToggle}
+            onKeyDown={handleKeyDown}
+            className={cn(
+              textActionClass,
+              "cursor-pointer text-xs leading-none font-medium text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {open ? "Hide" : "Show"}
+          </button>
         </div>
-        <button
-          type="button"
-          tabIndex={0}
-          aria-label={open ? "Collapse sent reply panel" : "Expand sent reply panel"}
-          aria-expanded={open}
-          onClick={handleToggle}
-          onKeyDown={handleKeyDown}
-          className={cn(
-            textActionClass,
-            "cursor-pointer text-xs leading-none font-medium text-muted-foreground hover:text-foreground",
-          )}
-        >
-          {open ? "Hide" : "Show"}
-        </button>
+        <p className="text-muted-foreground text-xs leading-snug">
+          This Outlook reply was saved for learning — DraftAssistant will use it to improve future drafts.
+        </p>
       </CardHeader>
       {open ? <Separator /> : null}
 
       {open ? (
         <CardContent className="grid min-w-0 grid-cols-1 gap-5 px-5 pt-4 pb-5 lg:grid-cols-2">
-          {substantial ? (
+          {hasDiff ? (
             <p className="text-muted-foreground text-xs lg:col-span-2">
-              The sent reply was substantially edited from the proposed draft. Showing both without
-              line-by-line strike-through.
+              Showing the diff between proposed reply and actually sent.
             </p>
           ) : null}
           <ProposedDraftColumn

@@ -53,6 +53,11 @@ describe("SentReplyPanel", () => {
     expect(screen.getByText("Extra line")).toBeInTheDocument()
   })
 
+  it("notes that the sent reply was used for learning", () => {
+    render(<SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />)
+    expect(screen.getByText(/This Outlook reply was saved for learning/)).toBeInTheDocument()
+  })
+
   it("collapses when hide is clicked", async () => {
     const user = userEvent.setup()
     render(<SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />)
@@ -75,10 +80,35 @@ describe("SentReplyPanel", () => {
         }}
       />,
     )
-    expect(screen.getByText(/substantially edited from the proposed draft/i)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/substantially edited from the proposed draft/i),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText(/Showing the diff between proposed reply and actually sent/i),
+    ).toBeInTheDocument()
     expect(screen.getByText(/Line one of the draft/)).toBeInTheDocument()
     const struck = document.querySelector(".line-through")
     expect(struck).toBeNull()
+  })
+
+  it("notes when a line-level diff is shown", () => {
+    render(
+      <SentReplyPanel
+        sentReply={sentReply}
+        draft={draft}
+        diff={{ added: ["Extra line"], removed: [] }}
+      />,
+    )
+    expect(
+      screen.getByText(/Showing the diff between proposed reply and actually sent/i),
+    ).toBeInTheDocument()
+  })
+
+  it("omits the diff note when there is no diff", () => {
+    render(<SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />)
+    expect(
+      screen.queryByText(/Showing the diff between proposed reply and actually sent/i),
+    ).not.toBeInTheDocument()
   })
 
   it("wraps long unbroken tokens in the sent reply column", () => {
