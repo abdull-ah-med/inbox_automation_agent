@@ -91,3 +91,105 @@ async def test_chat_session_create_get_and_append_turn(db_session) -> None:
     assert again.messages[0]["content"] == "billing disputes waiting on review"
     assert again.messages[1]["role"] == "assistant"
     assert again.last_message_at is not None
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_create_session_route_persists_after_request_ends(
+    migrated_test_database: str,
+) -> None:
+    """POST /api/chat/session must commit — get_db_session rolls back otherwise.
+
+    Spec: the returned session_id is loadable from a fresh DB connection after
+    the request-scoped session closes (same contract as chat cache B5).
+    """
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, patch
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.core.config import Settings, get_settings
+    from app.core.dependencies import get_db
+    from app.core.dependencies_auth import get_current_user
+    from app.main import create_app
+    from app.models.db.user import User
+    from app.models.schemas.auth import UserMe
+
+    user_id = uuid.uuid4()
+    engine = create_async_engine(migrated_test_database, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with factory() as setup:
+            setup.add(
+                User(
+                    id=user_id,
+                    email=f"chat-route-{uuid.uuid4().hex[:8]}@example.com",
+                    password_hash="hashed",
+                    role="user",
+                    is_active=True,
+                )
+            )
+            await setup.commit()
+
+        settings = Settings(
+            environment="local",
+            jwt_secret="c" * 64,
+            frontend_origin="http://localhost:3000",
+            cookie_secure=False,
+            enable_dev_routes=False,
+            target_mailboxes="sales@example.com",
+            database_url=migrated_test_database,
+            redis_url="redis://localhost:6379/15",
+        )
+        get_settings.cache_clear()
+        with (
+            patch("app.main.get_settings", return_value=settings),
+            patch("app.main._ping_redis", AsyncMock()),
+            patch("app.main.get_slack_app", return_value=None),
+            patch("app.main.run_subscription_reconcile", AsyncMock()),
+            patch("app.main.AsyncIOScheduler") as sched,
+        ):
+            sched.return_value.start = lambda: None
+            sched.return_value.shutdown = lambda wait=False: None
+            application = create_app()
+            application.dependency_overrides[get_settings] = lambda: settings
+            application.dependency_overrides[get_current_user] = lambda: UserMe(
+                id=user_id,
+                email="elise@example.com",
+                role="user",
+                created_at=datetime.now(UTC),
+            )
+
+            async def request_scoped_db():
+                async with factory() as session:
+                    yield session
+
+            application.dependency_overrides[get_db] = request_scoped_db
+
+            async with AsyncClient(
+                transport=ASGITransport(app=application),
+                base_url="http://test",
+            ) as client:
+                created = await client.post(
+                    "/api/chat/session",
+                    json={"mailbox": "sales@example.com"},
+                )
+            application.dependency_overrides.clear()
+        get_settings.cache_clear()
+
+        assert created.status_code == 201, created.text
+        session_id = created.json()["session_id"]
+
+        async with factory() as other:
+            row = (
+                await other.execute(
+                    text("SELECT mailbox FROM chat_sessions WHERE id = :id AND user_id = :uid"),
+                    {"id": session_id, "uid": str(user_id)},
+                )
+            ).one_or_none()
+        assert row is not None
+        assert row[0] == "sales@example.com"
+    finally:
+        await engine.dispose()

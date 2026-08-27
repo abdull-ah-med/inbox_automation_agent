@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "oxlint --deny-warnings",
     "lint:fix": "oxlint --fix --deny-warnings",
-    "lint:budgets": "python3 ../../misc/scripts/check_abc_budgets.py --frontend",
+    "lint:budgets": "python3 ../../scripts/check_abc_budgets.py --frontend",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "doctor": "npx --yes react-doctor@0.9.12 --yes --no-telemetry --no-supply-chain --no-score",

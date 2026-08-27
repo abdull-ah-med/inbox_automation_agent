@@ -91,7 +91,7 @@ docstring-code-format = true
 # datetimes, LOG/G = logging, A = builtin shadowing, ERA = commented-out code
 # (AI/slop residue), PT = pytest style, C90 = McCabe complexity,
 # PLR = pylint refactor (branches/statements/returns).
-# Budgets: misc/lint-budgets.toml
+# Budgets: scripts/lint-budgets.toml
 select = [
     "E",
     "W",

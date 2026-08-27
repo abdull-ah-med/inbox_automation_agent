@@ -56,6 +56,8 @@ async def create_session(
         user_id=_user.id,
         mailbox=body.mailbox,
     )
+    # get_db_session never auto-commits; without this the insert rolls back.
+    await session.commit()
     return ChatSessionCreateResponse(session_id=row.id, mailbox=row.mailbox)
 
 
