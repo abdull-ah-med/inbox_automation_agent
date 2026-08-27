@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return asyncio.run(_run(args.apply))
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

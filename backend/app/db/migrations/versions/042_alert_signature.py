@@ -17,9 +17,7 @@ depends_on: Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column("threads", sa.Column("alert_signature", sa.Text(), nullable=True))
-    op.add_column(
-        "threads", sa.Column("alert_sender_norm", sa.String(length=320), nullable=True)
-    )
+    op.add_column("threads", sa.Column("alert_sender_norm", sa.String(length=320), nullable=True))
     op.create_index(
         "ix_threads_mailbox_alert_signature_last_message_at",
         "threads",

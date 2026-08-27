@@ -434,9 +434,7 @@ async def test_store_subscription_writes_hash_fields_not_json_blob() -> None:
     """
     redis = _MemoryRedis()
     sub = _sub()
-    await subscription_service._store_subscription(
-        redis, "user@example.com", sub, "inbox"
-    )
+    await subscription_service._store_subscription(redis, "user@example.com", sub, "inbox")
     key = "graph:sub:inbox:user@example.com"
     assert await redis.type(key) == "hash"
     assert await redis.hget(key, "subscription_id") == "sub-1"

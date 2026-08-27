@@ -34,12 +34,8 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(
-            ["source_thread_id"], ["threads.id"], ondelete="CASCADE"
-        ),
-        sa.ForeignKeyConstraint(
-            ["related_thread_id"], ["threads.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["source_thread_id"], ["threads.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["related_thread_id"], ["threads.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint(
             "source_thread_id",

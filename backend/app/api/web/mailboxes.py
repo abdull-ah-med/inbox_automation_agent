@@ -33,6 +33,7 @@ async def list_mailboxes(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> list[MailboxOverview]:
+    _ = request, response
     return await dashboard_service.list_mailbox_overviews(session, settings)
 
 
@@ -56,6 +57,7 @@ async def list_mailbox_threads(
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> ThreadList:
+    _ = request, response
     return await mailbox_service.list_threads(
         session,
         settings,

@@ -31,9 +31,7 @@ class SecurityHeadersMiddleware:
                 headers["X-Content-Type-Options"] = "nosniff"
                 headers["X-Frame-Options"] = "DENY"
                 headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-                headers["Permissions-Policy"] = (
-                    "geolocation=(), camera=(), microphone=()"
-                )
+                headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
                 headers["Cross-Origin-Opener-Policy"] = "same-origin"
                 # cross-origin: SPA often runs on a different host than the API.
                 headers["Cross-Origin-Resource-Policy"] = "cross-origin"

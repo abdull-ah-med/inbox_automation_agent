@@ -143,7 +143,7 @@ async def _reembed_one(
                 embed_clean_version=EMBED_CLEAN_VERSION,
             )
         return f"done:{row.id}"
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         logger.exception("reembed_failed", embedding_id=str(row.id))
         return f"failed:{type(exc).__name__}"
 
@@ -184,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return asyncio.run(_run(args.apply))
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

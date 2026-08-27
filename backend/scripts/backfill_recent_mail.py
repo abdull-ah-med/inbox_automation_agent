@@ -106,9 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Poll Sent Items and resolve matching threads (no triage)",
     )
     args = parser.parse_args(argv)
-    return asyncio.run(
-        _run(days=args.days, mailbox=args.mailbox, sent_items=args.sent_items)
-    )
+    return asyncio.run(_run(days=args.days, mailbox=args.mailbox, sent_items=args.sent_items))
 
 
 if __name__ == "__main__":

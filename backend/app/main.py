@@ -279,6 +279,7 @@ def create_app() -> FastAPI:
     @app.get("/health", status_code=status.HTTP_200_OK, response_model=None)
     @limiter.limit(settings.api_default_rate_limit)
     async def health_check(request: Request) -> JSONResponse:
+        _ = request
         redis_status = "error"
         db_status = "error"
         try:

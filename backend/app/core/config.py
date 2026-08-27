@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     embedding_corroboration_bonus: float = Field(default=0.15, ge=0.0, le=1.0)
     embedding_corroboration_max_hits: int = Field(default=3, ge=0, le=10)
     rrf_k: int = Field(default=60, ge=1)
-    # pgvector HNSW query-time knobs (no index rebuild). Production: 80–200.
+    # pgvector HNSW query-time knobs (no index rebuild). Production: 80-200.
     hnsw_ef_search: int = Field(default=100, ge=20, le=1000)
     hnsw_iterative_scan_enabled: bool = True
     # text-embedding-3-* hard cap is 8191 tokens (OpenAI cookbook); stay under.
@@ -280,13 +280,7 @@ class Settings(BaseSettings):
             return None
         return raw[0].strip().lower() or None
 
-    def validate_production_security(self) -> list[str]:
-        """Return human-readable config errors for non-local deployments.
-
-        Callers should refuse to start the app when this list is non-empty.
-        """
-        if self.environment == "local":
-            return []
+    def _production_graph_errors(self) -> list[str]:
         errors: list[str] = []
         if not self.anthropic_api_key.strip():
             errors.append(
@@ -305,6 +299,10 @@ class Settings(BaseSettings):
             errors.append("GRAPH_WEBHOOK_CLIENT_STATE must be set when ENVIRONMENT is not local")
         if len(self.graph_webhook_client_state.strip()) < 32:
             errors.append("GRAPH_WEBHOOK_CLIENT_STATE must be at least 32 characters outside local")
+        return errors
+
+    def _production_redis_errors(self) -> list[str]:
+        errors: list[str] = []
         if not self.redis_has_password:
             errors.append(
                 "REDIS_URL must include a password outside local "
@@ -315,19 +313,23 @@ class Settings(BaseSettings):
                 "REDIS_URL must use rediss:// (TLS) outside local — "
                 "see https://redis.readthedocs.io/en/latest/connections.html"
             )
-        else:
-            if not self.redis_ssl_ca_certs.strip():
-                errors.append(
-                    "REDIS_SSL_CA_CERTS must be set outside local "
-                    "(path to CA cert for redis-py ssl_ca_certs / server auth)"
-                )
-            cert_reqs = self.redis_ssl_cert_reqs_query
-            if cert_reqs in {"none", "optional"}:
-                errors.append(
-                    "REDIS_URL must not set ssl_cert_reqs=none|optional outside local — "
-                    "use REDIS_SSL_CA_CERTS with ssl_cert_reqs=required "
-                    "(redis-py default)"
-                )
+            return errors
+        if not self.redis_ssl_ca_certs.strip():
+            errors.append(
+                "REDIS_SSL_CA_CERTS must be set outside local "
+                "(path to CA cert for redis-py ssl_ca_certs / server auth)"
+            )
+        cert_reqs = self.redis_ssl_cert_reqs_query
+        if cert_reqs in {"none", "optional"}:
+            errors.append(
+                "REDIS_URL must not set ssl_cert_reqs=none|optional outside local — "
+                "use REDIS_SSL_CA_CERTS with ssl_cert_reqs=required "
+                "(redis-py default)"
+            )
+        return errors
+
+    def _production_integration_errors(self) -> list[str]:
+        errors: list[str] = []
         if not self.msal_cache_encryption_key.strip():
             errors.append(
                 "MSAL_CACHE_ENCRYPTION_KEY must be set outside local "
@@ -342,6 +344,10 @@ class Settings(BaseSettings):
                 errors.append("SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local")
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
+        return errors
+
+    def _production_host_auth_errors(self) -> list[str]:
+        errors: list[str] = []
         db_host = (urlparse(self.database_url).hostname or "").lower()
         if db_host in {"", "localhost", "127.0.0.1", "::1"}:
             errors.append(
@@ -368,6 +374,20 @@ class Settings(BaseSettings):
                 "collapse onto 127.0.0.1 and lock out all users"
             )
         return errors
+
+    def validate_production_security(self) -> list[str]:
+        """Return human-readable config errors for non-local deployments.
+
+        Callers should refuse to start the app when this list is non-empty.
+        """
+        if self.environment == "local":
+            return []
+        return [
+            *self._production_graph_errors(),
+            *self._production_redis_errors(),
+            *self._production_integration_errors(),
+            *self._production_host_auth_errors(),
+        ]
 
 
 @lru_cache

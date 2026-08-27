@@ -110,9 +110,7 @@ def _load_user_auth(user_id: uuid.UUID) -> tuple[bool, int] | None:
             user = await user_repo.get_by_id(session, user_id)
         if user is None:
             return None
-        remember_user_auth(
-            user.id, is_active=user.is_active, token_version=user.token_version
-        )
+        remember_user_auth(user.id, is_active=user.is_active, token_version=user.token_version)
         return bool(user.is_active), int(user.token_version)
 
     def _run() -> tuple[bool, int] | None:
@@ -158,11 +156,7 @@ def chat_rate_limit_key(request: Request) -> str:
             claims = decode_access_token(token, get_settings())
             user_id = uuid.UUID(str(claims.sub))
             loaded = _load_user_auth(user_id)
-            if (
-                loaded is not None
-                and loaded[0]
-                and loaded[1] == claims.token_version
-            ):
+            if loaded is not None and loaded[0] and loaded[1] == claims.token_version:
                 return f"user:{claims.sub}"
         except (jwt.PyJWTError, ValueError):
             pass

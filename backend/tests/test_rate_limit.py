@@ -120,6 +120,7 @@ def test_chat_rate_limit_key_uses_access_token_sub() -> None:
 
 def test_chat_rate_limit_key_falls_back_to_ip_without_bearer() -> None:
     from app.core.rate_limit import chat_rate_limit_key
+
     settings = Settings(environment="local", trust_x_forwarded_for=False)
     request = _request(headers={}, peer="10.0.0.1")
     with patch("app.core.rate_limit.get_settings", return_value=settings):

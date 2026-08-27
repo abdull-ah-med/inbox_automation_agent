@@ -98,11 +98,7 @@ async def _latest_inbound_sender(session: AsyncSession, thread_id: uuid.UUID) ->
 async def _ensure_fingerprint(
     session: AsyncSession, thread: thread_repo.ThreadSchema
 ) -> str | None:
-    if (
-        thread.alert_fingerprint
-        and thread.alert_signature
-        and thread.alert_sender_norm
-    ):
+    if thread.alert_fingerprint and thread.alert_signature and thread.alert_sender_norm:
         return str(thread.alert_fingerprint)
     sender = await _latest_inbound_sender(session, thread.id)
     keys = alert_cluster_keys(
@@ -222,6 +218,7 @@ async def apply_recurrence_escalation(
     now: datetime | None = None,
 ) -> str | None:
     """Raise open-cluster urgency to max(assessed, member max, count floor)."""
+    _ = conversation_id
     clock = _clock(now)
     thread = await thread_repo.get_by_id(session, thread_id, TenantScope.single(mailbox))
     if thread is None:
@@ -360,9 +357,7 @@ async def apply_urgency_feedback(
             "new": reverted,
             "human": {
                 "title": "Automatic urgency bump marked wrong",
-                "body": (
-                    "Reverted this thread. This alert fingerprint will not auto-bump again."
-                ),
+                "body": ("Reverted this thread. This alert fingerprint will not auto-bump again."),
                 "actor_kind": "elise",
             },
         },

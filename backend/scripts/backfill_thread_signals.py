@@ -286,10 +286,7 @@ async def _run(
     )
     mode = "APPLY" if apply else "DRY RUN"
     print(f"{mode}: {len(candidates)} thread(s)")
-    print(
-        "Note: Internal / Automated Now tags are computed on read. "
-        "No tag column to backfill."
-    )
+    print("Note: Internal / Automated Now tags are computed on read. No tag column to backfill.")
     if not candidates:
         await dispose_engine()
         return 0
@@ -321,7 +318,7 @@ async def _run(
                     do_recurrence=do_recurrence,
                     openai_client=openai_client,
                 )
-            except Exception as exc:  # noqa: BLE001 — CLI surface per thread
+            except Exception as exc:
                 totals["errors"] += 1
                 print(
                     f"  ERROR [{candidate.mailbox}] {candidate.subject!r} "
@@ -453,7 +450,7 @@ def main(argv: list[str] | None = None) -> int:
                 do_recurrence=args.recurrence,
             )
         )
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         print(f"Fatal: {exc}", file=sys.stderr)
         logger.exception("backfill_thread_signals_fatal")
         return 1

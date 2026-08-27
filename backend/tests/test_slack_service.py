@@ -143,7 +143,7 @@ def test_build_review_card_forward_action() -> None:
 def test_build_review_card_requires_draft() -> None:
     state = _drafted_state()
     state.draft = None
-    with pytest.raises(ValueError, match="requires state.draft"):
+    with pytest.raises(ValueError, match=r"requires state\.draft"):
         build_review_card(state)
 
 

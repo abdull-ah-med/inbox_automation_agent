@@ -41,9 +41,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.ForeignKeyConstraint(
-            ["source_thread_id"], ["threads.id"], ondelete="SET NULL"
-        ),
+        sa.ForeignKeyConstraint(["source_thread_id"], ["threads.id"], ondelete="SET NULL"),
     )
     op.create_index(
         "ix_alert_fingerprint_feedbacks_mailbox_fingerprint",

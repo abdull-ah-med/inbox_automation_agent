@@ -139,18 +139,14 @@ async def _regenerate_one(
         return f"skipped:not_found:{exc}"
     except DraftGenerationError as exc:
         return f"failed:draft:{exc}"
-    except Exception as exc:  # noqa: BLE001 — CLI surface per candidate
+    except Exception as exc:
         logger.exception("regenerate_drafts_failed", thread_id=str(candidate.id))
         return f"failed:{type(exc).__name__}:{exc}"
 
     skill_names = [s.name for s in (persisted.applied_skills or [])]
     skills_label = ",".join(skill_names) if skill_names else "(none)"
     actions = len(persisted.suggested_actions or [])
-    return (
-        f"done:draft_id={persisted.id} "
-        f"skills=[{skills_label}] "
-        f"suggested_actions={actions}"
-    )
+    return f"done:draft_id={persisted.id} skills=[{skills_label}] suggested_actions={actions}"
 
 
 async def _run(
@@ -180,10 +176,7 @@ async def _run(
         outcome = await _regenerate_one(candidate, instruction=instruction, apply=apply)
         bucket = outcome.split(":", 1)[0]
         results[bucket] = results.get(bucket, 0) + 1
-        print(
-            f"  [{candidate.mailbox}] {candidate.subject!r} "
-            f"(id={candidate.id}) -> {outcome}"
-        )
+        print(f"  [{candidate.mailbox}] {candidate.subject!r} (id={candidate.id}) -> {outcome}")
         if apply and sleep_seconds > 0 and index < len(candidates) - 1:
             await asyncio.sleep(sleep_seconds)
 
@@ -263,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
                 sleep_seconds=args.sleep,
             )
         )
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

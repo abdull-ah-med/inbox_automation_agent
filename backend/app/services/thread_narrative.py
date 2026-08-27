@@ -34,15 +34,9 @@ def _fallback_body(event_type: str, payload: Mapping[str, Any]) -> str:
         matched = str(payload.get("matched_by") or "sent reply")
         urgency = payload.get("urgency_assessed")
         matched_label = matched.replace("_", " ")
-        base = (
-            f"Matched your Outlook send ({matched_label}). "
-            "Removed from Needs Attention."
-        )
+        base = f"Matched your Outlook send ({matched_label}). Removed from Needs Attention."
         if urgency:
-            return (
-                f"{base} Assessed urgency was {urgency}; "
-                "it no longer drives priority."
-            )
+            return f"{base} Assessed urgency was {urgency}; it no longer drives priority."
         return base
     if event_type == "thread.urgency.recurrence_escalated":
         floor = payload.get("floor") or "HIGH"
@@ -54,11 +48,8 @@ def _fallback_body(event_type: str, payload: Mapping[str, Any]) -> str:
             )
         return f"Recurring automated alert. Urgency raised to {floor}."
     if event_type == "thread.urgency.recurrence_wrong":
-        return (
-            "Reverted this thread. This alert fingerprint will not auto-bump again."
-        )
-    title = _FALLBACK_TITLES.get(event_type, event_type.replace(".", " ").title())
-    return title
+        return "Reverted this thread. This alert fingerprint will not auto-bump again."
+    return _FALLBACK_TITLES.get(event_type, event_type.replace(".", " ").title())
 
 
 def build_activity(events: list[Mapping[str, Any]]) -> list[NarrativeEntry]:

@@ -78,11 +78,7 @@ def thread_counterpart(
     mailbox_addr = extract_email_address(mailbox)
     sender_addr = extract_email_address(sender)
     direction_norm = (direction or "").strip().lower()
-    if (
-        direction_norm == "inbound"
-        and sender_addr is not None
-        and sender_addr != mailbox_addr
-    ):
+    if direction_norm == "inbound" and sender_addr is not None and sender_addr != mailbox_addr:
         text = (sender or "").strip()
         return text or sender_addr
     for recipient in to_recipients or []:

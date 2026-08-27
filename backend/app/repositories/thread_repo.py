@@ -108,8 +108,7 @@ def _to_presentation_view(
         urgency_assessed=derived.urgency_assessed,
         urgency_active=derived.urgency_active,
         badges_now=[
-            BadgeNowView(kind=badge.kind.value, label=badge.label)
-            for badge in derived.badges_now
+            BadgeNowView(kind=badge.kind.value, label=badge.label) for badge in derived.badges_now
         ],
         triage_history=TriageHistoryView(
             has_action_items=derived.triage_history.has_action_items,

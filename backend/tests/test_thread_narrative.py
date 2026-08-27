@@ -76,7 +76,6 @@ def test_urgency_recurrence_narrative() -> None:
     assert "CRITICAL" in entries[0].body
 
 
-
 def test_recurrence_narrative_mentions_similar_alerts() -> None:
     entries = build_activity(
         [
@@ -113,8 +112,7 @@ def test_recurrence_wrong_narrative() -> None:
                     "human": {
                         "title": "Automatic urgency bump marked wrong",
                         "body": (
-                            "Reverted this thread. This alert fingerprint will not "
-                            "auto-bump again."
+                            "Reverted this thread. This alert fingerprint will not auto-bump again."
                         ),
                         "actor_kind": "elise",
                     },

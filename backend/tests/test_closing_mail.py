@@ -15,9 +15,7 @@ def test_thanks_sounds_good_is_closing() -> None:
 
 
 def test_conditional_unable_is_closing() -> None:
-    assert looks_like_closing_mail(
-        "Let me know if you're unable to join and we will reschedule."
-    )
+    assert looks_like_closing_mail("Let me know if you're unable to join and we will reschedule.")
 
 
 def test_explicit_ask_is_not_closing() -> None:
@@ -86,7 +84,7 @@ _KAROL_CALENDAR_FOLLOW_UP = (
     "Asunto: Content Calendar - (FB-IG-LK)\n"
     "\n"
     "Hi Elise and Jodi,\n"
-    "I’m sharing Weeks 3 and 4 of the SampleSite content calendar for your review\n"
+    "I\u2019m sharing Weeks 3 and 4 of the SampleSite content calendar for your review\n"
     "Thank you!\n"
 )
 

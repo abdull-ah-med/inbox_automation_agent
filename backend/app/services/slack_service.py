@@ -236,7 +236,8 @@ async def post_review_card(
         )
         return SlackPostResult(status="skipped_no_draft")
 
-    assert slack_app is not None  # narrowed by _slack_configured
+    if slack_app is None:
+        raise RuntimeError("slack_app required when Slack is configured")
     email = state.original_email
     lock_key = slack_posted_key(email.mailbox, email.message_id)
     acquired = await redis.set(lock_key, "1", nx=True, ex=SLACK_POSTED_TTL_SECONDS)

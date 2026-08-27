@@ -47,10 +47,7 @@ async def resolve_thread_manual(
     )
     body = "You marked this thread resolved. Removed from Needs Attention."
     if thread.urgency:
-        body = (
-            f"{body} Assessed urgency was {thread.urgency}; "
-            "it no longer drives priority."
-        )
+        body = f"{body} Assessed urgency was {thread.urgency}; it no longer drives priority."
     if note and note.strip():
         body = f"{body} Note: {note.strip()}"
     try:

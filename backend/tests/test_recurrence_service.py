@@ -95,7 +95,6 @@ def _draft(thread: Thread, *, created_at: datetime, urgency: str = "NORMAL") -> 
     )
 
 
-
 async def _persist(session, *rows) -> None:
     """Insert threads before FK children so Postgres sees parents first."""
     threads = [row for row in rows if isinstance(row, Thread)]
@@ -159,14 +158,15 @@ async def test_single_alert_stays_at_assessed_normal(db_session) -> None:
 async def test_second_fingerprint_thread_floors_both_high(db_session) -> None:
     thread_a = _thread(conversation_id="alert-a", subject=DISK_90, last_message_at=T0)
     thread_b = _thread(conversation_id="alert-b", subject=DISK_90, last_message_at=T_B)
-    await _persist(db_session, 
-            thread_a,
-            thread_b,
-            _message(thread_a, received_at=T0),
-            _message(thread_b, received_at=T_B),
-            _draft(thread_a, created_at=T0),
-            _draft(thread_b, created_at=T_B),
-        )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _draft(thread_a, created_at=T0),
+        _draft(thread_b, created_at=T_B),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
@@ -188,17 +188,18 @@ async def test_third_fingerprint_thread_within_48h_floors_all_critical(db_sessio
     thread_a = _thread(conversation_id="alert-a", subject=DISK_90, last_message_at=T0)
     thread_b = _thread(conversation_id="alert-b", subject=DISK_90, last_message_at=T_B)
     thread_c = _thread(conversation_id="alert-c", subject=DISK_90, last_message_at=T_C)
-    await _persist(db_session, 
-            thread_a,
-            thread_b,
-            thread_c,
-            _message(thread_a, received_at=T0),
-            _message(thread_b, received_at=T_B),
-            _message(thread_c, received_at=T_C),
-            _draft(thread_a, created_at=T0),
-            _draft(thread_b, created_at=T_B),
-            _draft(thread_c, created_at=T_C),
-        )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        thread_c,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _message(thread_c, received_at=T_C),
+        _draft(thread_a, created_at=T0),
+        _draft(thread_b, created_at=T_B),
+        _draft(thread_c, created_at=T_C),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
@@ -227,16 +228,17 @@ async def test_resolved_thread_drops_out_of_cluster_so_third_is_only_high(db_ses
     )
     thread_b = _thread(conversation_id="alert-b", subject=DISK_90, last_message_at=T_B)
     thread_c = _thread(conversation_id="alert-c", subject=DISK_90, last_message_at=T_C)
-    await _persist(db_session, 
-            thread_a,
-            thread_b,
-            thread_c,
-            _message(thread_a, received_at=T0),
-            _message(thread_b, received_at=T_B),
-            _message(thread_c, received_at=T_C),
-            _draft(thread_b, created_at=T_B),
-            _draft(thread_c, created_at=T_C),
-        )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        thread_c,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _message(thread_c, received_at=T_C),
+        _draft(thread_b, created_at=T_B),
+        _draft(thread_c, created_at=T_C),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_b, assessed="NORMAL", now=T_B)
@@ -255,13 +257,14 @@ async def test_resolved_thread_drops_out_of_cluster_so_third_is_only_high(db_ses
 @pytest.mark.asyncio
 async def test_same_thread_three_inbounds_still_critical(db_session) -> None:
     thread = _thread(conversation_id="alert-solo", subject=DISK_90, last_message_at=T_C)
-    await _persist(db_session, 
-            thread,
-            _message(thread, received_at=T0),
-            _message(thread, received_at=T_B),
-            _message(thread, received_at=T_C),
-            _draft(thread, created_at=T_C),
-        )
+    await _persist(
+        db_session,
+        thread,
+        _message(thread, received_at=T0),
+        _message(thread, received_at=T_B),
+        _message(thread, received_at=T_C),
+        _draft(thread, created_at=T_C),
+    )
     await db_session.commit()
 
     applied = await _escalate(db_session, thread, assessed="NORMAL", now=T_C)
@@ -283,14 +286,15 @@ async def test_member_max_critical_raises_cluster_even_when_count_floor_is_high(
         last_message_at=T_B,
         urgency="CRITICAL",
     )
-    await _persist(db_session, 
-            thread_a,
-            thread_b,
-            _message(thread_a, received_at=T0),
-            _message(thread_b, received_at=T_B),
-            _draft(thread_a, created_at=T0, urgency="NORMAL"),
-            _draft(thread_b, created_at=T_B, urgency="CRITICAL"),
-        )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _draft(thread_a, created_at=T0, urgency="NORMAL"),
+        _draft(thread_b, created_at=T_B, urgency="CRITICAL"),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
@@ -308,14 +312,15 @@ async def test_member_max_critical_raises_cluster_even_when_count_floor_is_high(
 async def test_near_subject_disk_91_joins_open_cluster_and_floors_high(db_session) -> None:
     thread_a = _thread(conversation_id="disk-90", subject=DISK_90, last_message_at=T0)
     thread_b = _thread(conversation_id="disk-91", subject=DISK_91, last_message_at=T_B)
-    await _persist(db_session, 
-            thread_a,
-            thread_b,
-            _message(thread_a, received_at=T0),
-            _message(thread_b, received_at=T_B),
-            _draft(thread_a, created_at=T0),
-            _draft(thread_b, created_at=T_B),
-        )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _draft(thread_a, created_at=T0),
+        _draft(thread_b, created_at=T_B),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_a, assessed="NORMAL", now=T0)
@@ -340,14 +345,15 @@ async def test_invoice_from_same_sender_does_not_join_disk_cluster(db_session) -
     invoice.alert_fingerprint = None
     invoice.alert_signature = None
     invoice.alert_sender_norm = None
-    await _persist(db_session, 
-            disk,
-            invoice,
-            _message(disk, received_at=T0),
-            _message(invoice, received_at=T_B, sender=ALERTS),
-            _draft(disk, created_at=T0),
-            _draft(invoice, created_at=T_B),
-        )
+    await _persist(
+        db_session,
+        disk,
+        invoice,
+        _message(disk, received_at=T0),
+        _message(invoice, received_at=T_B, sender=ALERTS),
+        _draft(disk, created_at=T0),
+        _draft(invoice, created_at=T_B),
+    )
     await db_session.commit()
 
     await _escalate(db_session, disk, assessed="NORMAL", now=T0)
@@ -367,14 +373,15 @@ async def test_mark_as_wrong_reverts_this_thread_and_suppresses_later_floor(
 ) -> None:
     thread_b = _thread(conversation_id="alert-b", subject=DISK_90, last_message_at=T_B)
     thread_c = _thread(conversation_id="alert-c", subject=DISK_90, last_message_at=T_C)
-    await _persist(db_session, 
-            thread_b,
-            thread_c,
-            _message(thread_b, received_at=T_B),
-            _message(thread_c, received_at=T_C),
-            _draft(thread_b, created_at=T_B),
-            _draft(thread_c, created_at=T_C),
-        )
+    await _persist(
+        db_session,
+        thread_b,
+        thread_c,
+        _message(thread_b, received_at=T_B),
+        _message(thread_c, received_at=T_C),
+        _draft(thread_b, created_at=T_B),
+        _draft(thread_c, created_at=T_C),
+    )
     await db_session.commit()
 
     await _escalate(db_session, thread_b, assessed="NORMAL", now=T_B)
@@ -429,12 +436,13 @@ async def test_mark_as_wrong_reverts_this_thread_and_suppresses_later_floor(
 async def test_propose_alert_associations_at_ingest_without_search(db_session) -> None:
     first = _thread(conversation_id="disk-90", subject=DISK_90, last_message_at=T0)
     second = _thread(conversation_id="disk-91", subject=DISK_91, last_message_at=T_B)
-    await _persist(db_session, 
-            first,
-            second,
-            _message(first, received_at=T0),
-            _message(second, received_at=T_B),
-        )
+    await _persist(
+        db_session,
+        first,
+        second,
+        _message(first, received_at=T0),
+        _message(second, received_at=T_B),
+    )
     await db_session.commit()
 
     await related_thread_service.propose_alert_associations(

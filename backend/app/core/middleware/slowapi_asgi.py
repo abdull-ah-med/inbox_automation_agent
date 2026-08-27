@@ -52,9 +52,7 @@ class SlowAPIStreamingMiddleware:
         async def send_with_limit_headers(message: Message) -> None:
             if message["type"] == "http.response.start":
                 headers = MutableHeaders(raw=list(message.get("headers", [])))
-                headers = limiter._inject_asgi_headers(
-                    headers, request.state.view_rate_limit
-                )
+                headers = limiter._inject_asgi_headers(headers, request.state.view_rate_limit)
                 message = {**message, "headers": headers.raw}
             await send(message)
 
