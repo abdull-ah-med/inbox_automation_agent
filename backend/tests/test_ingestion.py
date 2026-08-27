@@ -160,10 +160,7 @@ def test_redis_key_helpers() -> None:
     assert legacy_subscription_key("a@b.com") == "graph:sub:a@b.com"
     assert poll_cursor_key("a@b.com") == "graph:poll:last_checked:a@b.com"
     assert poll_cursor_key("a@b.com", "inbox") == "graph:poll:last_checked:a@b.com"
-    assert (
-        poll_cursor_key("a@b.com", "sentitems")
-        == "graph:poll:last_checked:sentitems:a@b.com"
-    )
+    assert poll_cursor_key("a@b.com", "sentitems") == "graph:poll:last_checked:sentitems:a@b.com"
     assert MSAL_TOKEN_CACHE_KEY == "msal:token_cache"
 
 

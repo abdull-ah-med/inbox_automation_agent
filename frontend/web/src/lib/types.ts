@@ -32,10 +32,7 @@ export interface BadgeNow {
   label: string
 }
 
-export type TriageHistory = Pick<
-  TriageFlags,
-  "has_action_items" | "needs_context" | "is_spam"
-> & {
+export type TriageHistory = Pick<TriageFlags, "has_action_items" | "needs_context" | "is_spam"> & {
   action_items_summary?: string | null
   context_reason?: string | null
   spam_reason?: string | null
@@ -130,6 +127,8 @@ export interface MessageDetail {
   received_at: string
   has_attachments: boolean
   outlook_url: string | null
+  meeting_message_type?: string | null
+  meeting_response_type?: string | null
 }
 
 export interface ClassificationView {

@@ -37,6 +37,8 @@ class MessageSchema(BaseModel):
     bcc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
     graph_folder: str | None = None
+    meeting_message_type: str | None = None
+    meeting_response_type: str | None = None
     summary_json: dict[str, Any] | None = None
     summary_one_line: str | None = None
     summarized_at: datetime | None = None
@@ -125,6 +127,8 @@ async def create_message(
     body_clean: str | None = None,
     body_clean_version: int | None = None,
     body_clean_computed_at: datetime | None = None,
+    meeting_message_type: str | None = None,
+    meeting_response_type: str | None = None,
 ) -> MessageSchema:
     """Insert a message or fill an empty existing row on ``graph_message_id`` conflict."""
     insert_stmt = insert(Message).values(
@@ -145,6 +149,8 @@ async def create_message(
         body_clean=body_clean,
         body_clean_version=body_clean_version,
         body_clean_computed_at=body_clean_computed_at,
+        meeting_message_type=meeting_message_type,
+        meeting_response_type=meeting_response_type,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["graph_message_id"],
@@ -173,6 +179,21 @@ async def create_message(
                 body_clean=body_clean,
                 body_clean_version=body_clean_version,
                 body_clean_computed_at=body_clean_computed_at,
+                meeting_message_type=meeting_message_type,
+                meeting_response_type=meeting_response_type,
+            )
+            .returning(Message)
+        )
+        updated = (await session.execute(stmt)).scalar_one()
+        await session.flush()
+        return MessageSchema.model_validate(updated)
+    if meeting_message_type and not existing.meeting_message_type:
+        stmt = (
+            update(Message)
+            .where(Message.id == existing.id)
+            .values(
+                meeting_message_type=meeting_message_type,
+                meeting_response_type=meeting_response_type,
             )
             .returning(Message)
         )

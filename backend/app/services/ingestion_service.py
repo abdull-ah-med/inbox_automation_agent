@@ -108,7 +108,6 @@ def extract_well_known_folder(resource: str) -> str | None:
     return match.group("folder").lower()
 
 
-
 async def _maybe_set_alert_fingerprint(
     session: AsyncSession,
     *,
@@ -164,13 +163,15 @@ def _body_text(message: GraphMessageSchema) -> str:
 
 
 def _unique_body_text(message: GraphMessageSchema, full_body: str) -> str:
+    """Newest reply only. Graph uniqueBody is a hint — ticket dumps still need split."""
     unique = _item_plain_text(message.unique_body)
-    if unique.strip():
-        return unique.strip()
-    main, quoted = split_quoted_history(full_body)
+    candidate = unique.strip() if unique.strip() else (full_body or "").strip()
+    if not candidate:
+        return ""
+    main, quoted = split_quoted_history(candidate)
     if quoted is not None:
-        return main.strip()
-    return full_body.strip()
+        return email_clean.strip_plain_text_artifacts(main.strip())
+    return email_clean.strip_plain_text_artifacts(candidate)
 
 
 def _direction_for_sender(
@@ -245,6 +246,8 @@ def _to_email_message_schema(
         bcc_recipients=_recipient_addresses(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
         graph_folder=message.source_folder,
+        meeting_message_type=message.meeting_message_type,
+        meeting_response_type=message.response_type,
     )
     return _apply_body_clean(email)
 
@@ -483,6 +486,8 @@ async def ingest_graph_message(
                 body_clean=email_msg.body_clean,
                 body_clean_version=email_clean.CLEAN_VERSION,
                 body_clean_computed_at=datetime.now(UTC),
+                meeting_message_type=email_msg.meeting_message_type,
+                meeting_response_type=email_msg.meeting_response_type,
             )
             if thread_msg.id == message.id:
                 trigger_persisted = persisted
@@ -709,6 +714,8 @@ async def handle_outbound_notification(
             body_clean=email_msg.body_clean,
             body_clean_version=email_clean.CLEAN_VERSION,
             body_clean_computed_at=datetime.now(UTC),
+            meeting_message_type=email_msg.meeting_message_type,
+            meeting_response_type=email_msg.meeting_response_type,
         )
 
         await sent_reply_service.resolve_thread_from_outbound(

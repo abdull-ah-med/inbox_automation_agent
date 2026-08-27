@@ -20,6 +20,7 @@ Delivery contract (Microsoft Learn):
 from __future__ import annotations
 
 import json
+from typing import Annotated
 from urllib.parse import unquote
 
 import structlog
@@ -339,7 +340,7 @@ async def receive_graph_notifications(
     background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
-    validation_token: str | None = Query(default=None, alias="validationToken"),
+    validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
 ) -> Response:
     """Receive Graph subscription validation or change notifications."""
     if validation_token is not None:
@@ -373,9 +374,7 @@ async def receive_graph_notifications(
     if not _any_client_state_match(payload, expected):
         logger.warning(
             "graph_notification_batch_all_client_state_mismatch",
-            over_rate_limit=bool(
-                getattr(request.state, "webhook_over_rate_limit", False)
-            ),
+            over_rate_limit=bool(getattr(request.state, "webhook_over_rate_limit", False)),
         )
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
@@ -403,7 +402,7 @@ async def receive_graph_lifecycle(
     background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
-    validation_token: str | None = Query(default=None, alias="validationToken"),
+    validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
 ) -> Response:
     """Receive Graph lifecycle validation or lifecycle notifications."""
     if validation_token is not None:
@@ -435,9 +434,7 @@ async def receive_graph_lifecycle(
     if not _any_client_state_match(payload, expected):
         logger.warning(
             "graph_lifecycle_batch_all_client_state_mismatch",
-            over_rate_limit=bool(
-                getattr(request.state, "webhook_over_rate_limit", False)
-            ),
+            over_rate_limit=bool(getattr(request.state, "webhook_over_rate_limit", False)),
         )
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
