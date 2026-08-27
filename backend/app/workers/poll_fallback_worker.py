@@ -26,7 +26,7 @@ from app.core.redis_lock import acquire_lock, extend_lock, release_lock
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
 from app.models.schemas.graph import GraphMessageSchema
-from app.services import ingestion_service, pipeline_service
+from app.services import ingestion_service, pipeline_service, sent_reply_learning_service
 
 logger = structlog.get_logger(__name__)
 
@@ -184,6 +184,31 @@ async def _run_poll_triage_if_needed(
 ) -> bool:
     """Return True when the poll cursor may advance past this message."""
     status = getattr(result, "status", None)
+    if status == "outbound":
+        thread_id = getattr(result, "thread_id", None)
+        conversation_id = getattr(result, "conversation_id", None)
+        if thread_id and conversation_id:
+            try:
+                import uuid
+
+                from app.db.session import get_session_factory
+
+                await sent_reply_learning_service.run_catchup_after_outbound(
+                    redis=redis,
+                    settings=settings,  # type: ignore[arg-type]
+                    thread_id=uuid.UUID(thread_id),
+                    mailbox=mailbox,
+                    conversation_id=conversation_id,
+                    outbound_graph_message_id=message.id,
+                    session_factory=get_session_factory(),
+                )
+            except Exception:
+                logger.exception(
+                    "poll_sent_reply_catchup_failed",
+                    mailbox=mailbox,
+                    message_id=message.id,
+                )
+        return True
     if not outbound_only and status in _TRIAGE_ELIGIBLE:
         claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
         if not claimed:

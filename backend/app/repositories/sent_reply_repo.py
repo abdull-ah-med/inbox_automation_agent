@@ -105,3 +105,27 @@ async def get_by_draft(
     if row is None:
         return None
     return SentReplySchema.model_validate(row)
+
+
+async def link_draft(
+    session: AsyncSession,
+    *,
+    sent_reply_id: uuid.UUID,
+    draft_id: uuid.UUID,
+    matched_by: MatchedBy = "approved_draft",
+) -> SentReplySchema | None:
+    """Attach an approved draft to an existing sent_reply row."""
+    from sqlalchemy import update
+
+    stmt = (
+        update(SentReply)
+        .where(SentReply.id == sent_reply_id)
+        .values(draft_id=draft_id, matched_by=matched_by)
+        .returning(SentReply)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return SentReplySchema.model_validate(row)

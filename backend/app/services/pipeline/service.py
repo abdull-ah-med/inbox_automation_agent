@@ -23,6 +23,7 @@ from app.models.schemas.email_triage_state import CrossThreadContextSchema, Emai
 from app.models.schemas.graph import IngestResultSchema
 from app.repositories import (
     draft_repo,
+    sent_reply_repo,
     skill_repo,
     thread_repo,
 )
@@ -33,6 +34,7 @@ from app.services import (
     embedding_service,
     rejection_memory_service,
     reply_memory_service,
+    sent_reply_learning_service,
     skill_selection_service,
     slack_service,
     summary_service,
@@ -565,6 +567,7 @@ async def _phased_triage_summarize(
     settings: Settings,
     session_factory: async_sessionmaker[AsyncSession],
     parsed_thread_id: uuid.UUID | None,
+    apply_thread_state: bool = True,
 ) -> EmailTriageState:
     async with session_factory() as session:
         allowlisted = await _allowlisted_senders(session, email.mailbox)
@@ -585,7 +588,12 @@ async def _phased_triage_summarize(
             event_type=_audit_event_type(state),
             payload=_audit_payload(state),
         )
-        await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
+        await _apply_triage_outcome_state(
+            session,
+            state=state,
+            thread_id=parsed_thread_id,
+            apply_thread_state=apply_thread_state,
+        )
 
     # Non-spam: summarize before draft/embed so packing has summary lines.
     if state.triage is not None and not state.triage.is_spam:
@@ -602,6 +610,66 @@ async def _phased_triage_summarize(
                 settings=settings,
                 session_factory=session_factory,
             )
+    return state
+
+
+async def _phased_already_replied_exit(
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID,
+    openai_client: AsyncOpenAI | None,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    anthropic_client: AsyncAnthropic | None = None,
+) -> EmailTriageState:
+    """Skip Sonnet when Outlook already has a human reply; learn from the send."""
+    from app.models.schemas.email import ThreadStateEnum
+
+    state.draft_status = "SKIPPED"
+    state.slack_delivery = "not_required"
+    await _embed_in_fresh_session(
+        state=state,
+        openai_client=openai_client,
+        settings=settings,
+        session_factory=session_factory,
+    )
+    async with session_factory() as session, session.begin():
+        await _safe_audit(
+            session,
+            state=state,
+            event_type="draft.skipped_already_replied",
+            payload={
+                "draft_status": state.draft_status,
+                "reason": "already_replied",
+            },
+        )
+
+    routing = state.triage.routing_category if state.triage is not None else None
+    approved = None
+    async with session_factory() as session, session.begin():
+        sent = await sent_reply_repo.get_by_thread(session, thread_id)
+        if sent is not None:
+            approved = await sent_reply_learning_service.promote_sent_reply_as_approved(
+                session,
+                sent_reply=sent,
+                settings=settings,
+                openai_client=openai_client,
+                routing_category=routing,
+                anthropic_client=anthropic_client,
+            )
+        await thread_repo.set_thread_outcome(
+            session,
+            thread_id,
+            state=ThreadStateEnum.RESOLVED.value,
+        )
+
+    if approved is not None:
+        await sent_reply_learning_service.store_promoted_reply_memory(
+            draft=approved,
+            settings=settings,
+            openai_client=openai_client,
+            anthropic_client=anthropic_client,
+        )
     return state
 
 
@@ -1028,6 +1096,14 @@ async def _run_phased_post_ingest(
         draft_status="PENDING",
     )
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
+
+    already_replied = False
+    if parsed_thread_id is not None:
+        async with session_factory() as session:
+            already_replied = (
+                await sent_reply_repo.get_by_thread(session, parsed_thread_id) is not None
+            )
+
     state = await _phased_triage_summarize(
         state=state,
         email=email,
@@ -1035,7 +1111,18 @@ async def _run_phased_post_ingest(
         settings=settings,
         session_factory=session_factory,
         parsed_thread_id=parsed_thread_id,
+        apply_thread_state=not already_replied,
     )
+
+    if already_replied and parsed_thread_id is not None:
+        return await _phased_already_replied_exit(
+            state=state,
+            thread_id=parsed_thread_id,
+            openai_client=openai_client,
+            settings=settings,
+            session_factory=session_factory,
+            anthropic_client=client,
+        )
 
     early = await _phased_early_draft_exit(
         state=state,

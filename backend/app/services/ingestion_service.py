@@ -504,12 +504,10 @@ async def ingest_graph_message(
                 conversation_id=conversation_id,
                 mailbox=mailbox,
             )
-            # No further pipeline step runs for status="outbound" (it's not
-            # in _TRIAGE_ELIGIBLE), so no caller ever reaches its own
-            # complete_ingest_dedup call for this message. Resolve it here,
-            # same as handle_outbound_notification does for Sent Items —
-            # otherwise the dedup key stays "processing" until its TTL
-            # expires and the next poll window re-resolves this message.
+            # status="outbound" is not in _TRIAGE_ELIGIBLE; poll/webhook call
+            # run_catchup_after_outbound instead (triage-only + learn). Dedup
+            # must complete here — otherwise the key stays "processing" until
+            # TTL expires and the next poll window re-resolves this message.
             await complete_ingest_dedup(redis, mailbox, message_id)
             logger.info(
                 "ingestion_reviewer_copy_resolved",
@@ -628,8 +626,11 @@ async def handle_outbound_notification(
 ) -> IngestResultSchema:
     """Persist a Sent Items message as OUTBOUND and resolve the thread.
 
-    Does **not** run triage/draft pipeline. Uses the same Redis dedup keys as
-    inbound ingest so webhook retries remain idempotent.
+    Does **not** run Sonnet draft generation. Poll/webhook callers invoke
+    ``sent_reply_learning_service.run_catchup_after_outbound`` after this
+    returns ``status="outbound"`` so Haiku triage + reply-memory learning
+    still run when inbound exists. Uses the same Redis dedup keys as inbound
+    ingest so webhook retries remain idempotent.
     """
     from app.services import sent_reply_service
 

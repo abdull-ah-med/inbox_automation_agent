@@ -46,7 +46,12 @@ from app.models.schemas.graph import (
     GraphNotificationSchema,
     IngestResultSchema,
 )
-from app.services import ingestion_service, pipeline_service, subscription_service
+from app.services import (
+    ingestion_service,
+    pipeline_service,
+    sent_reply_learning_service,
+    subscription_service,
+)
 from app.workers.enqueue import enqueue
 
 logger = structlog.get_logger(__name__)
@@ -181,6 +186,27 @@ async def _run_triage_after_ingest(
     mailbox: str | None,
     message_id: str | None,
 ) -> None:
+    if result.status == "outbound" and result.thread_id and result.conversation_id and message_id:
+        try:
+            import uuid
+
+            await sent_reply_learning_service.run_catchup_after_outbound(
+                redis=redis,
+                settings=settings,
+                thread_id=uuid.UUID(result.thread_id),
+                mailbox=mailbox or "",
+                conversation_id=result.conversation_id,
+                outbound_graph_message_id=message_id,
+                session_factory=get_session_factory(),
+            )
+        except Exception:
+            logger.exception(
+                "webhook_sent_reply_catchup_failed",
+                mailbox=mailbox,
+                message_id=message_id,
+            )
+        return
+
     if result.status not in _TRIAGE_ELIGIBLE or not mailbox or not message_id:
         return
 

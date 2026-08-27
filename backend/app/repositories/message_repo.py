@@ -78,6 +78,19 @@ async def get_by_id(
     return MessageSchema.model_validate(message)
 
 
+async def get_by_id_trusted(
+    session: AsyncSession,
+    message_id: uuid.UUID,
+) -> MessageSchema | None:
+    """Load a message by PK without mailbox filter (system catch-up paths)."""
+    stmt = select(Message).where(Message.id == message_id)
+    result = await session.execute(stmt)
+    message = result.scalar_one_or_none()
+    if message is None:
+        return None
+    return MessageSchema.model_validate(message)
+
+
 async def list_by_thread(
     session: AsyncSession,
     thread_id: uuid.UUID,

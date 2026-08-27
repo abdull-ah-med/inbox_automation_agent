@@ -71,17 +71,23 @@ async def _apply_triage_outcome_state(
     *,
     state: EmailTriageState,
     thread_id: uuid.UUID | None,
+    apply_thread_state: bool = True,
 ) -> None:
     """Persist SPAM/NO_ACTION onto the thread so filtered views can exclude it.
 
     Best-effort: a thread lookup miss (e.g. race with a concurrent delete)
     must never fail the pipeline — triage/audit already succeeded.
+
+    When ``apply_thread_state`` is False (human already replied / RESOLVED),
+    skip writing SPAM/NO_ACTION so the human resolve outcome wins.
     """
     if state.triage is None or thread_id is None:
         return
     outcome, _ = decide_triage_outcome(state.triage)
     new_state = _OUTCOME_THREAD_STATE.get(outcome)
     if new_state is None:
+        return
+    if not apply_thread_state:
         return
     try:
         await thread_repo.set_thread_outcome(session, thread_id, state=new_state)
