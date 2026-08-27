@@ -759,6 +759,67 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_poll_all_mailboxes_includes_reviewer_sent_items() -> None:
+    """Elise-style REVIEWER_MAILBOXES must be polled for Sent Items."""
+    settings = MagicMock(
+        mailbox_list=["inquiries@example.com"],
+        reviewer_mailbox_list=["elise@example.com"],
+        poll_concurrency=2,
+        poll_interval_seconds=300,
+    )
+    redis = AsyncMock()
+    auth = MagicMock()
+    graph_client = MagicMock()
+
+    with (
+        patch(
+            "app.workers.poll_fallback_worker.get_settings",
+            return_value=settings,
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_redis",
+            AsyncMock(return_value=redis),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.acquire_lock",
+            AsyncMock(return_value="token"),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.extend_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.release_lock",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_graph_auth",
+            AsyncMock(return_value=auth),
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.get_graph_client",
+            return_value=graph_client,
+        ),
+        patch(
+            "app.workers.poll_fallback_worker.poll_mailbox",
+            new_callable=AsyncMock,
+        ) as poll,
+    ):
+        await run_poll_all_mailboxes()
+
+    # Target: inbound + outbound. Reviewer: outbound only.
+    assert poll.await_count == 3
+    reviewer_calls = [
+        call
+        for call in poll.await_args_list
+        if (call.kwargs.get("mailbox") or call.args[0]) == "elise@example.com"
+    ]
+    assert len(reviewer_calls) == 1
+    assert reviewer_calls[0].kwargs["outbound_only"] is True
+    assert reviewer_calls[0].kwargs["folders"] == ("sentitems",)
+
+
+@pytest.mark.asyncio
 async def test_run_poll_all_mailboxes_outbound_runs_after_inbound_failure() -> None:
     """Inbound exception must not skip the Sent Items poll for that mailbox."""
     settings = MagicMock(

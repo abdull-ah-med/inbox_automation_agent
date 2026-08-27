@@ -58,6 +58,17 @@ describe("SentReplyPanel", () => {
     expect(screen.getByText(/This Outlook reply was saved for learning/)).toBeInTheDocument()
   })
 
+  it("hides the learning note when the sent body is empty", () => {
+    render(
+      <SentReplyPanel
+        sentReply={{ ...sentReply, sent_body_snapshot: "   " }}
+        draft={draft}
+        diff={null}
+      />,
+    )
+    expect(screen.queryByText(/This Outlook reply was saved for learning/)).not.toBeInTheDocument()
+  })
+
   it("collapses when hide is clicked", async () => {
     const user = userEvent.setup()
     render(<SentReplyPanel sentReply={sentReply} draft={draft} diff={null} />)

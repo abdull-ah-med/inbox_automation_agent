@@ -39,6 +39,17 @@ from app.repositories import (
 from app.services import related_thread_service
 from app.services.thread_narrative import build_activity
 
+# Keep in sync with sent_reply_service meeting skip set (avoid circular import).
+_MEETING_MESSAGE_TYPES = frozenset(
+    {
+        "meetingRequest",
+        "meetingCancelled",
+        "meetingAccepted",
+        "meetingTenativelyAccepted",
+        "meetingDeclined",
+    }
+)
+
 
 def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
     """Map internal draft schema to the dashboard/API DraftView contract."""
@@ -236,29 +247,34 @@ async def get_thread_detail(
             matched_by = "manual"
         else:
             matched_by = "time_window"
-        sent_snapshot = sent_row.sent_body_snapshot
-        if not (sent_snapshot or "").strip():
-            linked = next((m for m in messages if m.id == sent_row.message_id), None)
-            if linked is not None:
+        linked = next((m for m in messages if m.id == sent_row.message_id), None)
+        # Meeting accepts and empty bodies must not open the learning panel.
+        meeting_linked = linked is not None and (
+            (linked.meeting_message_type or "") in _MEETING_MESSAGE_TYPES
+        )
+        if not meeting_linked:
+            sent_snapshot = sent_row.sent_body_snapshot
+            if not (sent_snapshot or "").strip() and linked is not None:
                 sent_snapshot = reply_text_for_message(
                     body_text=linked.body_text,
                     unique_body_text=linked.unique_body_text,
                     body_preview=linked.body_preview,
                 )
-        sent_reply = SentReplyView(
-            id=sent_row.id,
-            thread_id=sent_row.thread_id,
-            message_id=sent_row.message_id,
-            draft_id=sent_row.draft_id,
-            sent_body_snapshot=sent_snapshot,
-            sent_at=sent_row.sent_at,
-            matched_by=matched_by,
-            created_at=sent_row.created_at,
-        )
-        draft_vs_sent_diff = compute_draft_vs_sent_diff(
-            _proposed_body(draft),
-            sent_snapshot,
-        )
+            if (sent_snapshot or "").strip():
+                sent_reply = SentReplyView(
+                    id=sent_row.id,
+                    thread_id=sent_row.thread_id,
+                    message_id=sent_row.message_id,
+                    draft_id=sent_row.draft_id,
+                    sent_body_snapshot=sent_snapshot,
+                    sent_at=sent_row.sent_at,
+                    matched_by=matched_by,
+                    created_at=sent_row.created_at,
+                )
+                draft_vs_sent_diff = compute_draft_vs_sent_diff(
+                    _proposed_body(draft),
+                    sent_snapshot,
+                )
 
     associated_threads = await related_thread_service.list_stored_associations(
         session,

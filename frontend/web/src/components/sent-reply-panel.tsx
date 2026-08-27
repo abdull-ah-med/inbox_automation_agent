@@ -135,6 +135,7 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
   const [open, setOpen] = useState(true)
   const proposed = draft?.edited_body || draft?.body || ""
   const sentBody = sentReply.sent_body_snapshot
+  const showLearningNote = sentBody.trim().length > 0
   const { main: sentMain } = splitQuotedHistory(sentBody)
   const added = new Set(diff?.added ?? [])
   const removed = new Set(diff?.removed ?? [])
@@ -179,9 +180,11 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
             {open ? "Hide" : "Show"}
           </button>
         </div>
-        <p className="text-muted-foreground text-xs leading-snug">
-          This Outlook reply was saved for learning — DraftAssistant will use it to improve future drafts.
-        </p>
+        {showLearningNote ? (
+          <p className="text-muted-foreground text-xs leading-snug">
+            This Outlook reply was saved for learning — DraftAssistant will use it to improve future drafts.
+          </p>
+        ) : null}
       </CardHeader>
       {open ? <Separator /> : null}
 

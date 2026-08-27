@@ -433,12 +433,17 @@ async def run_poll_all_mailboxes() -> None:
         return
 
     redis = await get_redis()
-    mailbox_count = max(len(settings.mailbox_list), 1)
+    # Count target inbound+outbound plus reviewer Sent Items so Elise-style
+    # REVIEWER_MAILBOXES are not cut off when the lock TTL was sized for targets only.
+    work_units = max(
+        len(settings.mailbox_list) * 2 + len(settings.reviewer_mailbox_list),
+        1,
+    )
     # TTL must exceed the critical section (Redis distributed lock guidance).
     # https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
     lock_ttl = max(
         settings.poll_interval_seconds * 2,
-        mailbox_count * _POLL_LOCK_SECONDS_PER_MAILBOX,
+        work_units * _POLL_LOCK_SECONDS_PER_MAILBOX,
         300,
     )
     token = await acquire_lock(redis, SCHEDULER_POLL_LOCK_KEY, ttl_seconds=lock_ttl)
@@ -515,6 +520,12 @@ async def run_poll_all_mailboxes() -> None:
                 )
 
     try:
+        logger.info(
+            "poll_cycle_start",
+            target_mailboxes=len(settings.mailbox_list),
+            reviewer_mailboxes=len(settings.reviewer_mailbox_list),
+            poll_concurrency=settings.poll_concurrency,
+        )
         await asyncio.gather(
             *(_poll_one(mailbox) for mailbox in settings.mailbox_list),
             *(_poll_reviewer_sent(mailbox) for mailbox in settings.reviewer_mailbox_list),

@@ -462,6 +462,216 @@ async def test_thread_view_heals_blank_sent_snapshot_from_linked_message() -> No
     assert "We shipped it." in detail.draft_vs_sent_diff.removed
 
 
+@pytest.mark.asyncio
+async def test_thread_view_omits_sent_reply_panel_for_meeting_accept() -> None:
+    """Meeting accepts must not surface the learning / draft-vs-sent panel."""
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    thread_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-meet",
+        subject="Accepted: Sync",
+        state="RESOLVED",
+        urgency=None,
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sales@example.com",
+        mailbox_key="sales",
+        subject="Accepted: Sync",
+        state="RESOLVED",
+        urgency=None,
+        last_message_at=now,
+        last_sender="client@example.com",
+        preview="",
+        staleness_hours=0,
+        message_count=1,
+    )
+    message = MessageSchema(
+        id=message_id,
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-meet-accept",
+        direction="outbound",
+        sender="sales@example.com",
+        body_text="",
+        body_preview="Accepted: Sync",
+        unique_body_text="",
+        received_at=now,
+        meeting_message_type="meetingAccepted",
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=message_id,
+        draft_id=None,
+        sent_body_snapshot="",
+        sent_at=now,
+        matched_by="time_window",
+        created_at=now,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+    assert detail.sent_reply is None
+    assert detail.draft_vs_sent_diff is None
+
+
+@pytest.mark.asyncio
+async def test_thread_view_omits_sent_reply_panel_when_snapshot_still_empty() -> None:
+    """Empty Outlook send with no recoverable body must not claim learning."""
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    thread_id = uuid.uuid4()
+    message_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-empty",
+        subject="Re: Hello",
+        state="RESOLVED",
+        urgency=None,
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sales@example.com",
+        mailbox_key="sales",
+        subject="Re: Hello",
+        state="RESOLVED",
+        urgency=None,
+        last_message_at=now,
+        last_sender="sales@example.com",
+        preview="",
+        staleness_hours=0,
+        message_count=1,
+    )
+    message = MessageSchema(
+        id=message_id,
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-empty",
+        direction="outbound",
+        sender="sales@example.com",
+        body_text="",
+        body_preview="",
+        unique_body_text="",
+        received_at=now,
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=message_id,
+        draft_id=None,
+        sent_body_snapshot="",
+        sent_at=now,
+        matched_by="time_window",
+        created_at=now,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+    assert detail.sent_reply is None
+
+
 def test_compute_draft_vs_sent_diff_ignores_quoted_history() -> None:
     proposed = "Thanks for reaching out.\nWe can help."
     sent = (

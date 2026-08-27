@@ -89,12 +89,29 @@ async def promote_sent_reply_as_approved(
         ):
             return existing
 
+    if not (sent_reply.sent_body_snapshot or "").strip():
+        logger.info(
+            "sent_reply_promote_skip_empty_body",
+            sent_reply_id=str(sent_reply.id),
+            thread_id=str(sent_reply.thread_id),
+        )
+        return None
+
     outbound_msg = await message_repo.get_by_id_trusted(session, sent_reply.message_id)
     if outbound_msg is None:
         logger.warning(
             "sent_reply_promote_missing_message",
             sent_reply_id=str(sent_reply.id),
             message_id=str(sent_reply.message_id),
+        )
+        return None
+    from app.services.sent_reply_service import is_meeting_message
+
+    if is_meeting_message(outbound_msg):
+        logger.info(
+            "sent_reply_promote_skip_meeting_message",
+            sent_reply_id=str(sent_reply.id),
+            meeting_message_type=outbound_msg.meeting_message_type,
         )
         return None
 
