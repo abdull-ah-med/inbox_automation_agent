@@ -67,10 +67,7 @@ export const AssociatedThreadsList = ({
 
   const previewItem = rows.find((item) => item.thread_id === previewId) ?? null
 
-  const handleReview = async (
-    relatedId: string,
-    status: "confirmed" | "dismissed",
-  ) => {
+  const handleReview = async (relatedId: string, status: "confirmed" | "dismissed") => {
     if (inflightRef.current.has(relatedId)) {
       return
     }
@@ -155,7 +152,7 @@ export const AssociatedThreadsList = ({
               >
                 {item.subject}
               </button>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+              <p className="text-muted-foreground mt-0.5 truncate text-xs">
                 <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
                   {item.mailbox}
                 </span>
@@ -216,7 +213,7 @@ export const AssociatedThreadsList = ({
       <Dialog open={previewId != null} onOpenChange={handlePreviewOpenChange}>
         <DialogContent size="lg" className="overscroll-contain">
           <DialogHeader>
-            <DialogTitle className="text-pretty pr-8">
+            <DialogTitle className="pr-8 text-pretty">
               {previewItem?.subject ?? "Associated thread"}
             </DialogTitle>
             <DialogDescription>
@@ -224,7 +221,7 @@ export const AssociatedThreadsList = ({
             </DialogDescription>
           </DialogHeader>
           {previewQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading thread…</p>
+            <p className="text-muted-foreground text-sm">Loading thread…</p>
           ) : null}
           {previewQuery.isError ? (
             <p className="text-sm text-red-600" role="alert">
@@ -236,6 +233,7 @@ export const AssociatedThreadsList = ({
           {previewQuery.data ? (
             <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
               <ThreadEmailPanel
+                threadId={previewId ?? previewQuery.data.thread.id}
                 subject={previewQuery.data.thread.subject}
                 messages={previewQuery.data.messages}
               />
