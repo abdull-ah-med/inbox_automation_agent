@@ -3,10 +3,9 @@
 import { useEffect, useId, useState } from "react"
 import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { Search } from "lucide-react"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 
-import { SearchHitLink } from "@/components/search-hit-link"
+import { InboxSearchSuggestions } from "@/components/inbox-search-suggestions"
 import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { SEARCH_DEBOUNCE_MS, useDebouncedValue } from "@/hooks/use-debounced-value"
@@ -28,14 +27,6 @@ import { cn } from "@/lib/utils"
 const isModK = (event: KeyboardEvent) => {
   const key = event.key.toLowerCase()
   return key === "k" && (event.metaKey || event.ctrlKey) && !event.altKey
-}
-
-const FILTER_VALUE_PROMPTS: Record<SearchFilterKey, string> = {
-  from: "Type a sender name or email",
-  contains: "Type text to find in the body",
-  subject: "Type a subject word",
-  direction: "Type inbound or outbound",
-  mailbox: "Type an inbox name",
 }
 
 export const InboxSearch = () => {
@@ -71,9 +62,7 @@ export const InboxSearch = () => {
       ? []
       : filterValueSuggestions(
           valueEntry.key,
-          valueEntry.key === "direction"
-            ? [...DIRECTION_FILTER_VALUES]
-            : mailboxKeys,
+          valueEntry.key === "direction" ? [...DIRECTION_FILTER_VALUES] : mailboxKeys,
           valueEntry.prefix,
         )
 
@@ -113,10 +102,7 @@ export const InboxSearch = () => {
 
   const handleInsertFilterValue = (filterValue: string) => {
     if (valueEntry === null) return
-    const withoutPartial = value.replace(
-      new RegExp(`(${valueEntry.key}:)\\s*[^\\s]*$`, "i"),
-      `$1`,
-    )
+    const withoutPartial = value.replace(new RegExp(`(${valueEntry.key}:)\\s*[^\\s]*$`, "i"), `$1`)
     setValue(completePendingFilter(withoutPartial, filterValue))
     setOpen(true)
     window.requestAnimationFrame(() => {
@@ -124,25 +110,23 @@ export const InboxSearch = () => {
     })
   }
 
+  const handleNavigate = () => {
+    setOpen(false)
+  }
+
   const showFilters = open && filterKeys.length > 0 && valueSuggestions.length === 0
   const showHits = open && searchable && valueSuggestions.length === 0
-  const showPending =
-    open && pendingFilter !== null && valueSuggestions.length === 0
+  const showPending = open && pendingFilter !== null && valueSuggestions.length === 0
   const showValueSuggestions = open && valueSuggestions.length > 0
-  const showList =
-    showFilters || showHits || showPending || showValueSuggestions
+  const showList = showFilters || showHits || showPending || showValueSuggestions
 
   return (
-    <form
-      role="search"
-      onSubmit={handleSubmit}
-      className="relative min-w-0 flex-1"
-    >
+    <form role="search" onSubmit={handleSubmit} className="relative min-w-0 flex-1">
       <label htmlFor="inbox-search-input" className="sr-only">
         Search mail
       </label>
       <Search
-        className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+        className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
         aria-hidden="true"
       />
       <Input
@@ -171,103 +155,25 @@ export const InboxSearch = () => {
         ⌘K
       </Kbd>
       {showList ? (
-        <ul
-          id={resultsId}
-          role="listbox"
-          aria-label="Search suggestions"
-          className="absolute z-50 mt-2 max-h-80 w-full overflow-y-auto rounded-xl bg-popover py-1 shadow-lg ring-1 ring-foreground/10"
-        >
-          {showPending && pendingFilter ? (
-            <li className="px-3 py-2 text-sm text-muted-foreground">
-              {FILTER_VALUE_PROMPTS[pendingFilter]}
-            </li>
-          ) : null}
-          {showValueSuggestions
-            ? valueSuggestions.map((suggestion) => (
-                <li key={`${valueEntry?.key}-${suggestion}`}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected="false"
-                    tabIndex={0}
-                    aria-label={`${valueEntry?.key}:${suggestion}`}
-                    className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                    }}
-                    onClick={() => {
-                      handleInsertFilterValue(suggestion)
-                    }}
-                  >
-                    <span className="font-medium text-foreground">
-                      {valueEntry?.key}:{suggestion}
-                    </span>
-                  </button>
-                </li>
-              ))
-            : null}
-          {showFilters
-            ? filterKeys.map((key) => (
-                <li key={key}>
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected="false"
-                    tabIndex={0}
-                    aria-label={`${key}: ${FILTER_VALUE_PROMPTS[key]}`}
-                    className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-muted/60"
-                    onMouseDown={(event) => {
-                      event.preventDefault()
-                    }}
-                    onClick={() => {
-                      handleInsertFilter(key)
-                    }}
-                  >
-                    <span className="font-medium text-foreground">{key}:</span>
-                    <span className="text-xs text-muted-foreground">
-                      {FILTER_VALUE_PROMPTS[key]}
-                    </span>
-                  </button>
-                </li>
-              ))
-            : null}
-          {showHits && resultsQuery.isFetching && hits.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-muted-foreground">Searching…</li>
-          ) : null}
-          {showHits && resultsQuery.isError ? (
-            <li className="px-3 py-2 text-sm text-muted-foreground">
-              Search failed. Try again in a moment.
-            </li>
-          ) : null}
-          {showHits && resultsQuery.isSuccess && hits.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-muted-foreground">No matching threads</li>
-          ) : null}
-          {showHits
-            ? hits.map((hit) => (
-                <li key={hit.thread_id} role="option" aria-selected="false">
-                  <SearchHitLink hit={hit} onNavigate={() => setOpen(false)} />
-                </li>
-              ))
-            : null}
-          {showHits && hits.length > 0 ? (
-            <li className="border-t border-border">
-              <Link
-                href={`/search?q=${encodeURIComponent(trimmed)}`}
-                tabIndex={0}
-                aria-label="See all search results"
-                className="block px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/60"
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                }}
-                onClick={() => {
-                  setOpen(false)
-                }}
-              >
-                See all results
-              </Link>
-            </li>
-          ) : null}
-        </ul>
+        <InboxSearchSuggestions
+          resultsId={resultsId}
+          showPending={showPending}
+          pendingFilter={pendingFilter}
+          showValueSuggestions={showValueSuggestions}
+          valueSuggestions={valueSuggestions}
+          valueEntryKey={valueEntry?.key}
+          showFilters={showFilters}
+          filterKeys={filterKeys}
+          showHits={showHits}
+          isFetching={resultsQuery.isFetching}
+          isError={resultsQuery.isError}
+          isSuccess={resultsQuery.isSuccess}
+          hits={hits}
+          trimmed={trimmed}
+          onInsertFilter={handleInsertFilter}
+          onInsertFilterValue={handleInsertFilterValue}
+          onNavigate={handleNavigate}
+        />
       ) : null}
     </form>
   )

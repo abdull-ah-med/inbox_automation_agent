@@ -96,9 +96,7 @@ def numeric_slack_subject(subject: str) -> str:
     return " ".join(parts)
 
 
-def alert_cluster_keys(
-    *, mailbox: str, sender: str, subject: str
-) -> tuple[str, str, str] | None:
+def alert_cluster_keys(*, mailbox: str, sender: str, subject: str) -> tuple[str, str, str] | None:
     """Exact fingerprint, numeric-slack signature, and normalized sender."""
     if not is_automated_mail(sender=sender, subject=subject):
         return None
@@ -139,15 +137,17 @@ def deadlines_overlap(
         for right_remainder, right_dates in right_parts:
             if left_dates and right_dates and not (left_dates & right_dates):
                 continue
-            if left_remainder and right_remainder and (
-                left_remainder == right_remainder
-                or left_remainder in right_remainder
-                or right_remainder in left_remainder
+            if (
+                left_remainder
+                and right_remainder
+                and (
+                    left_remainder == right_remainder
+                    or left_remainder in right_remainder
+                    or right_remainder in left_remainder
+                )
             ):
                 return True
-            if (left_dates & right_dates) and (
-                not left_remainder or not right_remainder
-            ):
+            if (left_dates & right_dates) and (not left_remainder or not right_remainder):
                 return True
     return False
 
@@ -243,11 +243,7 @@ def select_related(
         key = drip_key(candidate.sender, candidate.subject)
         if drip and key in suppressed and candidate.thread_id not in confirmed:
             continue
-        if (
-            max_gap_days is not None
-            and candidate.thread_id not in confirmed
-            and not high
-        ):
+        if max_gap_days is not None and candidate.thread_id not in confirmed and not high:
             gap = _gap_days(source.last_message_at, candidate.last_message_at)
             if gap is not None and gap > max_gap_days:
                 continue

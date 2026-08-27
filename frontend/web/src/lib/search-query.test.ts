@@ -13,9 +13,7 @@ import {
 
 describe("parseSearchQuery", () => {
   it("stacks from, subject, mailbox, and leftover keywords", () => {
-    const parsed = parseSearchQuery(
-      "from:vendor@example.com subject:packet mailbox:sales overdue",
-    )
+    const parsed = parseSearchQuery("from:vendor@example.com subject:packet mailbox:sales overdue")
     expect(parsed.senders).toEqual(["vendor@example.com"])
     expect(parsed.subjects).toEqual(["packet"])
     expect(parsed.mailboxes).toEqual(["sales"])
@@ -23,22 +21,14 @@ describe("parseSearchQuery", () => {
   })
 
   it("keeps quoted filter values", () => {
-    const parsed = parseSearchQuery(
-      'from:"Elise Kelvin" contains:"drug screen" invoice',
-    )
+    const parsed = parseSearchQuery('from:"Elise Kelvin" contains:"drug screen" invoice')
     expect(parsed.senders).toEqual(["Elise Kelvin"])
     expect(parsed.contains).toEqual(["drug screen"])
     expect(parsed.freeText).toBe("invoice")
   })
 
   it("lists the Discord-style operators users can stack", () => {
-    expect(SEARCH_FILTER_KEYS).toEqual([
-      "from",
-      "contains",
-      "subject",
-      "direction",
-      "mailbox",
-    ])
+    expect(SEARCH_FILTER_KEYS).toEqual(["from", "contains", "subject", "direction", "mailbox"])
   })
 
   it("treats a space after from: as part of the operator", () => {
@@ -59,9 +49,7 @@ describe("parseSearchQuery", () => {
   it("hides other operators while from: is waiting for a sender", () => {
     expect(matchingFilterKeys("from:")).toEqual([])
     expect(matchingFilterKeys("from: ")).toEqual([])
-    expect(matchingFilterKeys("from:vendor@example.com ")).toEqual([
-      ...SEARCH_FILTER_KEYS,
-    ])
+    expect(matchingFilterKeys("from:vendor@example.com ")).toEqual([...SEARCH_FILTER_KEYS])
   })
 
   it("appends from: after a keyword instead of replacing it", () => {
@@ -72,9 +60,7 @@ describe("parseSearchQuery", () => {
 
   it("completes a dangling filter with a suggested value", () => {
     expect(completePendingFilter("mailbox:", "sales")).toBe("mailbox:sales ")
-    expect(completePendingFilter("direction:", "inbound")).toBe(
-      "direction:inbound ",
-    )
+    expect(completePendingFilter("direction:", "inbound")).toBe("direction:inbound ")
   })
 
   it("reads the active direction/mailbox value being typed", () => {
@@ -91,9 +77,7 @@ describe("parseSearchQuery", () => {
       "inbound",
       "outbound",
     ])
-    expect(
-      filterValueSuggestions("direction", ["inbound", "outbound"], "in"),
-    ).toEqual(["inbound"])
+    expect(filterValueSuggestions("direction", ["inbound", "outbound"], "in")).toEqual(["inbound"])
     expect(
       filterValueSuggestions("mailbox", ["sales", "vendor", "client-relations"], "sa"),
     ).toEqual(["sales"])

@@ -123,9 +123,13 @@ async def test_all_vector_repos_set_ef_search(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_set_hnsw_session_defaults_is_local_not_session() -> None:
+    """HNSW knobs must be transaction-local (set_config is_local=true)."""
     session = AsyncMock()
     session.execute = AsyncMock()
     await set_hnsw_session_defaults(session, _settings())
     statements = [str(call.args[0]) for call in session.execute.await_args_list]
-    assert any("SET LOCAL hnsw.ef_search" in sql for sql in statements)
-    assert any("SET LOCAL hnsw.iterative_scan" in sql for sql in statements)
+    # set_config(name, value, is_local): third arg true = LOCAL to this txn
+    assert any("set_config('hnsw.ef_search'" in sql and ", true)" in sql for sql in statements)
+    assert any("set_config('hnsw.iterative_scan'" in sql and ", true)" in sql for sql in statements)
+    params = session.execute.await_args_list[0].args[1]
+    assert params["ef_search"] == "100"

@@ -1,10 +1,4 @@
-export const SEARCH_FILTER_KEYS = [
-  "from",
-  "contains",
-  "subject",
-  "direction",
-  "mailbox",
-] as const
+export const SEARCH_FILTER_KEYS = ["from", "contains", "subject", "direction", "mailbox"] as const
 
 export type SearchFilterKey = (typeof SEARCH_FILTER_KEYS)[number]
 
@@ -24,10 +18,7 @@ const FILTER_RE = new RegExp(
   "gi",
 )
 
-const DANGLING_FILTER_RE = new RegExp(
-  `(?:^|\\s)(?:${FILTER_KEYS_PATTERN}):\\s*`,
-  "gi",
-)
+const DANGLING_FILTER_RE = new RegExp(`(?:^|\\s)(?:${FILTER_KEYS_PATTERN}):\\s*`, "gi")
 
 const DIRECTION_ALIASES: Record<string, "inbound" | "outbound"> = {
   inbound: "inbound",
@@ -41,10 +32,7 @@ const DIRECTION_ALIASES: Record<string, "inbound" | "outbound"> = {
 
 const stripHtmlAndControls = (value: string): string => {
   const withoutTags = value.replace(/<[^>]*>/g, " ")
-  return withoutTags.replace(
-    /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g,
-    "",
-  )
+  return withoutTags.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
 }
 
 const collapse = (value: string): string => value.replace(/\s+/g, " ").trim()
@@ -95,27 +83,23 @@ export const parseSearchQuery = (raw: string): ParsedSearchQuery => {
 }
 
 export const sanitizeSearchInput = (value: string): string => {
-  return collapse(
-    stripHtmlAndControls(value).replace(/[&|!()*']/g, " "),
-  )
+  return collapse(stripHtmlAndControls(value).replace(/[&|!()*']/g, " "))
 }
 
 export const isSearchableQuery = (raw: string): boolean => {
   const parsed = parseSearchQuery(raw)
   return Boolean(
     parsed.freeText ||
-      parsed.senders.length ||
-      parsed.contains.length ||
-      parsed.subjects.length ||
-      parsed.directions.length ||
-      parsed.mailboxes.length,
+    parsed.senders.length ||
+    parsed.contains.length ||
+    parsed.subjects.length ||
+    parsed.directions.length ||
+    parsed.mailboxes.length,
   )
 }
 
 export const incompleteFilterKey = (value: string): SearchFilterKey | null => {
-  const match = value.match(
-    new RegExp(`(?:^|\\s)(${FILTER_KEYS_PATTERN}):\\s*$`, "i"),
-  )
+  const match = value.match(new RegExp(`(?:^|\\s)(${FILTER_KEYS_PATTERN}):\\s*$`, "i"))
   if (!match) return null
   return match[1].toLowerCase() as SearchFilterKey
 }
@@ -123,9 +107,7 @@ export const incompleteFilterKey = (value: string): SearchFilterKey | null => {
 export const filterValueEntry = (
   value: string,
 ): { key: SearchFilterKey; prefix: string } | null => {
-  const match = value.match(
-    new RegExp(`(?:^|\\s)(${FILTER_KEYS_PATTERN}):\\s*([^\\s]*)$`, "i"),
-  )
+  const match = value.match(new RegExp(`(?:^|\\s)(${FILTER_KEYS_PATTERN}):\\s*([^\\s]*)$`, "i"))
   if (!match) return null
   const key = match[1].toLowerCase() as SearchFilterKey
   if (key !== "direction" && key !== "mailbox") return null
@@ -142,10 +124,7 @@ export const matchingFilterKeys = (value: string): SearchFilterKey[] => {
   if (colonAt >= 0) {
     const key = last.slice(0, colonAt).toLowerCase()
     const rest = last.slice(colonAt + 1)
-    if (
-      SEARCH_FILTER_KEYS.includes(key as SearchFilterKey) &&
-      rest.length > 0
-    ) {
+    if (SEARCH_FILTER_KEYS.includes(key as SearchFilterKey) && rest.length > 0) {
       return []
     }
     if (SEARCH_FILTER_KEYS.includes(key as SearchFilterKey) && rest.length === 0) {
@@ -153,9 +132,7 @@ export const matchingFilterKeys = (value: string): SearchFilterKey[] => {
     }
   }
   const lower = last.toLowerCase()
-  return SEARCH_FILTER_KEYS.filter(
-    (key) => key.startsWith(lower) || `${key}:`.startsWith(lower),
-  )
+  return SEARCH_FILTER_KEYS.filter((key) => key.startsWith(lower) || `${key}:`.startsWith(lower))
 }
 
 export const insertFilterKey = (value: string, key: SearchFilterKey): string => {
@@ -167,8 +144,7 @@ export const insertFilterKey = (value: string, key: SearchFilterKey): string => 
     if (!token.trim()) continue
     const lower = token.toLowerCase()
     const isPartialOperator =
-      !lower.includes(":") &&
-      (key.startsWith(lower) || `${key}:`.startsWith(lower))
+      !lower.includes(":") && (key.startsWith(lower) || `${key}:`.startsWith(lower))
     if (isPartialOperator) {
       parts[index] = `${key}:`
       return parts.join("")
@@ -178,10 +154,7 @@ export const insertFilterKey = (value: string, key: SearchFilterKey): string => 
   return `${key}:`
 }
 
-export const completePendingFilter = (
-  value: string,
-  filterValue: string,
-): string => {
+export const completePendingFilter = (value: string, filterValue: string): string => {
   if (!incompleteFilterKey(value)) return value
   return `${value}${filterValue} `
 }
@@ -198,4 +171,3 @@ export const filterValueSuggestions = (
 }
 
 export const DIRECTION_FILTER_VALUES = ["inbound", "outbound"] as const
-

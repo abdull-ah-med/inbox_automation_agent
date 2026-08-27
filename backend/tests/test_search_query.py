@@ -4,9 +4,7 @@ from app.services.search_query import parse_search_query
 
 
 def test_parse_stacks_from_subject_mailbox_and_free_text() -> None:
-    parsed = parse_search_query(
-        "from:vendor@example.com subject:packet mailbox:sales overdue"
-    )
+    parsed = parse_search_query("from:vendor@example.com subject:packet mailbox:sales overdue")
     assert parsed.senders == ("vendor@example.com",)
     assert parsed.subjects == ("packet",)
     assert parsed.mailboxes == ("sales",)
@@ -14,9 +12,7 @@ def test_parse_stacks_from_subject_mailbox_and_free_text() -> None:
 
 
 def test_parse_quoted_from_and_contains() -> None:
-    parsed = parse_search_query(
-        'from:"Elise Kelvin" contains:"drug screen" invoice'
-    )
+    parsed = parse_search_query('from:"Elise Kelvin" contains:"drug screen" invoice')
     assert parsed.senders == ("Elise Kelvin",)
     assert parsed.contains == ("drug screen",)
     assert parsed.free_text == "invoice"

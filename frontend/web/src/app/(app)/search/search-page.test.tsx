@@ -55,9 +55,10 @@ describe("Search page", () => {
       </QueryClientProvider>,
     )
     expect(await screen.findByRole("heading", { name: /search/i })).toBeInTheDocument()
-    expect(
-      await screen.findByRole("link", { name: /drug screen packet/i }),
-    ).toHaveAttribute("href", `/threads/${THREAD_ID}`)
+    expect(await screen.findByRole("link", { name: /drug screen packet/i })).toHaveAttribute(
+      "href",
+      `/threads/${THREAD_ID}`,
+    )
     expect(searchThreads).toHaveBeenCalledWith({ q: "packet" })
   })
 
@@ -91,8 +92,6 @@ describe("Search page", () => {
     )
     expect(await screen.findByText(/search failed/i)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: /retry search/i }))
-    expect(
-      await screen.findByRole("link", { name: /drug screen packet/i }),
-    ).toBeInTheDocument()
+    expect(await screen.findByRole("link", { name: /drug screen packet/i })).toBeInTheDocument()
   })
 })

@@ -69,9 +69,7 @@ class ParsedSearchQuery:
         )
 
     def has_column_filters(self) -> bool:
-        return bool(
-            self.senders or self.contains or self.subjects or self.directions
-        )
+        return bool(self.senders or self.contains or self.subjects or self.directions)
 
 
 def parse_search_query(raw: str) -> ParsedSearchQuery:

@@ -97,6 +97,167 @@ def _sender_from_messages(rows: list[MessageSchema]) -> str:
     return ""
 
 
+def _source_candidate(
+    source_thread: thread_repo.ThreadSchema,
+    *,
+    source_rows: list[MessageSchema],
+    query_sender: str,
+) -> RelatedCandidate:
+    sender = _sender_from_messages(source_rows) or query_sender
+    return RelatedCandidate(
+        thread_id=source_thread.id,
+        mailbox=source_thread.mailbox,
+        conversation_id=source_thread.conversation_id,
+        subject=source_thread.subject,
+        sender=sender,
+        last_message_at=source_thread.last_message_at,
+        urgency=source_thread.urgency,
+        score=0.0,
+        cosine=None,
+        deadlines=_deadlines_from_messages(source_rows),
+    )
+
+
+def _collect_related_candidates(
+    *,
+    source_thread: thread_repo.ThreadSchema,
+    search_hits: list,
+    sql_rows: list,
+    grouped: dict[uuid.UUID, list[MessageSchema]],
+    confirmed_ids: set[uuid.UUID],
+    extra_threads: dict[uuid.UUID, thread_repo.ThreadSchema],
+    purpose: str,
+) -> list[RelatedCandidate]:
+    candidates: list[RelatedCandidate] = []
+    seen: set[uuid.UUID] = set()
+
+    def _append_candidate(
+        *,
+        thread_id: uuid.UUID,
+        mailbox: str,
+        conversation_id: str,
+        subject: str,
+        last_message_at: datetime | None,
+        urgency: str | None,
+        score: float,
+        cosine: float | None,
+    ) -> None:
+        if thread_id in seen:
+            return
+        seen.add(thread_id)
+        rows = grouped.get(thread_id, [])
+        candidates.append(
+            RelatedCandidate(
+                thread_id=thread_id,
+                mailbox=mailbox,
+                conversation_id=conversation_id,
+                subject=subject or "",
+                sender=_sender_from_messages(rows),
+                last_message_at=last_message_at,
+                urgency=urgency,
+                score=score,
+                cosine=cosine,
+                deadlines=_deadlines_from_messages(rows),
+            )
+        )
+
+    for hit in search_hits:
+        _append_candidate(
+            thread_id=hit.thread_id,
+            mailbox=hit.mailbox,
+            conversation_id=hit.conversation_id,
+            subject=hit.subject or "",
+            last_message_at=hit.last_message_at,
+            urgency=hit.urgency,
+            score=hit.score,
+            cosine=hit.similarity_score,
+        )
+    for row in sql_rows:
+        if row.id == source_thread.id:
+            continue
+        score = 1.0 if row.alert_fingerprint == source_thread.alert_fingerprint else 0.9
+        _append_candidate(
+            thread_id=row.id,
+            mailbox=row.mailbox,
+            conversation_id=row.conversation_id,
+            subject=row.subject,
+            last_message_at=row.last_message_at,
+            urgency=row.urgency,
+            score=score,
+            cosine=None,
+        )
+    if purpose == "associated":
+        for related_id in confirmed_ids:
+            related = extra_threads.get(related_id)
+            if related is None:
+                continue
+            _append_candidate(
+                thread_id=related.id,
+                mailbox=related.mailbox,
+                conversation_id=related.conversation_id,
+                subject=related.subject,
+                last_message_at=related.last_message_at,
+                urgency=related.urgency,
+                score=1.0,
+                cosine=1.0,
+            )
+    return candidates
+
+
+async def _suppressed_drip_keys(
+    session: AsyncSession,
+    *,
+    statuses: dict[uuid.UUID, str],
+    extra_threads: dict[uuid.UUID, thread_repo.ThreadSchema],
+    grouped: dict[uuid.UUID, list[MessageSchema]],
+) -> set[tuple[str, str]]:
+    suppressed: set[tuple[str, str]] = set()
+    for related_id, status in statuses.items():
+        if status != "dismissed":
+            continue
+        related = extra_threads.get(related_id)
+        if related is None:
+            continue
+        sender_for_key = _sender_from_messages(grouped.get(related_id, []))
+        if not sender_for_key:
+            sender_for_key = await _latest_inbound_sender(session, related.id)
+        suppressed.add(drip_key(sender_for_key, related.subject))
+    return suppressed
+
+
+async def _items_from_selected(
+    session: AsyncSession,
+    *,
+    source_thread_id: uuid.UUID,
+    selected: list[RelatedCandidate],
+    statuses: dict[uuid.UUID, str],
+) -> list[RelatedThreadItem]:
+    items: list[RelatedThreadItem] = []
+    for candidate in selected:
+        status = statuses.get(candidate.thread_id, "proposed")
+        if status == "proposed":
+            await association_review_repo.upsert_proposed(
+                session,
+                source_thread_id=source_thread_id,
+                related_thread_id=candidate.thread_id,
+                score=candidate.score,
+            )
+        items.append(
+            RelatedThreadItem(
+                thread_id=candidate.thread_id,
+                mailbox=candidate.mailbox,
+                subject=candidate.subject,
+                sender=candidate.sender,
+                last_message_at=candidate.last_message_at,
+                urgency=candidate.urgency,
+                score=candidate.score,
+                status=status if status in ("proposed", "confirmed", "dismissed") else "proposed",
+                match_reasons=list(candidate.match_reasons),
+            )
+        )
+    return items
+
+
 async def list_related(
     session: AsyncSession,
     settings: Settings,
@@ -132,12 +293,8 @@ async def list_related(
         return RelatedThreadList(items=[])
 
     statuses = await association_review_repo.statuses_for_source(session, source_thread.id)
-    dismissed_ids = {
-        related_id for related_id, status in statuses.items() if status == "dismissed"
-    }
-    confirmed_ids = {
-        related_id for related_id, status in statuses.items() if status == "confirmed"
-    }
+    dismissed_ids = {related_id for related_id, status in statuses.items() if status == "dismissed"}
+    confirmed_ids = {related_id for related_id, status in statuses.items() if status == "confirmed"}
 
     from datetime import UTC, datetime
 
@@ -159,99 +316,24 @@ async def list_related(
     load_ids.update(row.id for row in sql_rows)
     load_ids.update(related_id for related_id, status in statuses.items() if status == "dismissed")
     grouped = await message_repo.list_by_thread_ids(session, list(load_ids))
-    source_rows = grouped.get(source_thread.id, [])
-    sender = _sender_from_messages(source_rows) or query_sender
-    source = RelatedCandidate(
-        thread_id=source_thread.id,
-        mailbox=source_thread.mailbox,
-        conversation_id=source_thread.conversation_id,
-        subject=source_thread.subject,
-        sender=sender,
-        last_message_at=source_thread.last_message_at,
-        urgency=source_thread.urgency,
-        score=0.0,
-        cosine=None,
-        deadlines=_deadlines_from_messages(source_rows),
+    source = _source_candidate(
+        source_thread,
+        source_rows=grouped.get(source_thread.id, []),
+        query_sender=query_sender,
     )
 
-    candidates: list[RelatedCandidate] = []
-    seen: set[uuid.UUID] = set()
-
-    def _append_candidate(
-        *,
-        thread_id: uuid.UUID,
-        mailbox: str,
-        conversation_id: str,
-        subject: str,
-        last_message_at: datetime | None,
-        urgency: str | None,
-        score: float,
-        cosine: float | None,
-    ) -> None:
-        if thread_id in seen:
-            return
-        seen.add(thread_id)
-        rows = grouped.get(thread_id, [])
-        candidates.append(
-            RelatedCandidate(
-                thread_id=thread_id,
-                mailbox=mailbox,
-                conversation_id=conversation_id,
-                subject=subject or "",
-                sender=_sender_from_messages(rows),
-                last_message_at=last_message_at,
-                urgency=urgency,
-                score=score,
-                cosine=cosine,
-                deadlines=_deadlines_from_messages(rows),
-            )
-        )
-
-    for hit in search.hits:
-        _append_candidate(
-            thread_id=hit.thread_id,
-            mailbox=hit.mailbox,
-            conversation_id=hit.conversation_id,
-            subject=hit.subject or "",
-            last_message_at=hit.last_message_at,
-            urgency=hit.urgency,
-            score=hit.score,
-            cosine=hit.similarity_score,
-        )
-    for row in sql_rows:
-        if row.id == source_thread.id:
-            continue
-        score = 1.0 if row.alert_fingerprint == source_thread.alert_fingerprint else 0.9
-        _append_candidate(
-            thread_id=row.id,
-            mailbox=row.mailbox,
-            conversation_id=row.conversation_id,
-            subject=row.subject,
-            last_message_at=row.last_message_at,
-            urgency=row.urgency,
-            score=score,
-            cosine=None,
-        )
     extra_ids = set(confirmed_ids)
-    extra_ids.update(
-        related_id for related_id, status in statuses.items() if status == "dismissed"
-    )
+    extra_ids.update(related_id for related_id, status in statuses.items() if status == "dismissed")
     extra_threads = await thread_repo.list_by_ids(session, list(extra_ids))
-    if purpose == "associated":
-        for related_id in confirmed_ids:
-            related = extra_threads.get(related_id)
-            if related is None:
-                continue
-            _append_candidate(
-                thread_id=related.id,
-                mailbox=related.mailbox,
-                conversation_id=related.conversation_id,
-                subject=related.subject,
-                last_message_at=related.last_message_at,
-                urgency=related.urgency,
-                score=1.0,
-                cosine=1.0,
-            )
+    candidates = _collect_related_candidates(
+        source_thread=source_thread,
+        search_hits=search.hits,
+        sql_rows=sql_rows,
+        grouped=grouped,
+        confirmed_ids=confirmed_ids,
+        extra_threads=extra_threads,
+        purpose=purpose,
+    )
 
     queue_ids: set[uuid.UUID] = set()
     if purpose == "siblings":
@@ -260,18 +342,12 @@ async def list_related(
             [row.thread_id for row in candidates],
         )
 
-    suppressed: set[tuple[str, str]] = set()
-    for related_id, status in statuses.items():
-        if status != "dismissed":
-            continue
-        related = extra_threads.get(related_id)
-        if related is None:
-            continue
-        sender_for_key = _sender_from_messages(grouped.get(related_id, []))
-        if not sender_for_key:
-            sender_for_key = await _latest_inbound_sender(session, related.id)
-        suppressed.add(drip_key(sender_for_key, related.subject))
-
+    suppressed = await _suppressed_drip_keys(
+        session,
+        statuses=statuses,
+        extra_threads=extra_threads,
+        grouped=grouped,
+    )
     selected = select_related(
         source,
         candidates,
@@ -282,30 +358,12 @@ async def list_related(
         confirmed_ids=confirmed_ids,
         suppressed_drip_keys=suppressed,
     )
-
-    items: list[RelatedThreadItem] = []
-    for candidate in selected:
-        status = statuses.get(candidate.thread_id, "proposed")
-        if status == "proposed":
-            await association_review_repo.upsert_proposed(
-                session,
-                source_thread_id=source_thread.id,
-                related_thread_id=candidate.thread_id,
-                score=candidate.score,
-            )
-        items.append(
-            RelatedThreadItem(
-                thread_id=candidate.thread_id,
-                mailbox=candidate.mailbox,
-                subject=candidate.subject,
-                sender=candidate.sender,
-                last_message_at=candidate.last_message_at,
-                urgency=candidate.urgency,
-                score=candidate.score,
-                status=status if status in ("proposed", "confirmed", "dismissed") else "proposed",
-                match_reasons=list(candidate.match_reasons),
-            )
-        )
+    items = await _items_from_selected(
+        session,
+        source_thread_id=source_thread.id,
+        selected=selected,
+        statuses=statuses,
+    )
     return RelatedThreadList(items=items)
 
 

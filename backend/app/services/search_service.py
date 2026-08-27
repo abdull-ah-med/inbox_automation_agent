@@ -406,21 +406,12 @@ def _fuse_tuples(
     return tuples
 
 
-async def search_threads(
-    session: AsyncSession,
+def _prepare_parsed_query(
+    query: str,
     settings: Settings,
     *,
-    openai_client: AsyncOpenAI | None,
-    query: str,
-    mailbox: str | None = None,
-    limit: int = SEARCH_DEFAULT_LIMIT,
-    mode: str = SEARCH_MODE_HYBRID,
-    allow_empty: bool = False,
-) -> SearchResponse:
-    """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings.
-
-    Blank / filler-only queries raise unless ``allow_empty`` (chat overview).
-    """
+    allow_empty: bool,
+) -> ParsedSearchQuery:
     parsed = parse_search_query(query)
     nl = extract_nl_mailbox_scope(parsed.free_text, list(settings.mailbox_list))
     if nl.mailboxes:
@@ -447,75 +438,72 @@ async def search_threads(
         )
     if parsed.is_empty() and not allow_empty:
         raise EmptySearchQueryError("query must not be blank")
-    cleaned = format_search_query(parsed)
-    if mode not in (SEARCH_MODE_KEYWORD, SEARCH_MODE_HYBRID):
-        mode = SEARCH_MODE_HYBRID
+    return parsed
 
-    mailboxes = _mailboxes_for_search(
-        settings,
-        mailbox=mailbox,
-        mailbox_tokens=parsed.mailboxes,
-    )
-    resolved = mailboxes[0] if mailbox is not None and mailbox.strip() else None
-    if parsed.mailboxes and len(mailboxes) == 1:
-        resolved = mailboxes[0]
-    limit = _normalize_limit(limit)
-    column_filters = SearchColumnFilters(
-        senders=parsed.senders,
-        contains=parsed.contains,
-        subjects=parsed.subjects,
-        directions=parsed.directions,
-    )
-    filters = column_filters if column_filters.active() else None
 
-    if not mailboxes:
-        logger.info("search_empty_mailbox_allowlist", query=cleaned)
-        return SearchResponse(query=cleaned, mailbox=resolved, hits=[])
-
-    vector_matches: list[EmbeddingMatchSchema] = []
-    fts_matches: list[EmbeddingMatchSchema] = []
-    keyword_matches: list[EmbeddingMatchSchema] = []
-    vector_failed = False
-    fts_failed = False
-    top_k = max(settings.embedding_candidate_k, limit)
+async def _vector_search_matches(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    openai_client: AsyncOpenAI | None,
+    parsed: ParsedSearchQuery,
+    cleaned: str,
+    mailboxes: list[str],
+    filters: SearchColumnFilters | None,
+    top_k: int,
+    mode: str,
+) -> tuple[list[EmbeddingMatchSchema], bool]:
     embed_source = content_embed_text(parsed.free_text) if parsed.free_text else ""
     use_vector = mode == SEARCH_MODE_HYBRID and bool(embed_source)
+    if not use_vector:
+        return [], False
 
     vector: list[float] | None = None
-    if use_vector:
-        if openai_client is None:
-            logger.warning("search_embed_skipped_unconfigured", query_length=len(cleaned))
-        else:
-            try:
-                vector = await embedding_service.embed_text(
-                    embed_source,
-                    client=openai_client,
-                    settings=settings,
-                )
-            except Exception:
-                logger.exception("search_embed_failed", query_length=len(cleaned))
+    if openai_client is None:
+        logger.warning("search_embed_skipped_unconfigured", query_length=len(cleaned))
+        return [], False
+    try:
+        vector = await embedding_service.embed_text(
+            embed_source,
+            client=openai_client,
+            settings=settings,
+        )
+    except Exception:
+        logger.exception("search_embed_failed", query_length=len(cleaned))
+        return [], False
 
-        if vector is not None:
-            try:
-                vector_matches = await embedding_repo.search_similar(
-                    session,
-                    embedding=vector,
-                    min_similarity=settings.embedding_min_similarity,
-                    top_k=top_k,
-                    mailboxes=mailboxes,
-                    filters=filters,
-                )
-            except Exception:
-                vector_failed = True
-                logger.exception("search_vector_failed", query_length=len(cleaned))
+    try:
+        matches = await embedding_repo.search_similar(
+            session,
+            embedding=vector,
+            min_similarity=settings.embedding_min_similarity,
+            top_k=top_k,
+            mailboxes=mailboxes,
+            filters=filters,
+        )
+        return matches, False
+    except Exception:
+        logger.exception("search_vector_failed", query_length=len(cleaned))
+        return [], True
 
+
+async def _fts_search_matches(
+    session: AsyncSession,
+    *,
+    parsed: ParsedSearchQuery,
+    cleaned: str,
+    mailboxes: list[str],
+    filters: SearchColumnFilters | None,
+    top_k: int,
+    allow_empty: bool,
+) -> tuple[list[EmbeddingMatchSchema], bool]:
     try:
         prefix_query = retrieval_tokens(parsed.free_text) if parsed.free_text else ""
         # mailbox: or a filler-only chat overview: empty FTS + recency listing.
         recency_listing = (
             not parsed.free_text and filters is None and (bool(parsed.mailboxes) or allow_empty)
         )
-        fts_matches = await embedding_repo.search_fts(
+        matches = await embedding_repo.search_fts(
             session,
             query_text=prefix_query,
             top_k=top_k,
@@ -524,59 +512,61 @@ async def search_threads(
             filters=filters,
             allow_empty=recency_listing,
         )
+        return matches, False
     except Exception:
-        fts_failed = True
         logger.exception("search_fts_failed", query_length=len(cleaned))
+        return [], True
 
+
+async def _keyword_search_matches(
+    session: AsyncSession,
+    *,
+    parsed: ParsedSearchQuery,
+    cleaned: str,
+    mailboxes: list[str],
+    filters: SearchColumnFilters | None,
+    top_k: int,
+) -> list[EmbeddingMatchSchema]:
     required_tokens = (
         _required_search_tokens(build_fts_query(parsed.free_text))
         if parsed.free_text and filters is None
         else []
     )
-    if required_tokens:
-        try:
-            keyword_threads = await thread_repo.search_keyword_threads(
-                session,
-                tokens=required_tokens,
-                mailboxes=mailboxes,
-                top_k=top_k,
+    if not required_tokens:
+        return []
+    try:
+        keyword_threads = await thread_repo.search_keyword_threads(
+            session,
+            tokens=required_tokens,
+            mailboxes=mailboxes,
+            top_k=top_k,
+        )
+        return [
+            EmbeddingMatchSchema(
+                id=row.id,
+                conversation_id=row.conversation_id,
+                similarity_score=1.0,
+                mailbox=row.mailbox,
+                body_preview=row.subject,
+                sender_email=None,
             )
-            keyword_matches = [
-                EmbeddingMatchSchema(
-                    id=row.id,
-                    conversation_id=row.conversation_id,
-                    similarity_score=1.0,
-                    mailbox=row.mailbox,
-                    body_preview=row.subject,
-                    sender_email=None,
-                )
-                for row in keyword_threads
-            ]
-        except Exception:
-            logger.exception("search_keyword_failed", query_length=len(cleaned))
+            for row in keyword_threads
+        ]
+    except Exception:
+        logger.exception("search_keyword_failed", query_length=len(cleaned))
+        return []
 
-    if not vector_matches and not fts_matches and not keyword_matches:
-        if vector_failed or fts_failed:
-            raise SearchError("Search is temporarily unavailable")
-        return SearchResponse(query=cleaned, mailbox=resolved, hits=[])
 
-    fused = rrf_fuse(
-        _fuse_tuples(vector_matches),
-        _fuse_tuples(fts_matches),
-        _fuse_tuples(keyword_matches),
-        k=settings.rrf_k,
-    )
-    conv_scores = aggregate_conversation_scores(
-        fused,
-        bonus=settings.embedding_corroboration_bonus,
-        max_bonus_hits=settings.embedding_corroboration_max_hits,
-    )
-    ranked = sorted(conv_scores.items(), key=lambda kv: kv[1], reverse=True)
-    pairs = [_split_scope_key(key) for key, _score in ranked]
-    threads = await thread_repo.list_by_mailbox_conversations(session, pairs)
-    by_embedding = {match.id: match for match in [*vector_matches, *fts_matches, *keyword_matches]}
-    vector_ids = {match.id for match in vector_matches}
-
+def _build_search_hits(
+    *,
+    ranked: list[tuple[str, float]],
+    threads: dict,
+    fused: list,
+    by_embedding: dict,
+    vector_ids: set,
+    parsed: ParsedSearchQuery,
+    limit: int,
+) -> list[SearchHit]:
     hits: list[SearchHit] = []
     for key, score in ranked:
         mailbox_email, conversation_id = _split_scope_key(key)
@@ -616,6 +606,110 @@ async def search_threads(
         )
         if len(hits) >= limit:
             break
+    return hits
+
+
+async def search_threads(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    openai_client: AsyncOpenAI | None,
+    query: str,
+    mailbox: str | None = None,
+    limit: int = SEARCH_DEFAULT_LIMIT,
+    mode: str = SEARCH_MODE_HYBRID,
+    allow_empty: bool = False,
+) -> SearchResponse:
+    """Ranked threads. ``keyword`` is FTS only; ``hybrid`` adds embeddings.
+
+    Blank / filler-only queries raise unless ``allow_empty`` (chat overview).
+    """
+    parsed = _prepare_parsed_query(query, settings, allow_empty=allow_empty)
+    cleaned = format_search_query(parsed)
+    if mode not in (SEARCH_MODE_KEYWORD, SEARCH_MODE_HYBRID):
+        mode = SEARCH_MODE_HYBRID
+
+    mailboxes = _mailboxes_for_search(
+        settings,
+        mailbox=mailbox,
+        mailbox_tokens=parsed.mailboxes,
+    )
+    resolved = mailboxes[0] if mailbox is not None and mailbox.strip() else None
+    if parsed.mailboxes and len(mailboxes) == 1:
+        resolved = mailboxes[0]
+    limit = _normalize_limit(limit)
+    column_filters = SearchColumnFilters(
+        senders=parsed.senders,
+        contains=parsed.contains,
+        subjects=parsed.subjects,
+        directions=parsed.directions,
+    )
+    filters = column_filters if column_filters.active() else None
+
+    if not mailboxes:
+        logger.info("search_empty_mailbox_allowlist", query=cleaned)
+        return SearchResponse(query=cleaned, mailbox=resolved, hits=[])
+
+    top_k = max(settings.embedding_candidate_k, limit)
+    vector_matches, vector_failed = await _vector_search_matches(
+        session,
+        settings,
+        openai_client=openai_client,
+        parsed=parsed,
+        cleaned=cleaned,
+        mailboxes=mailboxes,
+        filters=filters,
+        top_k=top_k,
+        mode=mode,
+    )
+    fts_matches, fts_failed = await _fts_search_matches(
+        session,
+        parsed=parsed,
+        cleaned=cleaned,
+        mailboxes=mailboxes,
+        filters=filters,
+        top_k=top_k,
+        allow_empty=allow_empty,
+    )
+    keyword_matches = await _keyword_search_matches(
+        session,
+        parsed=parsed,
+        cleaned=cleaned,
+        mailboxes=mailboxes,
+        filters=filters,
+        top_k=top_k,
+    )
+
+    if not vector_matches and not fts_matches and not keyword_matches:
+        if vector_failed or fts_failed:
+            raise SearchError("Search is temporarily unavailable")
+        return SearchResponse(query=cleaned, mailbox=resolved, hits=[])
+
+    fused = rrf_fuse(
+        _fuse_tuples(vector_matches),
+        _fuse_tuples(fts_matches),
+        _fuse_tuples(keyword_matches),
+        k=settings.rrf_k,
+    )
+    conv_scores = aggregate_conversation_scores(
+        fused,
+        bonus=settings.embedding_corroboration_bonus,
+        max_bonus_hits=settings.embedding_corroboration_max_hits,
+    )
+    ranked = sorted(conv_scores.items(), key=lambda kv: kv[1], reverse=True)
+    pairs = [_split_scope_key(key) for key, _score in ranked]
+    threads = await thread_repo.list_by_mailbox_conversations(session, pairs)
+    by_embedding = {match.id: match for match in [*vector_matches, *fts_matches, *keyword_matches]}
+    vector_ids = {match.id for match in vector_matches}
+    hits = _build_search_hits(
+        ranked=ranked,
+        threads=threads,
+        fused=fused,
+        by_embedding=by_embedding,
+        vector_ids=vector_ids,
+        parsed=parsed,
+        limit=limit,
+    )
 
     logger.info(
         "search_completed",

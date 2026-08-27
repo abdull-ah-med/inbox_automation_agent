@@ -1,10 +1,10 @@
 """Behavioral oracles for high-precision drip association + bidirectional confirm.
 
 Worked examples (hand-counted, independent of production helpers):
-- SampleClient 8/9 vs 8/14 (same sender, date-stripped subject) → associate
-- January invoice from same sender → stay out
-- Daily Drivers ×3 (identical subject) → each sees the other two
-- Confirm on one side with only a one-way proposal → both threads show confirmed
+- SampleClient 8/9 vs 8/14 (same sender, date-stripped subject) -> associate
+- January invoice from same sender -> stay out
+- Daily Drivers x3 (identical subject) -> each sees the other two
+- Confirm on one side with only a one-way proposal -> both threads show confirmed
 - Propose never bumps urgency and never revives dismiss / demotes confirm
 """
 
@@ -433,9 +433,7 @@ async def test_confirm_with_only_one_way_proposal_shows_on_both_threads(
     )
     await db_session.commit()
 
-    reverse_before = await association_review_repo.statuses_for_source(
-        db_session, sibling.id
-    )
+    reverse_before = await association_review_repo.statuses_for_source(db_session, sibling.id)
     assert source.id not in reverse_before
 
     from app.services import related_thread_service
@@ -451,12 +449,8 @@ async def test_confirm_with_only_one_way_proposal_shows_on_both_threads(
     await db_session.commit()
 
     assert result.status == "confirmed"
-    from_source = await related_thread_service.list_stored_associations(
-        db_session, source.id
-    )
-    from_sibling = await related_thread_service.list_stored_associations(
-        db_session, sibling.id
-    )
+    from_source = await related_thread_service.list_stored_associations(db_session, source.id)
+    from_sibling = await related_thread_service.list_stored_associations(db_session, sibling.id)
     assert len(from_source) == 1
     assert from_source[0].thread_id == sibling.id
     assert from_source[0].status == "confirmed"
@@ -509,13 +503,17 @@ async def test_propose_drip_does_not_change_urgency_or_emit_escalation(
     assert refreshed_sibling.urgency == "NORMAL"
 
     escalated = (
-        await db_session.execute(
-            select(AuditEvent).where(
-                AuditEvent.event_type == "thread.urgency.recurrence_escalated",
-                AuditEvent.mailbox == SALES,
+        (
+            await db_session.execute(
+                select(AuditEvent).where(
+                    AuditEvent.event_type == "thread.urgency.recurrence_escalated",
+                    AuditEvent.mailbox == SALES,
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert escalated == []
 
 

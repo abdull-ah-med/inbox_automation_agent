@@ -13,8 +13,15 @@ def cap_limit(limit: int, *, maximum: int, minimum: int = 1) -> int:
 
 
 async def set_hnsw_session_defaults(session: AsyncSession, settings: Settings) -> None:
-    """SET LOCAL hnsw.ef_search (and iterative_scan when enabled) for this txn."""
-    ef_search = int(settings.hnsw_ef_search)
-    await session.execute(text(f"SET LOCAL hnsw.ef_search = {ef_search}"))
+    """Apply transaction-local hnsw.ef_search (and iterative_scan when enabled)."""
+    # Parameterized via set_config so we never interpolate into SQL text
+    # (https://sg.run/yP1O). Third arg true = LOCAL to this transaction.
+    ef_search = str(int(settings.hnsw_ef_search))
+    await session.execute(
+        text("SELECT set_config('hnsw.ef_search', :ef_search, true)"),
+        {"ef_search": ef_search},
+    )
     if settings.hnsw_iterative_scan_enabled:
-        await session.execute(text("SET LOCAL hnsw.iterative_scan = strict_order"))
+        await session.execute(
+            text("SELECT set_config('hnsw.iterative_scan', 'strict_order', true)"),
+        )

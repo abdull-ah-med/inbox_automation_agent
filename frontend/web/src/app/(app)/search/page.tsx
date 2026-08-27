@@ -30,16 +30,16 @@ const SearchResults = () => {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+        <p className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
           Mail
         </p>
         <h1 className="text-xl font-semibold tracking-tight">Search</h1>
         {searchable ? (
-          <p className="mt-1 text-sm text-muted-foreground">Results for “{q}”</p>
+          <p className="text-muted-foreground mt-1 text-sm">Results for “{q}”</p>
         ) : (
-          <p className="mt-1 text-sm text-muted-foreground">
-            Type a keyword or stack filters like Discord: from: contains: subject:
-            direction: mailbox:
+          <p className="text-muted-foreground mt-1 text-sm">
+            Type a keyword or stack filters like Discord: from: contains: subject: direction:
+            mailbox:
           </p>
         )}
       </div>
@@ -66,7 +66,7 @@ const SearchResults = () => {
       ) : null}
 
       {hits.length > 0 ? (
-        <ul className="divide-y divide-border overflow-hidden rounded-xl bg-card ring-1 ring-foreground/10">
+        <ul className="divide-border bg-card ring-foreground/10 divide-y overflow-hidden rounded-xl ring-1">
           {hits.map((hit) => (
             <li key={hit.thread_id}>
               <SearchHitLink hit={hit} />

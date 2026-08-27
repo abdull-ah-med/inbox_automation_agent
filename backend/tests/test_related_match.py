@@ -273,7 +273,6 @@ def test_dismissed_subject_template_suppresses_similar_drip() -> None:
     assert [row.thread_id for row in got] == []
 
 
-
 def test_base_subject_strips_alert_prefixes_and_dates() -> None:
     """RFC 5256-style prefixes plus DraftAssistant alert tokens; dates go; ticket ids stay."""
     assert base_subject("ALERT: Disk 90% on db-1") == "disk 90% on db-1"
@@ -302,10 +301,13 @@ def test_alert_fingerprint_is_mailbox_sender_base_subject_for_automated_only() -
 
 def test_deadlines_overlap_is_true_for_shared_friday_and_false_when_missing() -> None:
     assert deadlines_overlap(["Friday 8/28"], ["Friday 8/28"]) is True
-    assert deadlines_overlap(
-        ["complete by Friday 8/28"],
-        ["Reminder: complete by Friday 8/28"],
-    ) is True
+    assert (
+        deadlines_overlap(
+            ["complete by Friday 8/28"],
+            ["Reminder: complete by Friday 8/28"],
+        )
+        is True
+    )
     assert deadlines_overlap(["Friday 8/28"], ["Monday 8/31"]) is False
     assert deadlines_overlap([], ["Friday 8/28"]) is False
     assert deadlines_overlap(["Friday 8/28"], []) is False

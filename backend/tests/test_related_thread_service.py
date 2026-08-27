@@ -424,11 +424,7 @@ async def test_dismiss_hides_association_on_both_threads(db_session) -> None:
     )
     await db_session.commit()
 
-    from_source = await related_thread_service.list_stored_associations(
-        db_session, source.id
-    )
-    from_sibling = await related_thread_service.list_stored_associations(
-        db_session, sibling.id
-    )
+    from_source = await related_thread_service.list_stored_associations(db_session, source.id)
+    from_sibling = await related_thread_service.list_stored_associations(db_session, sibling.id)
     assert from_source == []
     assert from_sibling == []

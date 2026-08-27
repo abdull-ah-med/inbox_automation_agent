@@ -160,9 +160,11 @@ async def test_search_similar_sets_local_ef_search_from_settings() -> None:
         settings=settings,
     )
 
-    first = session.execute.await_args_list[0].args[0]
-    sql = str(getattr(first, "text", first)).lower()
-    assert "set local hnsw.ef_search = 160" in sql
+    first_call = session.execute.await_args_list[0]
+    sql = str(getattr(first_call.args[0], "text", first_call.args[0])).lower()
+    assert "set_config('hnsw.ef_search'" in sql
+    assert ", true)" in sql  # is_local — transaction-scoped, not session
+    assert first_call.args[1]["ef_search"] == "160"
 
 
 @pytest.mark.asyncio
@@ -190,7 +192,7 @@ async def test_search_similar_enables_iterative_scan_when_configured() -> None:
         str(getattr(call.args[0], "text", call.args[0])).lower()
         for call in session.execute.await_args_list
     ]
-    assert any("set local hnsw.iterative_scan = strict_order" in sql for sql in sqls)
+    assert any("set_config('hnsw.iterative_scan'" in sql and "strict_order" in sql for sql in sqls)
 
 
 @pytest.mark.asyncio

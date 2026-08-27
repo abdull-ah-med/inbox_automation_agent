@@ -72,32 +72,25 @@ describe("InboxSearch", () => {
     const user = userEvent.setup()
     renderSearch()
     await user.type(screen.getByRole("searchbox", { name: /search mail/i }), "packet")
-    expect(
-      await screen.findByRole("link", { name: /drug screen packet/i }),
-    ).toHaveAttribute("href", `/threads/${THREAD_ID}`)
+    expect(await screen.findByRole("link", { name: /drug screen packet/i })).toHaveAttribute(
+      "href",
+      `/threads/${THREAD_ID}`,
+    )
     expect(searchThreads).toHaveBeenCalledWith({ q: "packet" })
   })
 
   it("submits the keyword to the search page", async () => {
     const user = userEvent.setup()
     renderSearch()
-    await user.type(
-      screen.getByRole("searchbox", { name: /search mail/i }),
-      "packet{Enter}",
-    )
+    await user.type(screen.getByRole("searchbox", { name: /search mail/i }), "packet{Enter}")
     expect(push).toHaveBeenCalledWith("/search?q=packet")
   })
 
   it("strips HTML from the keyword before searching", async () => {
     const user = userEvent.setup()
     renderSearch()
-    await user.type(
-      screen.getByRole("searchbox", { name: /search mail/i }),
-      "<b>packet</b>",
-    )
-    expect(
-      await screen.findByRole("link", { name: /drug screen packet/i }),
-    ).toBeInTheDocument()
+    await user.type(screen.getByRole("searchbox", { name: /search mail/i }), "<b>packet</b>")
+    expect(await screen.findByRole("link", { name: /drug screen packet/i })).toBeInTheDocument()
     expect(searchThreads).toHaveBeenCalledWith({ q: "packet" })
   })
 
@@ -139,9 +132,7 @@ describe("InboxSearch", () => {
     renderSearch()
     await user.click(screen.getByRole("searchbox", { name: /search mail/i }))
     await user.click(screen.getByRole("option", { name: /^from:/i }))
-    expect(
-      screen.getByText(/type a sender name or email/i),
-    ).toBeVisible()
+    expect(screen.getByText(/type a sender name or email/i)).toBeVisible()
     await new Promise((resolve) => {
       window.setTimeout(resolve, 400)
     })

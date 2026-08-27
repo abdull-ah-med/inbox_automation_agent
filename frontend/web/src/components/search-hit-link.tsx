@@ -3,7 +3,12 @@
 import Link from "next/link"
 
 import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
-import { formatRelativeTime, inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
+import {
+  formatRelativeTime,
+  inboxAccentStyle,
+  inboxChipClassName,
+  inboxLabel,
+} from "@/lib/design-tokens"
 import { cn } from "@/lib/utils"
 import type { SearchHit } from "@/lib/types"
 
@@ -12,13 +17,7 @@ const mailboxKeyFor = (mailbox: string) => {
   return local || mailbox
 }
 
-export const SearchHitLink = ({
-  hit,
-  onNavigate,
-}: {
-  hit: SearchHit
-  onNavigate?: () => void
-}) => {
+export const SearchHitLink = ({ hit, onNavigate }: { hit: SearchHit; onNavigate?: () => void }) => {
   const key = mailboxKeyFor(hit.mailbox)
   const subject = hit.subject?.trim() || "Untitled thread"
   const href = `/threads/${hit.thread_id}`
@@ -40,23 +39,16 @@ export const SearchHitLink = ({
       )}
     >
       <div className="mb-1 flex flex-wrap items-center gap-1.5">
-        <span
-          className={inboxChipClassName}
-          style={inboxAccentStyle(key)}
-        >
+        <span className={inboxChipClassName} style={inboxAccentStyle(key)}>
           {inboxLabel(key)}
         </span>
         <StatusBadge label={stateLabel(hit.state)} tone={stateTone(hit.state)} />
-        {hit.urgency ? (
-          <StatusBadge label={hit.urgency} tone={urgencyTone(hit.urgency)} />
-        ) : null}
-        {hit.last_message_at ? (
-          <span className="text-xs text-muted-foreground">{when}</span>
-        ) : null}
+        {hit.urgency ? <StatusBadge label={hit.urgency} tone={urgencyTone(hit.urgency)} /> : null}
+        {hit.last_message_at ? <span className="text-muted-foreground text-xs">{when}</span> : null}
       </div>
-      <p className="truncate text-sm font-medium text-foreground">{subject}</p>
+      <p className="text-foreground truncate text-sm font-medium">{subject}</p>
       {hit.snippet ? (
-        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{hit.snippet}</p>
+        <p className="text-muted-foreground mt-0.5 line-clamp-2 text-xs">{hit.snippet}</p>
       ) : null}
     </Link>
   )

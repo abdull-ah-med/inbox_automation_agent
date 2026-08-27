@@ -165,22 +165,25 @@ async def test_review_related_returns_status(app) -> None:
 
 @pytest.mark.asyncio
 async def test_urgency_feedback_returns_reverted_urgency(app) -> None:
-    with patch(
-        "app.repositories.thread_repo.get_by_id",
-        AsyncMock(
-            return_value=type(
-                "T",
-                (),
-                {
-                    "id": SOURCE_ID,
-                    "mailbox": "sales@example.com",
-                    "state": "DRAFTED",
-                },
-            )()
+    with (
+        patch(
+            "app.repositories.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {
+                        "id": SOURCE_ID,
+                        "mailbox": "sales@example.com",
+                        "state": "DRAFTED",
+                    },
+                )()
+            ),
         ),
-    ), patch(
-        "app.api.web.threads.recurrence_service.apply_urgency_feedback",
-        AsyncMock(return_value="NORMAL"),
+        patch(
+            "app.api.web.threads.recurrence_service.apply_urgency_feedback",
+            AsyncMock(return_value="NORMAL"),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
@@ -200,22 +203,25 @@ async def test_urgency_feedback_returns_reverted_urgency(app) -> None:
 
 @pytest.mark.asyncio
 async def test_urgency_feedback_without_escalation_is_409(app) -> None:
-    with patch(
-        "app.repositories.thread_repo.get_by_id",
-        AsyncMock(
-            return_value=type(
-                "T",
-                (),
-                {
-                    "id": SOURCE_ID,
-                    "mailbox": "sales@example.com",
-                    "state": "DRAFTED",
-                },
-            )()
+    with (
+        patch(
+            "app.repositories.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {
+                        "id": SOURCE_ID,
+                        "mailbox": "sales@example.com",
+                        "state": "DRAFTED",
+                    },
+                )()
+            ),
         ),
-    ), patch(
-        "app.api.web.threads.recurrence_service.apply_urgency_feedback",
-        AsyncMock(side_effect=ThreadStateError("No automatic urgency bump to reverse")),
+        patch(
+            "app.api.web.threads.recurrence_service.apply_urgency_feedback",
+            AsyncMock(side_effect=ThreadStateError("No automatic urgency bump to reverse")),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
