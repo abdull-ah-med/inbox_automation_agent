@@ -27,9 +27,7 @@ const LoginForm = () => {
   const searchParams = useSearchParams()
   const rawNext = searchParams.get("next") || "/dashboard"
   const destination =
-    rawNext.startsWith("/") &&
-    !rawNext.startsWith("//") &&
-    !rawNext.startsWith("/\\")
+    rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.startsWith("/\\")
       ? rawNext
       : "/dashboard"
 
@@ -66,8 +64,8 @@ const LoginForm = () => {
               Inbox Triage Automation
             </h1>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-gray-500 dark:text-gray-400">
-              Read-only workspace for classification, drafting, and review.
-              Nothing is sent from this app.
+              Read-only workspace for classification, drafting, and review. Nothing is sent from
+              this app.
             </p>
           </div>
           <ul className="mt-10 space-y-3 text-sm text-gray-600 dark:text-gray-400">
@@ -88,17 +86,15 @@ const LoginForm = () => {
 
         <main className="flex items-center justify-center px-6 py-12">
           <form
-            onSubmit={onSubmit}
+            onSubmit={(event) => {
+              void onSubmit(event)
+            }}
             className="w-full max-w-sm space-y-5"
             aria-label="Sign in form"
           >
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                Sign in
-              </h2>
-              <p className="mt-1 text-sm text-gray-500">
-                Invite-only access for your team.
-              </p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Sign in</h2>
+              <p className="mt-1 text-sm text-gray-500">Invite-only access for your team.</p>
             </div>
 
             <div className="space-y-2">
@@ -110,9 +106,7 @@ const LoginForm = () => {
                 autoFocus
                 spellCheck={false}
                 aria-invalid={Boolean(form.formState.errors.email)}
-                aria-describedby={
-                  form.formState.errors.email ? "email-error" : undefined
-                }
+                aria-describedby={form.formState.errors.email ? "email-error" : undefined}
                 {...form.register("email")}
               />
               {form.formState.errors.email ? (
@@ -129,17 +123,11 @@ const LoginForm = () => {
                 type="password"
                 autoComplete="current-password"
                 aria-invalid={Boolean(form.formState.errors.password)}
-                aria-describedby={
-                  form.formState.errors.password ? "password-error" : undefined
-                }
+                aria-describedby={form.formState.errors.password ? "password-error" : undefined}
                 {...form.register("password")}
               />
               {form.formState.errors.password ? (
-                <p
-                  id="password-error"
-                  className="text-xs text-red-600"
-                  role="alert"
-                >
+                <p id="password-error" className="text-xs text-red-600" role="alert">
                   {form.formState.errors.password.message}
                 </p>
               ) : null}

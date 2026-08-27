@@ -329,9 +329,7 @@ async def test_cors_preflight_allows_skills_put_delete(app, local_settings: Sett
 
 
 @pytest.mark.asyncio
-async def test_cors_preflight_allows_reply_memory_patch(
-    app, local_settings: Settings
-) -> None:
+async def test_cors_preflight_allows_reply_memory_patch(app, local_settings: Settings) -> None:
     """Reply-memory exclude uses PATCH; browsers preflight it cross-origin."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -413,9 +411,7 @@ async def test_change_password_with_csrf(app, local_settings: Settings) -> None:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             client.cookies.set(local_settings.csrf_cookie_name, csrf, path="/")
-            client.cookies.set(
-                local_settings.refresh_cookie_name, "opaque", path="/auth"
-            )
+            client.cookies.set(local_settings.refresh_cookie_name, "opaque", path="/auth")
             resp = await client.post(
                 "/auth/change-password",
                 json={

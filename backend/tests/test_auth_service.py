@@ -191,7 +191,7 @@ async def test_refresh_expired(settings: Settings) -> None:
             refresh_plaintext=plaintext,
             user_agent=None,
             ip=None,
-            )
+        )
 
 
 @pytest.mark.asyncio

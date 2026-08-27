@@ -103,9 +103,7 @@ async def login(
     if needs_rehash(user.password_hash):
         # Hash-only upgrade: do not bump password_updated_at / token_version
         # (those invalidate refresh sessions as if the password changed).
-        await user_repo.update_password_hash_only(
-            session, user.id, hash_password(password)
-        )
+        await user_repo.update_password_hash_only(session, user.id, hash_password(password))
 
     return await _issue_tokens(
         session,

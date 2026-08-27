@@ -2,55 +2,55 @@
  * In-memory access-token store. Never persists to localStorage/sessionStorage.
  */
 
-import type { UserMe } from "@/lib/types";
+import type { UserMe } from "@/lib/types"
 
-type Listener = () => void;
+type Listener = () => void
 
 export interface AuthState {
-  accessToken: string | null;
-  expiresAt: number | null;
-  user: UserMe | null;
+  accessToken: string | null
+  expiresAt: number | null
+  user: UserMe | null
 }
 
 let state: AuthState = {
   accessToken: null,
   expiresAt: null,
   user: null,
-};
+}
 
-const listeners = new Set<Listener>();
+const listeners = new Set<Listener>()
 
 function emit() {
-  for (const listener of listeners) listener();
+  for (const listener of listeners) listener()
 }
 
 export function getAuthState(): AuthState {
-  return state;
+  return state
 }
 
 export function subscribeAuth(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  listeners.add(listener)
+  return () => listeners.delete(listener)
 }
 
 export function setAuthSession(params: {
-  accessToken: string;
-  expiresIn: number;
-  user: UserMe;
+  accessToken: string
+  expiresIn: number
+  user: UserMe
 }): void {
   state = {
     accessToken: params.accessToken,
     expiresAt: Date.now() + params.expiresIn * 1000,
     user: params.user,
-  };
-  emit();
+  }
+  emit()
 }
 
 export function clearAuthSession(): void {
-  state = { accessToken: null, expiresAt: null, user: null };
-  emit();
+  state = { accessToken: null, expiresAt: null, user: null }
+  emit()
 }
 
 export function getAccessToken(): string | null {
-  return state.accessToken;
+  return state.accessToken
 }

@@ -24,9 +24,7 @@ export const hasLogoutGuard = (): boolean => {
 export const replaceToLogin = (nextPath?: string): void => {
   setLogoutGuard()
   const next = nextPath && nextPath !== "/login" ? nextPath : ""
-  const url = next
-    ? `/login?next=${encodeURIComponent(next)}`
-    : "/login"
+  const url = next ? `/login?next=${encodeURIComponent(next)}` : "/login"
   window.location.replace(url)
 }
 
@@ -34,9 +32,7 @@ export const replaceToLogin = (nextPath?: string): void => {
 export const replaceAfterLogin = (destination: string): void => {
   clearLogoutGuard()
   const path =
-    destination.startsWith("/") &&
-    !destination.startsWith("//") &&
-    !destination.startsWith("/\\")
+    destination.startsWith("/") && !destination.startsWith("//") && !destination.startsWith("/\\")
       ? destination
       : "/dashboard"
   window.location.replace(path)

@@ -31,7 +31,7 @@ def test_verify_invalid_hash_returns_false() -> None:
 
 
 @pytest.mark.parametrize(
-    "password,ok",
+    ("password", "ok"),
     [
         ("short", False),
         ("alllowercaseonly", False),
@@ -45,5 +45,5 @@ def test_password_strength(password: str, ok: bool) -> None:
     if ok:
         validate_password_strength(password)
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Password must"):
             validate_password_strength(password)
