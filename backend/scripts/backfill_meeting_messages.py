@@ -33,7 +33,12 @@ logger = structlog.get_logger(__name__)
 
 
 async def _backfill_meeting_types(*, graph, apply: bool) -> tuple[int, int]:
-    """Return (examined, updated) counts."""
+    """Return (examined, updated) counts.
+
+    Candidates are rows still missing ``meeting_message_type``. Empty body was
+    too narrow — Outlook accepts often have a non-empty preview/subject like
+    ``Accepted: …`` while Graph still exposes ``meetingMessageType``.
+    """
     factory = get_session_factory()
     examined = 0
     updated = 0
@@ -42,19 +47,25 @@ async def _backfill_meeting_types(*, graph, apply: bool) -> tuple[int, int]:
         stmt = (
             select(Message, Thread)
             .join(Thread, Message.thread_id == Thread.id)
+            .where(Message.meeting_message_type.is_(None))
             .where(
                 or_(
                     Message.body_text == "",
                     Message.body_text.is_(None),
-                ),
-                or_(
                     Message.body_preview.is_(None),
                     Message.body_preview == "",
-                ),
-                Message.meeting_message_type.is_(None),
+                    Thread.subject.ilike("Accepted:%"),
+                    Thread.subject.ilike("Declined:%"),
+                    Thread.subject.ilike("Tentative:%"),
+                    Thread.subject.ilike("Canceled:%"),
+                    Thread.subject.ilike("Cancelled:%"),
+                    Message.body_preview.ilike("Accepted:%"),
+                    Message.body_preview.ilike("Declined:%"),
+                    Message.body_preview.ilike("Tentative:%"),
+                )
             )
             .order_by(Message.received_at.desc())
-            .limit(200)
+            .limit(500)
         )
         rows = list((await session.execute(stmt)).all())
 

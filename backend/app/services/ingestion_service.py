@@ -43,6 +43,7 @@ from app.models.schemas.email import (
     EmailDirectionEnum,
     EmailMessageSchema,
     ThreadContextSchema,
+    ThreadStateEnum,
 )
 from app.models.schemas.graph import (
     GraphMessageBodySchema,
@@ -52,7 +53,7 @@ from app.models.schemas.graph import (
     IngestResultSchema,
     SimulateIngestRequestSchema,
 )
-from app.repositories import message_repo, thread_repo
+from app.repositories import message_repo, sent_reply_repo, thread_repo
 from app.repositories.message_repo import MessageSchema
 from app.services.related_match import alert_cluster_keys
 from app.utils.email_quotes import split_quoted_history
@@ -683,6 +684,13 @@ async def handle_outbound_notification(
 
     claim = await claim_ingest_dedup(redis, mailbox, message_id)
     if claim == "completed":
+        healed = await _heal_completed_outbound(
+            session=session,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+        if healed is not None:
+            return healed
         logger.info("outbound_ingestion_duplicate", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="duplicate")
     if claim == "in_flight":
@@ -792,6 +800,75 @@ async def handle_outbound_notification(
     except Exception:
         await release_ingest_dedup(redis, mailbox, message_id)
         raise
+
+
+async def _heal_completed_outbound(
+    *,
+    session: AsyncSession,
+    mailbox: str,
+    message_id: str,
+) -> IngestResultSchema | None:
+    """Resolve when Redis says done but the thread never got sent-reply close.
+
+    Happens when conversation sync ingested the send (direction=outbound) and
+    triage completed the dedup key before Sent Items ever called resolve.
+    """
+    from app.services import sent_reply_service
+
+    existing = await message_repo.get_by_graph_id(session, message_id)
+    if existing is None:
+        return None
+    if existing.direction != EmailDirectionEnum.OUTBOUND.value:
+        return None
+    if sent_reply_service.is_meeting_message(existing):
+        return None
+
+    thread = await thread_repo.get_by_id_trusted(session, existing.thread_id)
+    if thread is None:
+        return None
+
+    sent = await sent_reply_repo.get_by_thread(session, thread.id)
+    if sent is not None and thread.state == ThreadStateEnum.RESOLVED.value:
+        return None
+    if sent is not None:
+        # Row exists but state drifted (e.g. re-drafted after resolve). Re-apply.
+        await thread_repo.set_thread_outcome(
+            session,
+            thread.id,
+            state=ThreadStateEnum.RESOLVED.value,
+        )
+        logger.info(
+            "outbound_heal_reapplied_resolved",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=thread.conversation_id,
+        )
+
+    await sent_reply_service.resolve_thread_from_outbound(
+        session,
+        thread_id=thread.id,
+        message=existing,
+        conversation_id=thread.conversation_id,
+        mailbox=thread.mailbox,
+    )
+    logger.info(
+        "outbound_heal_resolved",
+        mailbox=thread.mailbox,
+        message_id=message_id,
+        thread_id=str(thread.id),
+    )
+    return IngestResultSchema(
+        message_id=message_id,
+        status="outbound",
+        thread_id=str(thread.id),
+        conversation_id=thread.conversation_id,
+    )
 
 
 async def ingest_simulated_message(

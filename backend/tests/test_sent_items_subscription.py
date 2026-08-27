@@ -314,16 +314,183 @@ async def test_outbound_notification_idempotent() -> None:
     assert result1.status == "in_flight"
     graph_client.get_message.assert_not_awaited()
 
-    # Second call: already completed
-    result2 = await ingestion_service.handle_outbound_notification(
-        session=session,
-        redis=redis,
-        graph_client=graph_client,
-        mailbox=mailbox,
-        message_id=message_id,
-    )
+    # Second call: already completed and nothing in DB to heal
+    with patch(
+        "app.services.ingestion_service.message_repo.get_by_graph_id",
+        AsyncMock(return_value=None),
+    ):
+        result2 = await ingestion_service.handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
     assert result2.status == "duplicate"
     graph_client.get_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_outbound_completed_dedup_heals_unresolved_shared_send() -> None:
+    """EC2 Brittany case: inbound triage completed Redis dedup without resolve.
+
+    Sent Items backfill then hits claim=completed and must still RESOLVE when
+    the row is outbound, thread is DRAFTED, and no sent_replies row exists.
+    """
+    import uuid
+
+    from app.models.schemas.email import ThreadStateEnum
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    mailbox = "info@sample-services.example.com"
+    message_id = "AAMkAG-brittany-sent"
+    conversation_id = "conv-brittany"
+    thread_id = uuid.uuid4()
+    msg_pk = uuid.uuid4()
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="completed")
+    session = AsyncMock()
+    graph_client = MagicMock()
+    graph_client.get_message = AsyncMock()
+
+    existing = MessageSchema(
+        id=msg_pk,
+        thread_id=thread_id,
+        graph_message_id=message_id,
+        direction="outbound",
+        sender=mailbox,
+        body_text="I am sorry for the delayed response",
+        body_preview="I am sorry for the delayed response",
+        body_content_type="text",
+        body_clean="I am sorry for the delayed response",
+        body_clean_version=1,
+        received_at=datetime(2026, 8, 26, 18, 5, tzinfo=UTC),
+    )
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox=mailbox,
+        conversation_id=conversation_id,
+        subject="[SampleHelpdesk] Re: Fw: Applicant Brittany Edwards",
+        state=ThreadStateEnum.DRAFTED.value,
+        last_message_at=existing.received_at,
+        last_updated_at=existing.received_at,
+    )
+
+    with (
+        patch(
+            "app.services.ingestion_service.message_repo.get_by_graph_id",
+            AsyncMock(return_value=existing),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.repositories.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.sent_reply_service.resolve_thread_from_outbound",
+            AsyncMock(return_value=object()),
+        ) as resolve,
+    ):
+        result = await ingestion_service.handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+
+    assert result.status == "outbound"
+    assert result.thread_id == str(thread_id)
+    assert resolve.await_count == 1
+    assert resolve.await_args.kwargs["message"].id == msg_pk
+    # No Graph re-fetch required when the row already has what resolve needs.
+    graph_client.get_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_outbound_completed_dedup_stays_duplicate_when_already_resolved() -> None:
+    import uuid
+
+    from app.models.schemas.email import ThreadStateEnum
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    mailbox = "info@sample-services.example.com"
+    message_id = "AAMkAG-already-done"
+    thread_id = uuid.uuid4()
+    msg_pk = uuid.uuid4()
+    now = datetime(2026, 8, 26, 18, 5, tzinfo=UTC)
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="completed")
+    session = AsyncMock()
+    graph_client = MagicMock()
+
+    existing = MessageSchema(
+        id=msg_pk,
+        thread_id=thread_id,
+        graph_message_id=message_id,
+        direction="outbound",
+        sender=mailbox,
+        body_text="Thanks",
+        body_preview="Thanks",
+        body_content_type="text",
+        received_at=now,
+    )
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox=mailbox,
+        conversation_id="conv-done",
+        subject="Re: done",
+        state=ThreadStateEnum.RESOLVED.value,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=msg_pk,
+        draft_id=None,
+        sent_body_snapshot="Thanks",
+        sent_at=now,
+        matched_by="time_window",
+        created_at=now,
+    )
+
+    with (
+        patch(
+            "app.services.ingestion_service.message_repo.get_by_graph_id",
+            AsyncMock(return_value=existing),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.repositories.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.sent_reply_service.resolve_thread_from_outbound",
+            AsyncMock(return_value=object()),
+        ) as resolve,
+    ):
+        result = await ingestion_service.handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+
+    assert result.status == "duplicate"
+    resolve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
