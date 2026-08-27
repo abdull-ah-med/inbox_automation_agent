@@ -7,13 +7,7 @@ import { ErrorPage } from "@/components/error-page"
 import { MailboxSummaryCard } from "@/components/mailbox-summary-card"
 import { OpsReportDownload } from "@/components/ops-report-download"
 import { UrgencyDistribution } from "@/components/urgency-distribution"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 
@@ -47,18 +41,13 @@ export default function DashboardPage() {
     )
   }
 
-  const totalFiltered = data.mailboxes.reduce(
-    (sum, mailbox) => sum + mailbox.filtered_count,
-    0,
-  )
+  const totalFiltered = data.mailboxes.reduce((sum, mailbox) => sum + mailbox.filtered_count, 0)
 
   return (
     <>
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-            Overview
-          </h2>
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Overview</h2>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {data.total_awaiting} awaiting action · {data.total_stale} stale
             {totalFiltered > 0

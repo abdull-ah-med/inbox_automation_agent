@@ -53,11 +53,9 @@ def _send_smtp(
     recipients = _smtp_recipients(settings)
     from_addr = settings.ops_report_smtp_from.strip() or settings.ops_report_smtp_user.strip()
     tz_name = settings.ops_report_timezone
-    start, end = period_calendar_dates(
-        metrics.period.date_from, metrics.period.date_to, tz_name
-    )
+    start, end = period_calendar_dates(metrics.period.date_from, metrics.period.date_to, tz_name)
     message = EmailMessage()
-    message["Subject"] = f"Weekly ops report {start.isoformat()} – {end.isoformat()}"
+    message["Subject"] = f"Weekly ops report {start.isoformat()} - {end.isoformat()}"
     message["From"] = from_addr
     message["To"] = ", ".join(recipients)
     message.set_content(_summary_body(metrics, tz_name))
@@ -121,9 +119,7 @@ async def generate_ops_report(
         mailbox=mailbox,
     )
     tz_name = settings.ops_report_timezone
-    pdf_bytes = await render_pdf_async(
-        metrics, timezone_name=tz_name, generated_by=generated_by
-    )
+    pdf_bytes = await render_pdf_async(metrics, timezone_name=tz_name, generated_by=generated_by)
     filename = report_filename(
         metrics.period.date_from, metrics.period.date_to, timezone_name=tz_name
     )

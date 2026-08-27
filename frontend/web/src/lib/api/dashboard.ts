@@ -25,12 +25,7 @@ export const reportsApi = {
 }
 
 export const searchApi = {
-  threads(params: {
-    q: string
-    mailbox?: string
-    limit?: number
-    mode?: "keyword" | "hybrid"
-  }) {
+  threads(params: { q: string; mailbox?: string; limit?: number; mode?: "keyword" | "hybrid" }) {
     const qs = new URLSearchParams()
     qs.set("q", params.q)
     if (params.mailbox) qs.set("mailbox", params.mailbox)
@@ -91,9 +86,7 @@ export const replyMemoryApi = {
     const qs = new URLSearchParams()
     if (mailbox) qs.set("mailbox", mailbox)
     const query = qs.toString()
-    return apiFetch<ReplyMemoryResponse[]>(
-      `/api/reply-memory${query ? `?${query}` : ""}`,
-    )
+    return apiFetch<ReplyMemoryResponse[]>(`/api/reply-memory${query ? `?${query}` : ""}`)
   },
   setExcluded(id: string, is_excluded: boolean) {
     return apiFetch<ReplyMemoryResponse>(`/api/reply-memory/${id}`, {
@@ -108,8 +101,6 @@ export const toneProfilesApi = {
     const qs = new URLSearchParams()
     if (mailbox) qs.set("mailbox", mailbox)
     const query = qs.toString()
-    return apiFetch<ToneProfileResponse[]>(
-      `/api/tone-profiles${query ? `?${query}` : ""}`,
-    )
+    return apiFetch<ToneProfileResponse[]>(`/api/tone-profiles${query ? `?${query}` : ""}`)
   },
 }

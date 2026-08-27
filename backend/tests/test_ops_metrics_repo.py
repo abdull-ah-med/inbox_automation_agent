@@ -55,25 +55,46 @@ async def test_empty_mailbox_list_does_not_query() -> None:
 
     session = _FailingSession()
     volume = await ops_metrics_repo.volume_by_mailbox(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     spam = await ops_metrics_repo.count_spam_filtered(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     approvals, rejects = await ops_metrics_repo.count_approvals_rejects(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     themes = await ops_metrics_repo.top_reject_themes(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     avg, n = await ops_metrics_repo.avg_resolve_hours(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     drafts = await ops_metrics_repo.count_drafts_generated(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     categories = await ops_metrics_repo.volume_by_category(
-        session, [], WINDOW_START, WINDOW_END  # type: ignore[arg-type]
+        session,
+        [],
+        WINDOW_START,
+        WINDOW_END,  # type: ignore[arg-type]
     )
     queue, by_mailbox = await ops_metrics_repo.queue_snapshot(session, [])  # type: ignore[arg-type]
     assert volume == []
@@ -90,9 +111,7 @@ async def test_empty_mailbox_list_does_not_query() -> None:
 @pytest.mark.asyncio
 async def test_volume_counts_threads_not_inbound_rows(db_session) -> None:
     await seed_worked_example(db_session)
-    rows = await ops_metrics_repo.volume_by_mailbox(
-        db_session, MAILBOXES, WINDOW_START, WINDOW_END
-    )
+    rows = await ops_metrics_repo.volume_by_mailbox(db_session, MAILBOXES, WINDOW_START, WINDOW_END)
     by_email = {row.email: row.thread_volume for row in rows}
     assert by_email[SALES] == EXPECTED_SALES_VOLUME
     assert by_email[CR] == EXPECTED_CR_VOLUME
@@ -111,12 +130,8 @@ async def test_volume_counts_threads_not_inbound_rows(db_session) -> None:
 @pytest.mark.asyncio
 async def test_volume_does_not_include_other_mailbox(db_session) -> None:
     await seed_worked_example(db_session)
-    sales = await ops_metrics_repo.volume_by_mailbox(
-        db_session, [SALES], WINDOW_START, WINDOW_END
-    )
-    cr = await ops_metrics_repo.volume_by_mailbox(
-        db_session, [CR], WINDOW_START, WINDOW_END
-    )
+    sales = await ops_metrics_repo.volume_by_mailbox(db_session, [SALES], WINDOW_START, WINDOW_END)
+    cr = await ops_metrics_repo.volume_by_mailbox(db_session, [CR], WINDOW_START, WINDOW_END)
     assert sales[0].thread_volume == EXPECTED_SALES_VOLUME
     assert cr[0].thread_volume == EXPECTED_CR_VOLUME
     assert sales[0].email == SALES
@@ -125,12 +140,8 @@ async def test_volume_does_not_include_other_mailbox(db_session) -> None:
 
 @pytest.mark.asyncio
 async def test_inclusive_window_includes_start_and_end_not_outside(db_session) -> None:
-    start_thread = Thread(
-        mailbox=SALES, conversation_id="t-start", subject="start", state="NEW"
-    )
-    end_thread = Thread(
-        mailbox=SALES, conversation_id="t-end", subject="end", state="NEW"
-    )
+    start_thread = Thread(mailbox=SALES, conversation_id="t-start", subject="start", state="NEW")
+    end_thread = Thread(mailbox=SALES, conversation_id="t-end", subject="end", state="NEW")
     outside_thread = Thread(
         mailbox=SALES, conversation_id="t-outside", subject="outside", state="NEW"
     )
@@ -171,9 +182,7 @@ async def test_inclusive_window_includes_start_and_end_not_outside(db_session) -
         ]
     )
     await db_session.commit()
-    rows = await ops_metrics_repo.volume_by_mailbox(
-        db_session, [SALES], WINDOW_START, WINDOW_END
-    )
+    rows = await ops_metrics_repo.volume_by_mailbox(db_session, [SALES], WINDOW_START, WINDOW_END)
     assert rows[0].thread_volume == 2
 
 
@@ -276,9 +285,7 @@ async def test_queue_snapshot_is_current_state_not_period(db_session) -> None:
 @pytest.mark.asyncio
 async def test_configured_mailbox_with_no_mail_still_listed(db_session) -> None:
     empty = "empty@example.com"
-    thread = Thread(
-        mailbox=SALES, conversation_id="only-sales", subject="x", state="NEW"
-    )
+    thread = Thread(mailbox=SALES, conversation_id="only-sales", subject="x", state="NEW")
     db_session.add(thread)
     await db_session.flush()
     db_session.add(

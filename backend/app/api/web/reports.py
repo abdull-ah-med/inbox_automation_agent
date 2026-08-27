@@ -48,6 +48,7 @@ async def ops_metrics(
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     mailbox: Annotated[str | None, Query()] = None,
 ) -> OpsMetricsResponse:
+    _ = request, response
     start, end = _window(date_from, date_to, settings.ops_report_timezone)
     return await ops_metrics_service.get_metrics(
         session,
@@ -74,6 +75,7 @@ async def download_ops_weekly(
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     mailbox: Annotated[str | None, Query()] = None,
 ) -> Response:
+    _ = request, response
     start, end = _window(date_from, date_to, settings.ops_report_timezone)
     pdf_bytes, result = await generate_ops_report(
         session,
@@ -114,6 +116,7 @@ async def generate_ops_weekly(
     date_to: Annotated[datetime | None, Query(alias="to")] = None,
     mailbox: Annotated[str | None, Query()] = None,
 ) -> OpsReportGenerateResponse:
+    _ = request, response
     start, end = _window(date_from, date_to, settings.ops_report_timezone)
     _pdf, result = await generate_ops_report(
         session,

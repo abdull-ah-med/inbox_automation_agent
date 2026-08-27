@@ -76,8 +76,8 @@ def test_rolling_days_uses_ny_date_not_utc_date() -> None:
 
 def test_inclusive_calendar_range_naive_dates_are_ny_days() -> None:
     start, end = ops_metrics_service.inclusive_calendar_range(
-        datetime(2026, 8, 3),
-        datetime(2026, 8, 9),
+        datetime(2026, 8, 3, tzinfo=UTC).replace(tzinfo=None),
+        datetime(2026, 8, 9, tzinfo=UTC).replace(tzinfo=None),
     )
     ny = ZoneInfo("America/New_York")
     assert start == datetime(2026, 8, 3, tzinfo=ny).astimezone(UTC)
@@ -87,7 +87,7 @@ def test_inclusive_calendar_range_naive_dates_are_ny_days() -> None:
 
 def test_resolve_query_window_requires_both_bounds() -> None:
     with pytest.raises(InvalidDateRangeError, match="both from and to"):
-        ops_metrics_service.resolve_query_window(datetime(2026, 8, 3), None)
+        ops_metrics_service.resolve_query_window(datetime(2026, 8, 3, tzinfo=UTC), None)
 
 
 def test_last_calendar_week_on_wednesday_is_prior_mon_sun() -> None:
@@ -131,8 +131,8 @@ def test_validate_window_accepts_93_days() -> None:
 
 def test_validate_window_coerces_naive_to_utc() -> None:
     start, end = ops_metrics_service.validate_window(
-        datetime(2026, 8, 1, 0, 0, 0),
-        datetime(2026, 8, 7, 0, 0, 0),
+        datetime(2026, 8, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
+        datetime(2026, 8, 7, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
     )
     assert start.tzinfo == UTC
     assert end.tzinfo == UTC
@@ -175,9 +175,7 @@ def test_scoped_mailboxes_unknown_raises() -> None:
 def test_scoped_mailboxes_strips_control_chars_from_key() -> None:
     """NUL in a mailbox key must still resolve, matching search_service sanitization."""
     settings = _settings()
-    assert ops_metrics_service.scoped_mailboxes(settings, "sales\x00") == [
-        "sales@example.com"
-    ]
+    assert ops_metrics_service.scoped_mailboxes(settings, "sales\x00") == ["sales@example.com"]
 
 
 @pytest.mark.asyncio

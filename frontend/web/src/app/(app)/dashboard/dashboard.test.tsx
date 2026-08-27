@@ -118,15 +118,11 @@ describe("dashboard page", () => {
         <DashboardPage />
       </QueryClientProvider>,
     )
-    expect(
-      await screen.findByText(/1 awaiting action · 0 stale/i),
-    ).toBeInTheDocument()
+    expect(await screen.findByText(/1 awaiting action · 0 stale/i)).toBeInTheDocument()
     expect(screen.getAllByText("Inquiries").length).toBeGreaterThan(0)
     expect(screen.getByText("Needs attention")).toBeInTheDocument()
     expect(screen.getAllByText("Quote request").length).toBeGreaterThan(0)
     expect(screen.getByText("Needs context")).toBeInTheDocument()
-    expect(
-      screen.getByRole("button", { name: "Download reports" }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Download reports" })).toBeInTheDocument()
   })
 })

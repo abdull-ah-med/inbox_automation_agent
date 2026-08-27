@@ -33,4 +33,5 @@ async def overview(
     settings: AppSettings,
     _user: CurrentUser,
 ) -> DashboardOverview:
+    _ = request, response
     return await dashboard_service.get_overview(session, settings)

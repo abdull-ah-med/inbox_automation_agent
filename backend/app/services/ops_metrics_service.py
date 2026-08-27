@@ -8,7 +8,7 @@ Window
     calendar days in ``ops_report_timezone`` (default America/New_York):
     start of ``from`` through end of ``to``. Default preview is the last 7
     New York calendar days including today. The weekly job uses last
-    completed Mon–Sun in that timezone. Max span: 93 days.
+    completed Mon-Sun in that timezone. Max span: 93 days.
 
 Volume by mailbox
     Count of threads that received at least one inbound message in the window
@@ -25,7 +25,7 @@ Spam filtered
 Approval rate
     ``approvals / (approvals + rejects)`` for drafts whose ``approved_at`` or
     ``rejected_at`` falls in the window. Rate is 0.0 when the denominator is
-    0. Returned as a 0–1 float.
+    0. Returned as a 0-1 float.
 
 Top reject themes
     Rejects in the window grouped by ``feedback_reason_code`` (closed set:
@@ -112,8 +112,8 @@ def rolling_days(
     today = ensure_utc(now or datetime.now(UTC)).astimezone(tz).date()
     start_day = today - timedelta(days=days - 1)
     return inclusive_calendar_range(
-        datetime(start_day.year, start_day.month, start_day.day),
-        datetime(today.year, today.month, today.day),
+        datetime(start_day.year, start_day.month, start_day.day, tzinfo=tz),
+        datetime(today.year, today.month, today.day, tzinfo=tz),
         timezone_name,
     )
 
@@ -137,7 +137,7 @@ def last_calendar_week(
     *,
     now: datetime | None = None,
 ) -> tuple[datetime, datetime]:
-    """Last completed Monday–Sunday in ``timezone_name``, returned as UTC.
+    """Last completed Monday-Sunday in ``timezone_name``, returned as UTC.
 
     On a Monday this is the previous calendar week, which is what the weekly
     Monday job should print.

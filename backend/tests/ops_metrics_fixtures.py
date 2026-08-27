@@ -121,8 +121,7 @@ def _quoted_db_name(url_str: str) -> str:
     dbname = make_url(url_str).database or ""
     if "test" not in dbname.lower():
         raise RuntimeError(
-            f"Refusing to run formula tests against {dbname!r}; "
-            "database name must contain 'test'"
+            f"Refusing to run formula tests against {dbname!r}; database name must contain 'test'"
         )
     return dbname.replace('"', "")
 
@@ -157,8 +156,7 @@ def _alembic_upgrade(url_str: str) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(
-            "alembic upgrade failed for formula tests:\n"
-            f"{result.stdout}\n{result.stderr}"
+            f"alembic upgrade failed for formula tests:\n{result.stdout}\n{result.stderr}"
         )
 
 
@@ -366,15 +364,9 @@ async def seed_worked_example(session: AsyncSession) -> None:
     await session.flush()
 
     m_multi_1 = _message(t_multi, direction=inbound, received_at=IN_WINDOW)
-    m_multi_2 = _message(
-        t_multi, direction=inbound, received_at=IN_WINDOW + timedelta(hours=1)
-    )
-    m_multi_3 = _message(
-        t_multi, direction=inbound, received_at=IN_WINDOW + timedelta(hours=2)
-    )
-    m_multi_out = _message(
-        t_multi, direction=outbound, received_at=AFTER + timedelta(hours=1)
-    )
+    m_multi_2 = _message(t_multi, direction=inbound, received_at=IN_WINDOW + timedelta(hours=1))
+    m_multi_3 = _message(t_multi, direction=inbound, received_at=IN_WINDOW + timedelta(hours=2))
+    m_multi_out = _message(t_multi, direction=outbound, received_at=AFTER + timedelta(hours=1))
     m_outbound = _message(t_outbound, direction=outbound, received_at=IN_WINDOW)
     m_before = _message(t_before, direction=inbound, received_at=BEFORE)
     m_billing_a_in = _message(t_billing_a, direction=inbound, received_at=IN_WINDOW)
@@ -386,9 +378,7 @@ async def seed_worked_example(session: AsyncSession) -> None:
         t_billing_b, direction=outbound, received_at=IN_WINDOW + timedelta(hours=24)
     )
     m_uncat_in = _message(t_uncat, direction=inbound, received_at=IN_WINDOW)
-    m_uncat_out = _message(
-        t_uncat, direction=outbound, received_at=IN_WINDOW - timedelta(hours=1)
-    )
+    m_uncat_out = _message(t_uncat, direction=outbound, received_at=IN_WINDOW - timedelta(hours=1))
     m_cr = _message(t_cr, direction=inbound, received_at=IN_WINDOW)
     session.add_all(
         [

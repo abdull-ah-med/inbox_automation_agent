@@ -19,10 +19,7 @@ vi.mock("sonner", () => ({
   },
 }))
 
-import {
-  OpsReportDownload,
-  validateReportRange,
-} from "@/components/ops-report-download"
+import { OpsReportDownload, validateReportRange } from "@/components/ops-report-download"
 
 const openDialog = async () => {
   const user = userEvent.setup()
@@ -53,13 +50,10 @@ describe("OpsReportDownload", () => {
     vi.restoreAllMocks()
     vi.useFakeTimers({ toFake: ["Date"] })
     vi.setSystemTime(new Date("2026-08-12T03:00:00.000Z"))
-    vi.stubGlobal(
-      "URL",
-      {
-        createObjectURL: vi.fn(() => "blob:report"),
-        revokeObjectURL: vi.fn(),
-      } as unknown as typeof URL,
-    )
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:report"),
+      revokeObjectURL: vi.fn(),
+    })
   })
 
   afterEach(() => {
@@ -70,15 +64,12 @@ describe("OpsReportDownload", () => {
     const { dialog } = await openDialog()
     expect(dialog).toHaveAttribute("data-size", "md")
     expect(within(dialog).getByText("Download reports")).toBeInTheDocument()
-    expect(
-      within(dialog).getByRole("button", { name: "Report start date" }),
-    ).toBeInTheDocument()
-    expect(
-      within(dialog).getByRole("button", { name: "Report end date" }),
-    ).toBeInTheDocument()
-    expect(
-      within(dialog).getByRole("button", { name: "Last 7 days" }),
-    ).toHaveAttribute("aria-pressed", "true")
+    expect(within(dialog).getByRole("button", { name: "Report start date" })).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "Report end date" })).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "Last 7 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
   })
 
   it("applies a 30-day preset before download", async () => {
@@ -99,9 +90,7 @@ describe("OpsReportDownload", () => {
 
     const { user, dialog } = await openDialog()
     await user.click(within(dialog).getByRole("button", { name: "Last 30 days" }))
-    await user.click(
-      within(dialog).getByRole("button", { name: "Confirm download reports" }),
-    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm download reports" }))
 
     expect(downloadWeekly).toHaveBeenCalledWith({
       from: "2026-07-13",
@@ -111,13 +100,9 @@ describe("OpsReportDownload", () => {
 
   it("opens the start and end date calendars separately", async () => {
     const { user, dialog } = await openDialog()
-    await user.click(
-      within(dialog).getByRole("button", { name: "Report start date" }),
-    )
+    await user.click(within(dialog).getByRole("button", { name: "Report start date" }))
     expect(screen.getByRole("grid")).toBeInTheDocument()
-    await user.click(
-      within(dialog).getByRole("button", { name: "Report end date" }),
-    )
+    await user.click(within(dialog).getByRole("button", { name: "Report end date" }))
     expect(screen.getAllByRole("grid")).toHaveLength(1)
   })
 
@@ -138,9 +123,7 @@ describe("OpsReportDownload", () => {
     })
 
     const { user, dialog } = await openDialog()
-    await user.click(
-      within(dialog).getByRole("button", { name: "Confirm download reports" }),
-    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm download reports" }))
 
     expect(downloadWeekly).toHaveBeenCalledWith({
       from: "2026-08-05",
@@ -152,9 +135,7 @@ describe("OpsReportDownload", () => {
   it("shows an error toast when download fails", async () => {
     downloadWeekly.mockRejectedValue(new Error("Unable to reach the server."))
     const { user, dialog } = await openDialog()
-    await user.click(
-      within(dialog).getByRole("button", { name: "Confirm download reports" }),
-    )
+    await user.click(within(dialog).getByRole("button", { name: "Confirm download reports" }))
     expect(toastError).toHaveBeenCalled()
   })
 })

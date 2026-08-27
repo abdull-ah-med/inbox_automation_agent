@@ -17,11 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { api } from "@/lib/api-client"
 import { getErrorMessage } from "@/lib/error-messages"
 
@@ -122,9 +118,9 @@ const ReportDatePicker = ({
               variant="outline"
               tabIndex={0}
               data-empty={!selected}
-              aria-invalid={invalid}
+              data-invalid={invalid || undefined}
               aria-label={ariaLabel}
-              className="w-full justify-start text-left font-normal data-[empty=true]:text-muted-foreground"
+              className="data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive w-full justify-start text-left font-normal"
             />
           }
         >
@@ -148,10 +144,7 @@ const ReportDatePicker = ({
   )
 }
 
-export const validateReportRange = (
-  fromDate: string,
-  toDate: string,
-): string | null => {
+export const validateReportRange = (fromDate: string, toDate: string): string | null => {
   if (!fromDate || !toDate) {
     return "Choose a from and to date."
   }
@@ -241,8 +234,8 @@ export const OpsReportDownload = () => {
       link.remove()
       URL.revokeObjectURL(url)
       setOpen(false)
-    } catch (error) {
-      toast.error(getErrorMessage(error))
+    } catch (downloadError) {
+      toast.error(getErrorMessage(downloadError))
     } finally {
       setDownloading(false)
     }
@@ -259,10 +252,7 @@ export const OpsReportDownload = () => {
       ? [
           { after: parseYmdLocal(toDate) },
           {
-            before: addLocalDays(
-              parseYmdLocal(toDate),
-              -(MAX_WINDOW_DAYS - 1),
-            ),
+            before: addLocalDays(parseYmdLocal(toDate), -(MAX_WINDOW_DAYS - 1)),
           },
         ]
       : []),
@@ -297,8 +287,8 @@ export const OpsReportDownload = () => {
           <DialogHeader>
             <DialogTitle>Download reports</DialogTitle>
             <DialogDescription>
-              SampleSite Support weekly ops report. Choose a date range in Eastern
-              Time. The PDF includes the live queue even if the period is quiet.
+              SampleSite Support weekly ops report. Choose a date range in Eastern Time. The PDF
+              includes the live queue even if the period is quiet.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">

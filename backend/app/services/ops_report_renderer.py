@@ -108,9 +108,7 @@ def _ensure_fonts() -> None:
     pdfmetrics.registerFont(TTFont(FONT_REGULAR, str(_FONT_DIR / "Inter-Regular.ttf")))
     pdfmetrics.registerFont(TTFont(FONT_BOLD, str(_FONT_DIR / "Inter-Bold.ttf")))
     pdfmetrics.registerFont(TTFont(FONT_ITALIC, str(_FONT_DIR / "Inter-Italic.ttf")))
-    pdfmetrics.registerFont(
-        TTFont("Inter-BoldItalic", str(_FONT_DIR / "Inter-BoldItalic.ttf"))
-    )
+    pdfmetrics.registerFont(TTFont("Inter-BoldItalic", str(_FONT_DIR / "Inter-BoldItalic.ttf")))
     pdfmetrics.registerFontFamily(
         "Inter",
         normal=FONT_REGULAR,
@@ -140,7 +138,7 @@ class _SectionHead(Flowable):
         self.text = text.upper()
         self.height = 14
 
-    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+    def wrap(self, availWidth: float, _availHeight: float) -> tuple[float, float]:
         self.width = availWidth
         return availWidth, self.height
 
@@ -176,7 +174,7 @@ class _ChartLegend(Flowable):
         self.width = width
         self.height = 12
 
-    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+    def wrap(self, _availWidth: float, _availHeight: float) -> tuple[float, float]:
         return self.width, self.height
 
     def draw(self) -> None:
@@ -206,7 +204,7 @@ class _GroupedBarChart(Flowable):
         self.width = width
         self.height = height
 
-    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+    def wrap(self, _availWidth: float, _availHeight: float) -> tuple[float, float]:
         return self.width, self.height
 
     def draw(self) -> None:
@@ -247,9 +245,7 @@ class _GroupedBarChart(Flowable):
                 if h <= 0:
                     continue
                 self.canv.setFillColorRGB(*color)
-                self.canv.rect(
-                    x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=0
-                )
+                self.canv.rect(x, bottom, max(bar_w - gap, 1.5), h, fill=1, stroke=0)
             self.canv.setFillColorRGB(*_INK)
             self.canv.setFont(FONT_REGULAR, 7)
             self.canv.drawCentredString(
@@ -275,7 +271,7 @@ class _DonutChart(Flowable):
         self.height = height
         self.center_label = center_label.upper()
 
-    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+    def wrap(self, _availWidth: float, _availHeight: float) -> tuple[float, float]:
         return self.width, self.height
 
     def draw(self) -> None:
@@ -359,7 +355,7 @@ class _HBarAxisChart(Flowable):
         self.fill = fill
         self.height = max(len(rows), 1) * self._ROW + 18
 
-    def wrap(self, availWidth: float, availHeight: float) -> tuple[float, float]:
+    def wrap(self, _availWidth: float, _availHeight: float) -> tuple[float, float]:
         return self.width, self.height
 
     def draw(self) -> None:
@@ -397,9 +393,7 @@ class _HBarAxisChart(Flowable):
             pct = MISSING if total <= 0 else f"{100 * value / total:.0f}%"
             self.canv.setFillColorRGB(*_INK)
             self.canv.setFont(FONT_REGULAR, 8)
-            value_text = (
-                f"{_fmt_int(value)}  {pct}" if self.show_share else _fmt_int(value)
-            )
+            value_text = f"{_fmt_int(value)}  {pct}" if self.show_share else _fmt_int(value)
             self.canv.drawRightString(self.width, y + 2, value_text)
 
 
@@ -466,7 +460,7 @@ def _styles() -> dict[str, ParagraphStyle]:
             leading=11,
             textColor=_MUTED,
         ),
-            "briefing": ParagraphStyle(
+        "briefing": ParagraphStyle(
             "briefing",
             fontName=FONT_REGULAR,
             fontSize=10,
@@ -568,18 +562,12 @@ def briefing_text(metrics: OpsMetricsResponse) -> str:
     parts: list[str] = []
     active_boxes = sum(1 for row in metrics.volume_by_mailbox if row.thread_volume)
     if metrics.total_volume:
-        box_bit = (
-            f" across {_plural(active_boxes, 'mailbox', 'mailboxes')}"
-            if active_boxes
-            else ""
-        )
+        box_bit = f" across {_plural(active_boxes, 'mailbox', 'mailboxes')}" if active_boxes else ""
         parts.append(f"{_plural(metrics.total_volume, 'inbound thread')}{box_bit}.")
     else:
         parts.append("No inbound threads in this period.")
     if metrics.spam_filtered:
-        parts.append(
-            f"{_fmt_int(metrics.spam_filtered)} filtered as spam or no-action."
-        )
+        parts.append(f"{_fmt_int(metrics.spam_filtered)} filtered as spam or no-action.")
     if metrics.drafts_generated:
         parts.append(f"{_plural(metrics.drafts_generated, 'draft')} generated.")
     decided = metrics.approvals + metrics.rejects
@@ -758,9 +746,7 @@ def _pipeline_rows(metrics: OpsMetricsResponse) -> list[tuple[str, int]]:
 
 
 def _theme_rows(metrics: OpsMetricsResponse) -> list[tuple[str, int]]:
-    return [
-        (_reason_label(row.reason_code), row.count) for row in metrics.top_reject_themes
-    ]
+    return [(_reason_label(row.reason_code), row.count) for row in metrics.top_reject_themes]
 
 
 def _hairline(width: float, gap: float = _HAIRLINE_GAP) -> list[Flowable]:
@@ -834,7 +820,7 @@ def render_pdf(
         Paragraph(COMPANY_NAME.upper(), styles["kicker"]),
         Paragraph("Weekly Operations Report", styles["title"]),
         Paragraph(
-            f"{_fmt_day(period.date_from, timezone_name)} – "
+            f"{_fmt_day(period.date_from, timezone_name)} - "
             f"{_fmt_day(period.date_to, timezone_name)}"
             f"  ·  Generated {_fmt_dt(metrics.generated_at, timezone_name)}",
             styles["meta"],
@@ -862,9 +848,7 @@ def render_pdf(
                     "How this period's mail moved through triage.",
                     styles["caption"],
                 ),
-                _HBarAxisChart(
-                    _pipeline_rows(metrics), col, show_share=False, fill=_CHART_SLATE
-                ),
+                _HBarAxisChart(_pipeline_rows(metrics), col, show_share=False, fill=_CHART_SLATE),
             ],
             [
                 _SectionHead("Open queue mix"),
