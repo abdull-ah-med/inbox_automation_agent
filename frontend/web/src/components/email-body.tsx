@@ -34,10 +34,28 @@ const ZENDESK_DEFAULT_AVATAR_PATTERN = new RegExp(
   EMAIL_QUOTE_PATTERNS.zendeskDefaultAvatar.source,
   EMAIL_QUOTE_PATTERNS.zendeskDefaultAvatar.flags,
 )
+const ZENDESK_AGENT_PHOTO_PATTERN = new RegExp(
+  EMAIL_QUOTE_PATTERNS.zendeskAgentPhoto.source,
+  `${EMAIL_QUOTE_PATTERNS.zendeskAgentPhoto.flags}g`,
+)
 const ZENDESK_FOLLOW_UP_PATTERN = new RegExp(
   EMAIL_QUOTE_PATTERNS.zendeskFollowUp.source,
   EMAIL_QUOTE_PATTERNS.zendeskFollowUp.flags,
 )
+
+const matchBoundaryAt = (match: RegExpExecArray): number => {
+  return match.index + (match[1] ? match[1].length : 0)
+}
+
+/** Second system/photos avatar starts prior agent comments in Zendesk dumps. */
+const secondZendeskAgentPhotoBoundary = (text: string): number | null => {
+  ZENDESK_AGENT_PHOTO_PATTERN.lastIndex = 0
+  const matches = [...text.matchAll(ZENDESK_AGENT_PHOTO_PATTERN)]
+  if (matches.length < 2) return null
+  const second = matches[1]
+  if (!second || second.index === undefined) return null
+  return second.index + (second[1] ? second[1].length : 0)
+}
 
 /**
  * Splits a plain-text email body into the latest reply and any quoted history
@@ -56,10 +74,15 @@ export const splitQuotedHistory = (text: string): { main: string; quoted: string
     ZENDESK_DEFAULT_AVATAR_PATTERN,
     ZENDESK_FOLLOW_UP_PATTERN,
   ]) {
+    pattern.lastIndex = 0
     const match = pattern.exec(normalized)
     if (!match) continue
-    const at = match.index + (match[1] ? match[1].length : 0)
-    candidates.push(at)
+    candidates.push(matchBoundaryAt(match))
+  }
+
+  const agentPhotoAt = secondZendeskAgentPhotoBoundary(normalized)
+  if (agentPhotoAt != null) {
+    candidates.push(agentPhotoAt)
   }
 
   if (candidates.length === 0) {

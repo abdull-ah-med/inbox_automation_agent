@@ -31,6 +31,12 @@ _ZENDESK_DEFAULT_AVATAR_RE = re.compile(
     r"(^|\n)\[https?://[^\]]*default-avatar[^\]]*\]\s*\n",
     re.IGNORECASE,
 )
+# Agent avatars in {{ticket.comments_formatted}}: first photo introduces the
+# newest comment; later system/photos lines introduce prior agent comments.
+_ZENDESK_AGENT_PHOTO_RE = re.compile(
+    r"(^|\n)\[https?://[^\]]*/system/photos/[^\]]*\]\s*\n",
+    re.IGNORECASE,
+)
 _ZENDESK_FOLLOWUP_RE = re.compile(
     r"(^|\n)This is a follow-up to your previous request\b",
     re.IGNORECASE,
@@ -38,12 +44,14 @@ _ZENDESK_FOLLOWUP_RE = re.compile(
 
 # Shared with frontend/web/src/lib/email-quote-patterns.ts (M14). Flags are
 # separate so the generated TS file can `new RegExp(source, flags)`.
+# zendeskAgentPhoto is matched on the *second* hit in split_quoted_history.
 QUOTE_PATTERN_SOURCES: tuple[tuple[str, str, str], ...] = (
     ("originalMessage", _ORIGINAL_MESSAGE_LOOSE_RE.pattern, "i"),
     ("underscoreSep", _UNDERSCORE_SEP_RE.pattern, ""),
     ("outlookHeaders", _OUTLOOK_HEADERS_RE.pattern, "i"),
     ("onWrote", _ON_WROTE_LOOSE_RE.pattern, "i"),
     ("zendeskDefaultAvatar", _ZENDESK_DEFAULT_AVATAR_RE.pattern, "i"),
+    ("zendeskAgentPhoto", _ZENDESK_AGENT_PHOTO_RE.pattern, "i"),
     ("zendeskFollowUp", _ZENDESK_FOLLOWUP_RE.pattern, "i"),
 )
 
@@ -58,6 +66,18 @@ def find_quote_boundary(text: str) -> int | None:
         if cut_at is None or match.start() < cut_at:
             cut_at = match.start()
     return cut_at
+
+
+def _match_boundary_at(match: re.Match[str]) -> int:
+    return match.start() + (len(match.group(1)) if match.lastindex and match.group(1) else 0)
+
+
+def _second_zendesk_agent_photo_boundary(text: str) -> int | None:
+    """Cut at the second system/photos avatar — the start of prior agent comments."""
+    matches = list(_ZENDESK_AGENT_PHOTO_RE.finditer(text))
+    if len(matches) < 2:
+        return None
+    return _match_boundary_at(matches[1])
 
 
 def split_quoted_history(text: str) -> tuple[str, str | None]:
@@ -82,8 +102,11 @@ def split_quoted_history(text: str) -> tuple[str, str | None]:
         match = pattern.search(normalized)
         if match is None:
             continue
-        at = match.start() + (len(match.group(1)) if match.lastindex and match.group(1) else 0)
-        candidates.append(at)
+        candidates.append(_match_boundary_at(match))
+
+    agent_photo_at = _second_zendesk_agent_photo_boundary(normalized)
+    if agent_photo_at is not None:
+        candidates.append(agent_photo_at)
 
     if not candidates:
         return normalized, None

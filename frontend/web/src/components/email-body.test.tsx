@@ -137,6 +137,39 @@ describe("EmailBody Zendesk walls", () => {
     expect(screen.getByText(/follow-up to your previous request/)).toBeInTheDocument()
   })
 
+  it("collapses stacked agent comments separated by system/photos avatars", async () => {
+    const user = userEvent.setup()
+    const stacked =
+      "Your request (40145) has been solved. To add additional comments, reply to this email.\n\n" +
+      "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n" +
+      "Alex Taylor (SampleHelpdesk)\n\n" +
+      "Aug 26, 2026, 3:48 PM MDT\n\n" +
+      "Elise,\n\n" +
+      "I am going to go ahead and close out this ticket.\n\n" +
+      "Alex Taylor\n" +
+      "Customer Support\n\n" +
+      "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n" +
+      "Alex Taylor (SampleHelpdesk)\n\n" +
+      "Aug 25, 2026, 10:11 AM MDT\n\n" +
+      "Elise,\n\n" +
+      "I wanted to check in with you on this to see if you have further questions.\n\n" +
+      "Alex Taylor\n" +
+      "Customer Support\n"
+
+    const { main, quoted } = splitQuotedHistory(stacked)
+    expect(main).toContain("close out this ticket")
+    expect(main.match(/Alex Taylor \(SampleHelpdesk\)/g)).toHaveLength(1)
+    expect(quoted).toContain("further questions")
+
+    render(<EmailBody text={stacked} collapseQuotes />)
+
+    expect(screen.getByText(/close out this ticket/)).toBeInTheDocument()
+    expect(screen.queryByText(/further questions/)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Show quoted earlier messages" }))
+    expect(screen.getByText(/further questions/)).toBeInTheDocument()
+  })
+
   it("structures tip chrome vs agent byline and date", () => {
     const tip =
       "Your request (40197) has been updated. To add additional comments, reply to this email.\n\n" +

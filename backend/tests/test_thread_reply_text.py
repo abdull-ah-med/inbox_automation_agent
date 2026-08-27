@@ -85,6 +85,43 @@ def test_reply_text_quote_splits_stored_zendesk_unique_wall() -> None:
     assert "Thanks,\nElise" not in reply
 
 
+# Worked example: SampleHelpdesk “solved” dump with three agent comments in a row.
+ZENDESK_STACKED_AGENTS = (
+    "Your request (40145) has been solved. To add additional comments, reply to this email.\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 26, 2026, 3:48 PM MDT\n\n"
+    "Elise,\n\n"
+    "I am going to go ahead and close out this ticket.\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 25, 2026, 10:11 AM MDT\n\n"
+    "Elise,\n\n"
+    "I wanted to check in with you on this to see if you have further questions.\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+    "info\n\n"
+    "Aug 20, 2026, 1:18 PM MDT\n\n"
+    "If the public link is enabled, are we still able to send invitations?\n"
+)
+
+
+def test_reply_text_splits_zendesk_stacked_agent_photo_wall() -> None:
+    """Agent-to-agent system/photos separators must not leave a multi-tip wall."""
+    reply = reply_text_for_message(
+        body_text=ZENDESK_STACKED_AGENTS,
+        unique_body_text=ZENDESK_STACKED_AGENTS,
+        body_preview="Your request (40145) has been solved.",
+    )
+    assert "close out this ticket" in reply
+    assert reply.count("Alex Taylor (SampleHelpdesk)") == 1
+    assert "further questions" not in reply
+    assert "are we still able to send invitations" not in reply
+
+
 @pytest.fixture
 def local_settings() -> Settings:
     return Settings(

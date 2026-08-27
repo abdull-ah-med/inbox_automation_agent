@@ -270,3 +270,53 @@ def test_split_quoted_history_zendesk_keeps_newest_comment_only() -> None:
     assert "National Risk Services" in quoted
     assert "default-avatar" in quoted
     assert "search ID example" not in quoted
+
+
+# Worked example from thread 342cf462… "solved" mail: three agent comments in a
+# row, separated only by the agent's system/photos avatar (not default-avatar).
+_ZENDESK_STACKED_AGENT_COMMENTS = (
+    "##- Please type your reply above this line -##\n\n"
+    "Your request (40145) has been solved. To add additional comments, reply to this email.\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 26, 2026, 3:48 PM MDT\n\n"
+    "Elise,\n\n"
+    "I am going to go ahead and close out this ticket. If you do need further "
+    "assistance please let me know.\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 25, 2026, 10:11 AM MDT\n\n"
+    "Elise,\n\n"
+    "I wanted to check in with you on this to see if you have further questions.\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n"
+    "Alex Taylor (SampleHelpdesk)\n\n"
+    "Aug 20, 2026, 1:42 PM MDT\n\n"
+    "Elise,\n\n"
+    "If you enable the public link, you can still send the invitation.\n\n"
+    "Alex Taylor\n"
+    "Customer Support\n\n"
+    "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+    "info\n\n"
+    "Aug 20, 2026, 1:18 PM MDT\n\n"
+    "INTERNAL: This message originated inside the organization.\n"
+    "If the public link is enabled, are we still able to send invitations?\n"
+)
+
+
+def test_split_quoted_history_zendesk_stacked_agent_photos_keep_newest_only() -> None:
+    """Prior agent comments use system/photos avatars — not only default-avatar."""
+    main, quoted = split_quoted_history(_ZENDESK_STACKED_AGENT_COMMENTS)
+
+    assert "close out this ticket" in main
+    assert "Aug 26, 2026, 3:48 PM MDT" in main
+    assert main.count("Alex Taylor (SampleHelpdesk)") == 1
+    assert "further questions" not in main
+    assert "enable the public link" not in main
+    assert quoted is not None
+    assert "further questions" in quoted
+    assert "enable the public link" in quoted
+    assert "are we still able to send invitations" in quoted
