@@ -8,6 +8,9 @@ Dedup lifecycle (Redis SET NX EX):
 3. On failure, delete the claim so webhook/poll retries can proceed.
 4. If claim is ``in_flight`` but the message already exists in Postgres, return
    ``retry_triage`` so callers can finish triage without re-fetching Graph.
+5. When the conversation tip is outbound (shared-mailbox send or reviewer
+   copy), return ``outbound`` and resolve via sent-reply — never Sonnet-draft
+   a thread whose newest message is already our reply.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ from app.models.schemas.graph import (
     SimulateIngestRequestSchema,
 )
 from app.repositories import message_repo, thread_repo
+from app.repositories.message_repo import MessageSchema
 from app.services.related_match import alert_cluster_keys
 from app.utils.email_quotes import split_quoted_history
 
@@ -186,6 +190,14 @@ def _direction_for_sender(
     if resolved.is_reviewer_address(sender):
         return EmailDirectionEnum.OUTBOUND
     return EmailDirectionEnum.INBOUND
+
+
+def _newest_message(
+    messages: list[EmailMessageSchema],
+) -> EmailMessageSchema | None:
+    if not messages:
+        return None
+    return max(messages, key=lambda item: item.received_at)
 
 
 def _body_content_type(message: GraphMessageSchema) -> str:
@@ -381,12 +393,38 @@ async def build_thread_context_from_db(
                 summary_json=row.summary_json,
             )
         )
+    tip_row = max(db_messages, key=lambda row: row.received_at) if db_messages else None
     thread_context = ThreadContextSchema(
         conversation_id=thread.conversation_id,
         mailbox=mailbox,
         subject=thread.subject,
         messages=context_messages,
     )
+    if tip_row is not None and tip_row.direction == EmailDirectionEnum.OUTBOUND.value:
+        from app.services import sent_reply_service
+
+        await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread.id,
+            message=tip_row,
+            conversation_id=thread.conversation_id,
+            mailbox=mailbox,
+        )
+        logger.info(
+            "ingestion_retry_tip_outbound_resolved",
+            mailbox=mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+            tip_graph_message_id=tip_row.graph_message_id,
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=thread.conversation_id,
+            thread_context=thread_context,
+        )
+
     return IngestResultSchema(
         message_id=message_id,
         status="retry_triage",
@@ -422,6 +460,8 @@ async def ingest_graph_message(
                 mailbox=mailbox,
                 message_id=message_id,
             )
+            if retry.status == "outbound":
+                await complete_ingest_dedup(redis, mailbox, message_id)
             return retry
         logger.info("ingestion_in_flight", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="in_flight")
@@ -459,7 +499,7 @@ async def ingest_graph_message(
         thread_messages = list(by_id.values())
 
         context_messages: list[EmailMessageSchema] = []
-        trigger_persisted = None
+        persisted_by_graph_id: dict[str, MessageSchema] = {}
         for thread_msg in thread_messages:
             email_msg = _to_email_message_schema(
                 mailbox=mailbox,
@@ -489,18 +529,24 @@ async def ingest_graph_message(
                 meeting_message_type=email_msg.meeting_message_type,
                 meeting_response_type=email_msg.meeting_response_type,
             )
-            if thread_msg.id == message.id:
-                trigger_persisted = persisted
+            persisted_by_graph_id[thread_msg.id] = persisted
 
-        if trigger_persisted is not None and get_settings().is_reviewer_address(
-            _sender_address(message)
-        ):
+        # Tip outbound (shared mailbox send or reviewer copy) closes the loop.
+        # Reviewer-from alone is not enough: Elise often sends as the shared
+        # address, which conversation sync marks Sent without Sent Items resolve.
+        tip = _newest_message(context_messages)
+        tip_persisted = (
+            persisted_by_graph_id.get(tip.message_id)
+            if tip is not None and tip.direction == EmailDirectionEnum.OUTBOUND
+            else None
+        )
+        if tip is not None and tip_persisted is not None:
             from app.services import sent_reply_service
 
             await sent_reply_service.resolve_thread_from_outbound(
                 session,
                 thread_id=thread.id,
-                message=trigger_persisted,
+                message=tip_persisted,
                 conversation_id=conversation_id,
                 mailbox=mailbox,
             )
@@ -510,9 +556,10 @@ async def ingest_graph_message(
             # TTL expires and the next poll window re-resolves this message.
             await complete_ingest_dedup(redis, mailbox, message_id)
             logger.info(
-                "ingestion_reviewer_copy_resolved",
+                "ingestion_tip_outbound_resolved",
                 mailbox=mailbox,
                 message_id=message_id,
+                tip_graph_message_id=tip.message_id,
                 thread_id=str(thread.id),
                 conversation_id=conversation_id,
             )
@@ -771,6 +818,8 @@ async def ingest_simulated_message(
             session, mailbox=payload.mailbox, message_id=payload.message_id
         )
         if retry is not None:
+            if retry.status == "outbound":
+                await complete_ingest_dedup(redis, payload.mailbox, payload.message_id)
             return retry
         return IngestResultSchema(message_id=payload.message_id, status="in_flight")
 
