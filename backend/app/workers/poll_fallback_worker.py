@@ -145,6 +145,138 @@ async def _collect_poll_messages(
     return messages
 
 
+async def _ingest_poll_message(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    graph_client: GraphClient,
+    session_factory: object,
+    outbound_only: bool,
+) -> object:
+    async with session_factory() as session, session.begin():  # type: ignore[operator]
+        if outbound_only:
+            return await ingestion_service.handle_outbound_notification(
+                session=session,
+                redis=redis,
+                graph_client=graph_client,
+                mailbox=mailbox,
+                message_id=message.id,
+            )
+        return await ingestion_service.ingest_graph_message(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message.id,
+            source_folder=message.source_folder,
+        )
+
+
+async def _run_poll_triage_if_needed(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    settings: object,
+    result: object,
+    outbound_only: bool,
+) -> bool:
+    """Return True when the poll cursor may advance past this message."""
+    status = getattr(result, "status", None)
+    if not outbound_only and status in _TRIAGE_ELIGIBLE:
+        claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
+        if not claimed:
+            logger.info(
+                "poll_triage_skipped_lock_held",
+                mailbox=mailbox,
+                message_id=message.id,
+            )
+            return False
+        try:
+            triage_state = await pipeline_service.run_post_ingest_triage(
+                redis=redis,
+                settings=settings,
+                ingest_result=result,
+            )
+            if triage_state is not None:
+                await ingestion_service.complete_ingest_dedup(redis, mailbox, message.id)
+                return True
+            await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
+            return False
+        finally:
+            await ingestion_service.release_triage_lock(redis, mailbox, message.id, claimed)
+    return status not in {"in_flight", "skipped"}
+
+
+async def _process_one_poll_message(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    graph_client: GraphClient,
+    settings: object,
+    session_factory: object,
+    outbound_only: bool,
+    advance_cursor: bool,
+    cursor_candidate: datetime | None,
+) -> tuple[bool, datetime | None]:
+    try:
+        result = await _ingest_poll_message(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            graph_client=graph_client,
+            session_factory=session_factory,
+            outbound_only=outbound_only,
+        )
+        may_advance = await _run_poll_triage_if_needed(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            settings=settings,
+            result=result,
+            outbound_only=outbound_only,
+        )
+        if not may_advance:
+            return False, cursor_candidate
+    except Exception:
+        # Triage lock (if claimed) is released in the inner ``finally`` with
+        # the owner token — do not unconditional DEL here.
+        await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
+        logger.exception(
+            "poll_ingest_failed",
+            mailbox=mailbox,
+            message_id=message.id,
+            outbound_only=outbound_only,
+        )
+        return False, cursor_candidate
+
+    if advance_cursor:
+        received = _normalize_received(message.received_date_time)
+        if received is not None and (cursor_candidate is None or received > cursor_candidate):
+            cursor_candidate = received
+    return advance_cursor, cursor_candidate
+
+
+def _resolve_poll_cursor(
+    *,
+    messages: list[GraphMessageSchema],
+    existing_cursor: datetime | None,
+    advance_cursor: bool,
+    cursor_candidate: datetime | None,
+    since: datetime,
+    now: datetime,
+) -> datetime:
+    if not messages:
+        return existing_cursor if existing_cursor is not None else now
+    if advance_cursor and cursor_candidate is not None:
+        return cursor_candidate + timedelta(seconds=1)
+    if cursor_candidate is not None:
+        return cursor_candidate
+    return existing_cursor if existing_cursor is not None else since
+
+
 async def poll_mailbox(
     mailbox: str,
     *,
@@ -223,78 +355,26 @@ async def poll_mailbox(
     session_factory = get_session_factory()
 
     for message in messages:
-        try:
-            async with session_factory() as session, session.begin():
-                if outbound_only:
-                    result = await ingestion_service.handle_outbound_notification(
-                        session=session,
-                        redis=redis,
-                        graph_client=graph_client,
-                        mailbox=mailbox,
-                        message_id=message.id,
-                    )
-                else:
-                    result = await ingestion_service.ingest_graph_message(
-                        session=session,
-                        redis=redis,
-                        graph_client=graph_client,
-                        mailbox=mailbox,
-                        message_id=message.id,
-                        source_folder=message.source_folder,
-                    )
-            if not outbound_only and result.status in _TRIAGE_ELIGIBLE:
-                claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
-                if not claimed:
-                    logger.info(
-                        "poll_triage_skipped_lock_held",
-                        mailbox=mailbox,
-                        message_id=message.id,
-                    )
-                    advance_cursor = False
-                    continue
-                try:
-                    triage_state = await pipeline_service.run_post_ingest_triage(
-                        redis=redis,
-                        settings=settings,
-                        ingest_result=result,
-                    )
-                    if triage_state is not None:
-                        await ingestion_service.complete_ingest_dedup(redis, mailbox, message.id)
-                    else:
-                        await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
-                        advance_cursor = False
-                        continue
-                finally:
-                    await ingestion_service.release_triage_lock(redis, mailbox, message.id, claimed)
-            elif result.status == "in_flight" or result.status == "skipped":
-                advance_cursor = False
-                continue
-        except Exception:
-            # Triage lock (if claimed) is released in the inner ``finally`` with
-            # the owner token — do not unconditional DEL here.
-            await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
-            logger.exception(
-                "poll_ingest_failed",
-                mailbox=mailbox,
-                message_id=message.id,
-                outbound_only=outbound_only,
-            )
-            advance_cursor = False
-            continue
+        advance_cursor, cursor_candidate = await _process_one_poll_message(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            graph_client=graph_client,
+            settings=settings,
+            session_factory=session_factory,
+            outbound_only=outbound_only,
+            advance_cursor=advance_cursor,
+            cursor_candidate=cursor_candidate,
+        )
 
-        if advance_cursor:
-            received = _normalize_received(message.received_date_time)
-            if received is not None and (cursor_candidate is None or received > cursor_candidate):
-                cursor_candidate = received
-
-    if not messages:
-        new_cursor = existing_cursor if existing_cursor is not None else now
-    elif advance_cursor and cursor_candidate is not None:
-        new_cursor = cursor_candidate + timedelta(seconds=1)
-    elif cursor_candidate is not None:
-        new_cursor = cursor_candidate
-    else:
-        new_cursor = existing_cursor if existing_cursor is not None else since
+    new_cursor = _resolve_poll_cursor(
+        messages=messages,
+        existing_cursor=existing_cursor,
+        advance_cursor=advance_cursor,
+        cursor_candidate=cursor_candidate,
+        since=since,
+        now=now,
+    )
 
     if existing_cursor is None or new_cursor >= existing_cursor:
         await _write_cursor(redis, mailbox, new_cursor, folder=cursor_folder)

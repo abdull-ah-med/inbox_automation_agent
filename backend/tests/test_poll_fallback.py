@@ -621,9 +621,7 @@ async def test_poll_mailbox_outbound_only_uses_sentitems_cursor() -> None:
         ),
         patch(
             "app.workers.poll_fallback_worker.ingestion_service.handle_outbound_notification",
-            AsyncMock(
-                return_value=IngestResultSchema(message_id="sent-1", status="outbound")
-            ),
+            AsyncMock(return_value=IngestResultSchema(message_id="sent-1", status="outbound")),
         ) as outbound,
         patch(
             "app.workers.poll_fallback_worker.ingestion_service.ingest_graph_message",
@@ -753,9 +751,7 @@ async def test_run_poll_all_mailboxes_runs_concurrently() -> None:
     mailboxes = {call.kwargs.get("mailbox") or call.args[0] for call in poll.await_args_list}
     assert mailboxes == {"a@example.com", "b@example.com"}
     outbound_calls = [
-        call
-        for call in poll.await_args_list
-        if call.kwargs.get("outbound_only") is True
+        call for call in poll.await_args_list if call.kwargs.get("outbound_only") is True
     ]
     assert len(outbound_calls) == 2
     for call in outbound_calls:
