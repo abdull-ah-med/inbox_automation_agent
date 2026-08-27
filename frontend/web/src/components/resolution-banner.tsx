@@ -12,10 +12,7 @@ import { cn } from "@/lib/utils"
 
 type FeedbackOutcome = "reopened" | "wrong_reason"
 
-const OUTCOME_COPY: Record<
-  FeedbackOutcome,
-  { title: string; body: string }
-> = {
+const OUTCOME_COPY: Record<FeedbackOutcome, { title: string; body: string }> = {
   reopened: {
     title: "Reopened",
     body: "Back in Needs Attention when a draft awaits review.",
@@ -32,16 +29,12 @@ const bannerShellClass = cn(
   "dark:border-emerald-800/50 dark:bg-emerald-950/35 dark:text-emerald-50",
 )
 
-const outcomeFromActivity = (
-  activity: ActivityEntry[] | undefined,
-): FeedbackOutcome | null => {
+const outcomeFromActivity = (activity: ActivityEntry[] | undefined): FeedbackOutcome | null => {
   if (!activity?.length) return null
   if (activity.some((entry) => entry.event_type === "thread.resolved.wrong_reason")) {
     return "wrong_reason"
   }
-  if (
-    activity.some((entry) => entry.event_type === "thread.reopened.resolution_feedback")
-  ) {
+  if (activity.some((entry) => entry.event_type === "thread.reopened.resolution_feedback")) {
     return "reopened"
   }
   return null
@@ -106,9 +99,7 @@ export const ResolutionBanner = ({
           <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
             {copy.title}
           </p>
-          <p className="mt-1 text-emerald-800/85 dark:text-emerald-100/75">
-            {copy.body}
-          </p>
+          <p className="mt-1 text-emerald-800/85 dark:text-emerald-100/75">{copy.body}</p>
           <div className="mt-3">
             <Button
               type="button"

@@ -8,5 +8,4 @@ import { makeRouteErrorBoundary } from "@/lib/route-error"
  */
 export default makeRouteErrorBoundary({
   fullPage: true,
-  logTag: "app_error_boundary",
 })

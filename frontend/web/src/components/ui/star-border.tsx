@@ -29,14 +29,8 @@ export const StarBorder = ({
       className={cn("relative inline-block overflow-hidden rounded-[22px]", className)}
       style={{ padding: `${thickness}px 0`, ...motionStyle }}
     >
-      <div
-        aria-hidden="true"
-        className="star-border-beam star-border-beam-bottom"
-      />
-      <div
-        aria-hidden="true"
-        className="star-border-beam star-border-beam-top"
-      />
+      <div aria-hidden="true" className="star-border-beam star-border-beam-bottom" />
+      <div aria-hidden="true" className="star-border-beam star-border-beam-top" />
       <div className="relative z-10">{children}</div>
     </div>
   )

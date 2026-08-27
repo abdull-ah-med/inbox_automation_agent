@@ -72,8 +72,7 @@ export const formatThreadHeaderMeta = ({
   messageCount: number
   messages: ThreadMessageParty[]
 }): string => {
-  const from =
-    resolveThreadCounterpart({ lastSender, mailbox, messages }) ?? "Unknown sender"
+  const from = resolveThreadCounterpart({ lastSender, mailbox, messages }) ?? "Unknown sender"
   const countLabel = `${messageCount} ${messageCount === 1 ? "message" : "messages"}`
   return `From ${from} · ${countLabel} · Inbox ${mailbox}`
 }

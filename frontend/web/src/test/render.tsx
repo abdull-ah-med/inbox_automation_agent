@@ -12,13 +12,7 @@ const makeClient = () =>
 
 type Options = RenderOptions & { queryClient?: QueryClient }
 
-export const renderWithProviders = (
-  ui: ReactElement,
-  options: Options = {},
-) => {
+export const renderWithProviders = (ui: ReactElement, options: Options = {}) => {
   const { queryClient = makeClient(), ...rest } = options
-  return render(
-    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
-    rest,
-  )
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>, rest)
 }

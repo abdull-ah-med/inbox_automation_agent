@@ -42,9 +42,7 @@ describe("MessageScroller", () => {
         behavior: "auto",
       }),
     )
-    expect(
-      (options as ScrollIntoViewOptions | undefined)?.behavior,
-    ).not.toBe("smooth")
+    expect((options as ScrollIntoViewOptions | undefined)?.behavior).not.toBe("smooth")
   })
 
   it("keeps stick-to-bottom instant when content grows while pinned", () => {

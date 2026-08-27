@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  inboxAccentStyle,
-  inboxChipClassName,
-  inboxColor,
-} from "@/lib/design-tokens"
+import { inboxAccentStyle, inboxChipClassName, inboxColor } from "@/lib/design-tokens"
 
 describe("inboxAccentStyle / inboxChipClassName", () => {
   it("exposes the mailbox accent as a CSS variable for themed chips", () => {

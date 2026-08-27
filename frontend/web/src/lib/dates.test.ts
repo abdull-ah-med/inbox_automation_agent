@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import {
-  formatRelativeTime,
-  formatReviewerDate,
-  formatReviewerDateTime,
-} from "@/lib/dates"
+import { formatRelativeTime, formatReviewerDate, formatReviewerDateTime } from "@/lib/dates"
 
 describe("reviewer dates", () => {
   afterEach(() => {

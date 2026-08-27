@@ -70,14 +70,8 @@ describe("Mailbox page filters", () => {
   it("writes the chosen state onto the mailbox URL", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderPage()
-    await user.click(
-      await screen.findByRole("combobox", { name: "Filter by state" }),
-    )
-    await user.click(
-      await screen.findByRole("option", { name: "Needs human review" }),
-    )
-    expect(replace).toHaveBeenCalledWith(
-      "/mailboxes/sales?state=REQUIRES_HUMAN",
-    )
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    await user.click(await screen.findByRole("option", { name: "Needs human review" }))
+    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=REQUIRES_HUMAN")
   })
 })

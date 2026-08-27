@@ -74,12 +74,8 @@ describe("ResolutionBanner", () => {
     const status = await screen.findByRole("status")
     expect(status).toHaveTextContent(/reopened/i)
     expect(status).toHaveTextContent(/Needs Attention/i)
-    expect(
-      screen.queryByRole("button", { name: "Mark thread still open" }),
-    ).toBeNull()
-    expect(
-      screen.queryByRole("button", { name: "Wrong auto-resolve reason" }),
-    ).toBeNull()
+    expect(screen.queryByRole("button", { name: "Mark thread still open" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
   })
 
   it("keeps the reopen confirmation after the resolved banner flag clears", async () => {
@@ -127,19 +123,13 @@ describe("ResolutionBanner", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderBanner()
 
-    await user.click(
-      screen.getByRole("button", { name: "Wrong auto-resolve reason" }),
-    )
+    await user.click(screen.getByRole("button", { name: "Wrong auto-resolve reason" }))
 
     const status = await screen.findByRole("status")
     expect(status).toHaveTextContent(/recorded/i)
     expect(status).toHaveTextContent(/reason was wrong/i)
-    expect(
-      screen.queryByRole("button", { name: "Wrong auto-resolve reason" }),
-    ).toBeNull()
-    expect(
-      screen.queryByRole("button", { name: "Mark thread still open" }),
-    ).toBeNull()
+    expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Mark thread still open" })).toBeNull()
   })
 
   it("shows wrong-reason confirmation from activity after reload without action buttons", () => {
@@ -159,12 +149,8 @@ describe("ResolutionBanner", () => {
     const status = screen.getByRole("status")
     expect(status).toHaveTextContent(/recorded/i)
     expect(status).toHaveTextContent(/reason was wrong/i)
-    expect(
-      screen.queryByRole("button", { name: "Wrong auto-resolve reason" }),
-    ).toBeNull()
-    expect(
-      screen.queryByRole("button", { name: "Mark thread still open" }),
-    ).toBeNull()
+    expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Mark thread still open" })).toBeNull()
   })
 
   it("shows an inline error when wrong-reason feedback fails", async () => {
@@ -172,15 +158,11 @@ describe("ResolutionBanner", () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderBanner()
 
-    await user.click(
-      screen.getByRole("button", { name: "Wrong auto-resolve reason" }),
-    )
+    await user.click(screen.getByRole("button", { name: "Wrong auto-resolve reason" }))
 
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("Network down")
     })
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /resolved automatically/i,
-    )
+    expect(screen.getByRole("status")).toHaveTextContent(/resolved automatically/i)
   })
 })

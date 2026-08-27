@@ -59,9 +59,7 @@ describe("MailboxSummaryCard", () => {
 
     expect(screen.getByText("26")).toBeInTheDocument()
     expect(screen.getByText("Applicant Brittany Edwards")).toBeInTheDocument()
-    expect(
-      screen.queryByText("No threads awaiting action right now."),
-    ).toBeNull()
+    expect(screen.queryByText("No threads awaiting action right now.")).toBeNull()
   })
 
   it("shows empty-queue copy when ingested threads are not awaiting action", () => {
@@ -75,8 +73,6 @@ describe("MailboxSummaryCard", () => {
       />,
     )
 
-    expect(
-      screen.getByText("No threads awaiting action right now."),
-    ).toBeInTheDocument()
+    expect(screen.getByText("No threads awaiting action right now.")).toBeInTheDocument()
   })
 })

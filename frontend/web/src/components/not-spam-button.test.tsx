@@ -17,10 +17,7 @@ vi.mock("@/lib/api-client", () => ({
 
 const renderButton = () =>
   renderWithProviders(
-    <NotSpamButton
-      threadId="e25cc63b-9db9-4c2d-af45-e598a639eaec"
-      sender="orders@sample-lab.example.com"
-    />,
+    <NotSpamButton threadId="e25cc63b-9db9-4c2d-af45-e598a639eaec" sender="orders@sample-lab.example.com" />,
   )
 
 describe("NotSpamButton", () => {
@@ -52,9 +49,7 @@ describe("NotSpamButton", () => {
     const dialog = await screen.findByRole("dialog")
     await user.click(within(dialog).getByRole("button", { name: "Confirm not spam" }))
     await waitFor(() => {
-      expect(markNotSpamMock).toHaveBeenCalledWith(
-        "e25cc63b-9db9-4c2d-af45-e598a639eaec",
-      )
+      expect(markNotSpamMock).toHaveBeenCalledWith("e25cc63b-9db9-4c2d-af45-e598a639eaec")
     })
   })
 })

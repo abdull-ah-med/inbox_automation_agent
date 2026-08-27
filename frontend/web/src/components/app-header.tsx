@@ -29,7 +29,7 @@ export function AppHeader() {
           </p>
           <Link
             href="/dashboard"
-            className="block truncate text-lg font-semibold text-gray-900 outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-100"
+            className="focus-visible:ring-ring block truncate text-lg font-semibold text-gray-900 outline-none focus-visible:ring-2 dark:text-gray-100"
           >
             Inbox Triage Automation
           </Link>
@@ -48,7 +48,7 @@ export function AppHeader() {
             href="/settings"
             tabIndex={0}
             aria-label="Open settings"
-            className="inline-flex size-10 items-center justify-center rounded-lg border border-border text-gray-700 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-200"
+            className="border-border hover:bg-muted focus-visible:ring-ring inline-flex size-10 items-center justify-center rounded-lg border text-gray-700 outline-none focus-visible:ring-2 dark:text-gray-200"
           >
             <Settings className="size-4" aria-hidden="true" />
           </Link>
@@ -60,11 +60,7 @@ export function AppHeader() {
             aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
             onClick={handleToggleTheme}
           >
-            {isClient && isDark ? (
-              <Sun aria-hidden="true" />
-            ) : (
-              <Moon aria-hidden="true" />
-            )}
+            {isClient && isDark ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
           </Button>
           <Button
             variant="outline"

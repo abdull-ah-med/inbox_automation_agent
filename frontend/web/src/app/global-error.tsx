@@ -9,7 +9,6 @@ import "./globals.css"
  */
 const Inner = makeRouteErrorBoundary({
   fullPage: true,
-  logTag: "app_global_error_boundary",
 })
 
 const GlobalError = ({

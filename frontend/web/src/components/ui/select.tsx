@@ -11,11 +11,7 @@ const Select = SelectPrimitive.Root
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   return (
-    <SelectPrimitive.Group
-      data-slot="select-group"
-      className={cn("p-0", className)}
-      {...props}
-    />
+    <SelectPrimitive.Group data-slot="select-group" className={cn("p-0", className)} {...props} />
   )
 }
 
@@ -50,9 +46,7 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon
-        render={
-          <ChevronDownIcon className="pointer-events-none size-4 text-muted-foreground" />
-        }
+        render={<ChevronDownIcon className="text-muted-foreground pointer-events-none size-4" />}
       />
     </SelectPrimitive.Trigger>
   )
@@ -100,10 +94,7 @@ function SelectContent({
   )
 }
 
-function SelectLabel({
-  className,
-  ...props
-}: SelectPrimitive.GroupLabel.Props) {
+function SelectLabel({ className, ...props }: SelectPrimitive.GroupLabel.Props) {
   return (
     <SelectPrimitive.GroupLabel
       data-slot="select-label"
@@ -113,11 +104,7 @@ function SelectLabel({
   )
 }
 
-function SelectItem({
-  className,
-  children,
-  ...props
-}: SelectPrimitive.Item.Props) {
+function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Props) {
   return (
     <SelectPrimitive.Item
       data-slot="select-item"
@@ -137,10 +124,7 @@ function SelectItem({
   )
 }
 
-function SelectSeparator({
-  className,
-  ...props
-}: SelectPrimitive.Separator.Props) {
+function SelectSeparator({ className, ...props }: SelectPrimitive.Separator.Props) {
   return (
     <SelectPrimitive.Separator
       data-slot="select-separator"
@@ -150,10 +134,7 @@ function SelectSeparator({
   )
 }
 
-function SelectScrollUpButton({
-  className,
-  ...props
-}: SelectPrimitive.ScrollUpArrow.Props) {
+function SelectScrollUpButton({ className, ...props }: SelectPrimitive.ScrollUpArrow.Props) {
   return (
     <SelectPrimitive.ScrollUpArrow
       data-slot="select-scroll-up-button"
@@ -168,10 +149,7 @@ function SelectScrollUpButton({
   )
 }
 
-function SelectScrollDownButton({
-  className,
-  ...props
-}: SelectPrimitive.ScrollDownArrow.Props) {
+function SelectScrollDownButton({ className, ...props }: SelectPrimitive.ScrollDownArrow.Props) {
   return (
     <SelectPrimitive.ScrollDownArrow
       data-slot="select-scroll-down-button"

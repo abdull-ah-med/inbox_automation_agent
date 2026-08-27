@@ -19,13 +19,9 @@ vi.mock("@/lib/api-client", () => ({
 }))
 
 vi.mock("next/link", () => ({
-  default: ({
-    href,
-    children,
-  }: {
-    href: string
-    children: React.ReactNode
-  }) => <a href={href}>{children}</a>,
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
 }))
 
 const item: RelatedThreadItem = {
@@ -61,11 +57,9 @@ describe("AssociatedThreadsList", () => {
   beforeEach(() => {
     reviewMock.mockReset()
     reviewMock.mockImplementation(
-      async (
-        _src: string,
-        _relatedId: string,
-        body: { status: "confirmed" | "dismissed" },
-      ) => ({ status: body.status }),
+      async (_src: string, _relatedId: string, body: { status: "confirmed" | "dismissed" }) => ({
+        status: body.status,
+      }),
     )
     detailMock.mockReset()
     detailMock.mockResolvedValue({
@@ -204,9 +198,7 @@ describe("AssociatedThreadsList", () => {
       }),
     )
     await waitFor(() => {
-      expect(
-        screen.queryByRole("region", { name: "Associated threads" }),
-      ).not.toBeInTheDocument()
+      expect(screen.queryByRole("region", { name: "Associated threads" })).not.toBeInTheDocument()
     })
   })
 
@@ -217,11 +209,7 @@ describe("AssociatedThreadsList", () => {
       releaseA = resolve
     })
     reviewMock.mockImplementation(
-      async (
-        _src: string,
-        relatedId: string,
-        body: { status: "confirmed" | "dismissed" },
-      ) => {
+      async (_src: string, relatedId: string, body: { status: "confirmed" | "dismissed" }) => {
         if (relatedId === "assoc-1") {
           return aPromise
         }
@@ -317,6 +305,4 @@ describe("AssociatedThreadsList", () => {
     expect(screen.queryByText("SampleClient follow-up 8/14")).not.toBeInTheDocument()
     expect(screen.getByText("Vendor invoice 9/1")).toBeInTheDocument()
   })
-
 })
-

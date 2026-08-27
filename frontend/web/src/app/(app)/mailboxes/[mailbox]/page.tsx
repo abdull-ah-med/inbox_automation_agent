@@ -57,12 +57,7 @@ export default function MailboxPage() {
   const showFiltered = searchParams.get("filtered") === "1"
 
   const updateFilters = useCallback(
-    (patch: {
-      state?: string
-      urgency?: string
-      staleOnly?: boolean
-      showFiltered?: boolean
-    }) => {
+    (patch: { state?: string; urgency?: string; staleOnly?: boolean; showFiltered?: boolean }) => {
       const next = new URLSearchParams(searchParams.toString())
       const nextState = patch.state ?? state
       const nextUrgency = patch.urgency ?? urgency
@@ -94,15 +89,7 @@ export default function MailboxPage() {
     error,
     refetch,
   } = useInfiniteQuery({
-    queryKey: [
-      "mailbox",
-      mailbox,
-      "threads",
-      state,
-      urgency,
-      staleOnly,
-      showFiltered,
-    ],
+    queryKey: ["mailbox", mailbox, "threads", state, urgency, staleOnly, showFiltered],
     queryFn: ({ pageParam }) =>
       api.mailboxes.threads(mailbox, {
         state: state || undefined,
@@ -116,10 +103,7 @@ export default function MailboxPage() {
     getNextPageParam: (last) => last.next_cursor ?? undefined,
   })
 
-  const threads = useMemo(
-    () => data?.pages.flatMap((p) => p.items) ?? [],
-    [data],
-  )
+  const threads = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
 
   // TanStack Query infinite-scroll pattern: depend on stable query fields,
   // not the whole query object (recreated each render).
@@ -128,11 +112,7 @@ export default function MailboxPage() {
     const node = sentinelRef.current
     if (!node) return
     const observer = new IntersectionObserver((entries) => {
-      if (
-        entries[0]?.isIntersecting &&
-        hasNextPage &&
-        !isFetchingNextPage
-      ) {
+      if (entries[0]?.isIntersecting && hasNextPage && !isFetchingNextPage) {
         void fetchNextPage()
       }
     })
@@ -157,22 +137,12 @@ export default function MailboxPage() {
 
   return (
     <>
-      <Breadcrumbs
-        items={[
-          { label: "Overview", href: "/dashboard" },
-          { label },
-        ]}
-      />
+      <Breadcrumbs items={[{ label: "Overview", href: "/dashboard" }, { label }]} />
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <span
-          className={inboxChipClassName}
-          style={inboxAccentStyle(mailbox)}
-        >
+        <span className={inboxChipClassName} style={inboxAccentStyle(mailbox)}>
           {label}
         </span>
-        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-          Threads
-        </h2>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">Threads</h2>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -181,11 +151,7 @@ export default function MailboxPage() {
           value={state || null}
           onValueChange={(value) => updateFilters({ state: value ?? "" })}
         >
-          <SelectTrigger
-            aria-label="Filter by state"
-            size="sm"
-            className="min-h-10"
-          >
+          <SelectTrigger aria-label="Filter by state" size="sm" className="min-h-10">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -203,11 +169,7 @@ export default function MailboxPage() {
           value={urgency || null}
           onValueChange={(value) => updateFilters({ urgency: value ?? "" })}
         >
-          <SelectTrigger
-            aria-label="Filter by urgency"
-            size="sm"
-            className="min-h-10"
-          >
+          <SelectTrigger aria-label="Filter by urgency" size="sm" className="min-h-10">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -293,9 +255,7 @@ export default function MailboxPage() {
             <ThreadCard key={thread.id} thread={thread} />
           ))}
           <div ref={sentinelRef} className="h-8" />
-          {isFetchingNextPage ? (
-            <Skeleton className="h-16 w-full rounded-lg" />
-          ) : null}
+          {isFetchingNextPage ? <Skeleton className="h-16 w-full rounded-lg" /> : null}
         </div>
       )}
     </>

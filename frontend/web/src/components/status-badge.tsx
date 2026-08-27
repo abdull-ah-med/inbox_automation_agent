@@ -24,11 +24,7 @@ export const StatusBadge = ({
   return (
     <Badge
       variant="secondary"
-      className={cn(
-        "rounded-md border-0 leading-none",
-        TONE_CLASS[tone],
-        className,
-      )}
+      className={cn("rounded-md border-0 leading-none", TONE_CLASS[tone], className)}
     >
       {label}
     </Badge>

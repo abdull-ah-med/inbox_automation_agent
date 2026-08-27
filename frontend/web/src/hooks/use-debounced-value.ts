@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 
 export const SEARCH_DEBOUNCE_MS = 300
 
-export const useDebouncedValue = <T,>(value: T, delayMs: number): T => {
+export const useDebouncedValue = <T>(value: T, delayMs: number): T => {
   const [debounced, setDebounced] = useState(value)
 
   useEffect(() => {

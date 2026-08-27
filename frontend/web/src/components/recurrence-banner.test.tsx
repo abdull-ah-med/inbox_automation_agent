@@ -35,9 +35,7 @@ const markedWrong: ActivityEntry = {
 }
 
 const renderBanner = (activity: ActivityEntry[]) =>
-  renderWithProviders(
-    <RecurrenceBanner threadId={THREAD_ID} activity={activity} />,
-  )
+  renderWithProviders(<RecurrenceBanner threadId={THREAD_ID} activity={activity} />)
 
 describe("RecurrenceBanner", () => {
   beforeEach(() => {
@@ -56,9 +54,7 @@ describe("RecurrenceBanner", () => {
     expect(screen.getByRole("status")).toHaveTextContent(/automatically/i)
     expect(screen.getByRole("status")).toHaveTextContent(/CRITICAL/)
 
-    await user.click(
-      screen.getByRole("button", { name: "Mark automatic urgency bump as wrong" }),
-    )
+    await user.click(screen.getByRole("button", { name: "Mark automatic urgency bump as wrong" }))
 
     await waitFor(() => {
       expect(urgencyFeedbackMock).toHaveBeenCalledWith(THREAD_ID, {

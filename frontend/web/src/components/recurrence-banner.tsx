@@ -52,8 +52,7 @@ export const RecurrenceBanner = ({
   const [markedWrong, setMarkedWrong] = useState(false)
 
   const feedbackMutation = useMutation({
-    mutationFn: () =>
-      api.threads.urgencyFeedback(threadId, { action: "wrong_escalation" }),
+    mutationFn: () => api.threads.urgencyFeedback(threadId, { action: "wrong_escalation" }),
     onSuccess: async () => {
       setError(null)
       setMarkedWrong(true)

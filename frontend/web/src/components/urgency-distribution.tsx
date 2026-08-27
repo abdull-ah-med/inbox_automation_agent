@@ -1,30 +1,21 @@
-"use client";
+"use client"
 
-import { inboxColor, inboxLabel } from "@/lib/design-tokens";
-import type { MailboxOverview } from "@/lib/types";
+import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import type { MailboxOverview } from "@/lib/types"
 
-const LEVELS = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const;
+const LEVELS = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const
 
-export function UrgencyDistribution({
-  mailboxes,
-}: {
-  mailboxes: MailboxOverview[];
-}) {
+export function UrgencyDistribution({ mailboxes }: { mailboxes: MailboxOverview[] }) {
   return (
     <div className="space-y-4">
       {mailboxes.map((m) => {
-        const total = LEVELS.reduce(
-          (sum, level) => sum + (m.urgency_breakdown[level] ?? 0),
-          0,
-        );
-        const label = m.label || inboxLabel(m.mailbox);
-        const accent = inboxColor(m.mailbox);
+        const total = LEVELS.reduce((sum, level) => sum + (m.urgency_breakdown[level] ?? 0), 0)
+        const label = m.label || inboxLabel(m.mailbox)
+        const accent = inboxColor(m.mailbox)
         return (
           <div key={m.mailbox}>
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                {label}
-              </span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
               <span className="text-muted-foreground">{total}</span>
             </div>
             {total > 0 ? (
@@ -47,11 +38,7 @@ export function UrgencyDistribution({
                     )
                   }
                   const color =
-                    level === "CRITICAL"
-                      ? "#dc2626"
-                      : level === "HIGH"
-                        ? accent
-                        : "#9ca3af"
+                    level === "CRITICAL" ? "#dc2626" : level === "HIGH" ? accent : "#9ca3af"
                   return (
                     <div
                       key={level}
@@ -65,13 +52,11 @@ export function UrgencyDistribution({
                 })}
               </div>
             ) : (
-              <p className="text-xs text-muted-foreground italic">
-                No urgent threads right now.
-              </p>
+              <p className="text-muted-foreground text-xs italic">No urgent threads right now.</p>
             )}
           </div>
-        );
+        )
       })}
     </div>
-  );
+  )
 }

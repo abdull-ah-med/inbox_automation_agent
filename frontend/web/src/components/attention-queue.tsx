@@ -24,7 +24,7 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
         <li key={thread.id}>
           <Link
             href={`/threads/${thread.id}`}
-            className="focus-visible:ring-ring block min-w-0 py-3 outline-none transition-colors hover:bg-gray-50 focus-visible:ring-2 dark:hover:bg-gray-800/50"
+            className="focus-visible:ring-ring block min-w-0 py-3 transition-colors outline-none hover:bg-gray-50 focus-visible:ring-2 dark:hover:bg-gray-800/50"
             aria-label={`Review ${thread.subject || "thread"}`}
           >
             <div className="flex flex-wrap items-center gap-1.5">
@@ -33,14 +33,9 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
               </span>
               <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
               {thread.urgency ? (
-                <StatusBadge
-                  label={thread.urgency}
-                  tone={urgencyTone(thread.urgency)}
-                />
+                <StatusBadge label={thread.urgency} tone={urgencyTone(thread.urgency)} />
               ) : null}
-              {thread.triage?.is_internal ? (
-                <StatusBadge label="Internal" tone="blue" />
-              ) : null}
+              {thread.triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
               {thread.triage?.is_automated ? (
                 <StatusBadge label="Automated" tone="neutral" />
               ) : null}
@@ -52,8 +47,7 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
               {thread.subject || "(no subject)"}
             </p>
             <p className="mt-0.5 truncate text-xs text-gray-500">
-              {thread.last_sender ?? "Unknown"} ·{" "}
-              {formatRelativeTime(thread.last_message_at)}
+              {thread.last_sender ?? "Unknown"} · {formatRelativeTime(thread.last_message_at)}
             </p>
             {thread.teaching_note ? (
               <p className="mt-1.5 line-clamp-2 min-w-0 text-xs text-gray-500 dark:text-gray-400">

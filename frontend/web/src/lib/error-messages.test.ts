@@ -1,11 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { ApiError } from "@/lib/api-client"
-import {
-  friendlyErrorFromUnknown,
-  getErrorMessage,
-  messageForStatus,
-} from "@/lib/error-messages"
+import { friendlyErrorFromUnknown, getErrorMessage, messageForStatus } from "@/lib/error-messages"
 
 describe("error-messages", () => {
   it("maps 429 rate limiting to a clear retry message", () => {

@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import {
-  formatThreadHeaderMeta,
-  resolveThreadCounterpart,
-} from "@/lib/thread-header-meta"
+import { formatThreadHeaderMeta, resolveThreadCounterpart } from "@/lib/thread-header-meta"
 
 describe("thread header meta", () => {
   it("prefers the latest inbound sender over an outbound last_sender", () => {
@@ -59,9 +56,7 @@ describe("thread header meta", () => {
           },
         ],
       }),
-    ).toBe(
-      "From charity@example.com · 6 messages · Inbox info@sample-services.example.com",
-    )
+    ).toBe("From charity@example.com · 6 messages · Inbox info@sample-services.example.com")
   })
 
   it("labels an outbound-only thread with the recipient, not the mailbox", () => {
@@ -78,8 +73,6 @@ describe("thread header meta", () => {
           },
         ],
       }),
-    ).toBe(
-      "From nealdavien@yahoo.com · 1 message · Inbox info@sample-services.example.com",
-    )
+    ).toBe("From nealdavien@yahoo.com · 1 message · Inbox info@sample-services.example.com")
   })
 })

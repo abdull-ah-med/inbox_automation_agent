@@ -1,20 +1,13 @@
 "use client"
 
-import { useEffect } from "react"
-
 import { ErrorPage } from "@/components/error-page"
 
 type Options = {
   fullPage?: boolean
-  logTag: string
   homeHref?: string
 }
 
-export const makeRouteErrorBoundary = ({
-  fullPage,
-  logTag,
-  homeHref = "/dashboard",
-}: Options) => {
+export const makeRouteErrorBoundary = ({ fullPage, homeHref = "/dashboard" }: Options) => {
   const Boundary = ({
     error,
     unstable_retry,
@@ -22,9 +15,6 @@ export const makeRouteErrorBoundary = ({
     error: Error & { digest?: string }
     unstable_retry: () => void
   }) => {
-    useEffect(() => {
-      console.error(logTag, error)
-    }, [error])
     return (
       <ErrorPage
         fullPage={fullPage}

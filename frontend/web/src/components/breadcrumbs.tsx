@@ -15,9 +15,9 @@ export const Breadcrumbs = ({ items }: { items: BreadcrumbItem[] }) => {
 
   if (items.length === 0) return null
 
-  const parent = [...items]
+  const parent = items
     .slice(0, -1)
-    .reverse()
+    .toReversed()
     .find((item) => Boolean(item.href))
 
   const handleBack = () => {

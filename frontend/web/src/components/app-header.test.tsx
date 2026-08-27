@@ -45,17 +45,13 @@ describe("AppHeader search", () => {
 
   it("labels the theme toggle for the opposite of the resolved theme", () => {
     renderHeader()
-    expect(
-      screen.getByRole("button", { name: /switch to dark mode/i }),
-    ).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /switch to dark mode/i })).toBeInTheDocument()
   })
 
   it("puts a mail search box in the header, not an ask dialog", () => {
     renderHeader()
     expect(screen.getByRole("searchbox", { name: /search mail/i })).toBeInTheDocument()
-    expect(
-      screen.queryByRole("button", { name: /ask the inbox/i }),
-    ).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /ask the inbox/i })).not.toBeInTheDocument()
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 
@@ -66,22 +62,16 @@ describe("AppHeader search", () => {
     expect(search.parentElement).toHaveClass("min-[950px]:col-span-1")
     expect(search.parentElement).toHaveClass("min-[950px]:col-start-2")
     expect(search.parentElement).toHaveClass("min-[950px]:row-start-1")
-    expect(screen.getByRole("link", { name: /inbox triage automation/i })).toHaveClass(
-      "truncate",
-    )
+    expect(screen.getByRole("link", { name: /inbox triage automation/i })).toHaveClass("truncate")
   })
 
   it("does not clip search suggestions under the overview", async () => {
     const user = userEvent.setup()
     renderHeader()
     await user.click(screen.getByRole("searchbox", { name: /search mail/i }))
-    expect(
-      screen.getByRole("listbox", { name: /search suggestions/i }),
-    ).toBeVisible()
+    expect(screen.getByRole("listbox", { name: /search suggestions/i })).toBeVisible()
     // overflow-x:hidden on the sticky header computes overflow-y to auto and
     // clips the absolutely positioned list where the overview begins.
-    expect(screen.getByRole("banner").className.split(/\s+/)).not.toContain(
-      "overflow-x-hidden",
-    )
+    expect(screen.getByRole("banner").className.split(/\s+/)).not.toContain("overflow-x-hidden")
   })
 })

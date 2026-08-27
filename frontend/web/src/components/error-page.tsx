@@ -3,10 +3,7 @@
 import { useRouter } from "next/navigation"
 
 import { Button } from "@/components/ui/button"
-import {
-  friendlyErrorFromUnknown,
-  type FriendlyError,
-} from "@/lib/error-messages"
+import { friendlyErrorFromUnknown, type FriendlyError } from "@/lib/error-messages"
 import { cn } from "@/lib/utils"
 
 type ErrorPageProps = {
@@ -56,9 +53,7 @@ export const ErrorPage = ({
     router.replace(homeHref)
   }
 
-  const handleGoOverviewKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-  ) => {
+  const handleGoOverviewKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
       handleGoOverview()
@@ -88,17 +83,15 @@ export const ErrorPage = ({
       )}
     >
       <div className="mx-auto w-full max-w-md text-center">
-        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase dark:text-muted-foreground">
+        <p className="dark:text-muted-foreground text-xs font-semibold tracking-wide text-gray-500 uppercase">
           SampleSite Support
         </p>
-        <h1 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">
-          {heading}
-        </h1>
-        <p className="mt-2 text-sm leading-relaxed text-gray-500 dark:text-muted-foreground">
+        <h1 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">{heading}</h1>
+        <p className="dark:text-muted-foreground mt-2 text-sm leading-relaxed text-gray-500">
           {body}
         </p>
         {reference ? (
-          <p className="mt-3 text-xs text-muted-foreground">Reference: {reference}</p>
+          <p className="text-muted-foreground mt-3 text-xs">Reference: {reference}</p>
         ) : null}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
           {onRetry ? (

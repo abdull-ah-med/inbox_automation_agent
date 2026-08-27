@@ -7,16 +7,9 @@ import { InboxAssistant } from "@/components/inbox-assistant"
 import { Skeleton } from "@/components/ui/skeleton"
 import { clearAuthSession } from "@/features/auth/auth-store"
 import { useAuthBootstrap, useAuthState } from "@/features/auth/use-auth"
-import {
-  hasLogoutGuard,
-  replaceToLogin,
-} from "@/lib/auth-navigation"
+import { hasLogoutGuard, replaceToLogin } from "@/lib/auth-navigation"
 
-export default function AppShellLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const { bootstrapped } = useAuthBootstrap()
   const auth = useAuthState()
 
@@ -55,11 +48,7 @@ export default function AppShellLayout({
   if (!bootstrapped) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <div
-          className="app-shell mx-auto space-y-4 px-6 py-6"
-          aria-busy="true"
-          aria-live="polite"
-        >
+        <div className="app-shell mx-auto space-y-4 px-6 py-6" aria-busy="true" aria-live="polite">
           <Skeleton className="h-16 w-full rounded-lg" />
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>

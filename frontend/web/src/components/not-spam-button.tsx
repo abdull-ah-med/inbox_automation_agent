@@ -81,13 +81,12 @@ export const NotSpamButton = ({
           <DialogHeader>
             <DialogTitle>Mark as not spam</DialogTitle>
             <DialogDescription>
-              Future mail from {senderLabel} will not be treated as spam. This app
-              cannot move mail in Outlook — if the message is in Junk, it stays
-              there.
+              Future mail from {senderLabel} will not be treated as spam. This app cannot move mail
+              in Outlook — if the message is in Junk, it stays there.
             </DialogDescription>
           </DialogHeader>
           {actionError ? (
-            <p className="text-sm text-destructive" role="alert">
+            <p className="text-destructive text-sm" role="alert">
               {actionError}
             </p>
           ) : null}

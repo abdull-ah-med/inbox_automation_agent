@@ -95,14 +95,9 @@ const looksLikeStatusOnly = (message: string): boolean => {
 }
 
 export const friendlyErrorFromUnknown = (error: unknown): FriendlyError => {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "status" in error &&
-    typeof (error as { status: unknown }).status === "number"
-  ) {
-    const status = (error as { status: number }).status
-    if (STATUS_MESSAGES[status]) {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const status = error.status
+    if (typeof status === "number" && STATUS_MESSAGES[status]) {
       return STATUS_MESSAGES[status]
     }
   }
@@ -117,11 +112,7 @@ export const friendlyErrorFromUnknown = (error: unknown): FriendlyError => {
         ? (error as { digest: string }).digest
         : undefined
 
-    if (
-      digest ||
-      /server components/i.test(error.message) ||
-      /digest/i.test(error.message)
-    ) {
+    if (digest || /server components/i.test(error.message) || /digest/i.test(error.message)) {
       return SERVER_RENDER
     }
 

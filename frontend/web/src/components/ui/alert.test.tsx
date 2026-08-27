@@ -13,11 +13,9 @@ describe("Alert", () => {
         </AlertDescription>
       </Alert>,
     )
-    expect(screen.getByText("Could not ask InboxAssistant").className).toMatch(
+    expect(screen.getByText("Could not ask InboxAssistant").className).toMatch(/col-start-2/)
+    expect(screen.getByText(/the server is temporarily unreachable/i).className).toMatch(
       /col-start-2/,
     )
-    expect(
-      screen.getByText(/the server is temporarily unreachable/i).className,
-    ).toMatch(/col-start-2/)
   })
 })

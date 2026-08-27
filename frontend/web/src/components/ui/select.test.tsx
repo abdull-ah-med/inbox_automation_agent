@@ -27,10 +27,7 @@ const PrioritySelect = ({ disabled = false }: { disabled?: boolean }) => {
       onValueChange={(next) => setValue(next ?? "low")}
       disabled={disabled}
     >
-      <SelectTrigger
-        aria-label={disabled ? "Disabled priority" : "Priority"}
-        size="sm"
-      >
+      <SelectTrigger aria-label={disabled ? "Disabled priority" : "Priority"} size="sm">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -82,9 +79,7 @@ describe("Select", () => {
     render(<PrioritySelect />)
     await user.click(screen.getByRole("combobox", { name: "Priority" }))
     await user.click(await screen.findByRole("option", { name: "High" }))
-    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveTextContent(
-      "High",
-    )
+    expect(screen.getByRole("combobox", { name: "Priority" })).toHaveTextContent("High")
   })
 
   it("applies disabled state on the trigger", () => {

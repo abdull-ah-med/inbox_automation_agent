@@ -47,10 +47,7 @@ export const UrgencyEditPopover = ({
   threadId: string
   currentUrgency: string | null
   disabled?: boolean
-  onSaved?: (payload: {
-    urgency: UrgencyLevel
-    reason: string
-  }) => void
+  onSaved?: (payload: { urgency: UrgencyLevel; reason: string }) => void
 }) => {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
@@ -83,9 +80,7 @@ export const UrgencyEditPopover = ({
   })
 
   const handleOpen = () => {
-    setUrgency(
-      isUrgencyLevel(currentUrgency) ? currentUrgency : "NORMAL",
-    )
+    setUrgency(isUrgencyLevel(currentUrgency) ? currentUrgency : "NORMAL")
     setReason("")
     setError(null)
     setOpen(true)
@@ -124,8 +119,8 @@ export const UrgencyEditPopover = ({
           <DialogHeader>
             <DialogTitle>Edit urgency</DialogTitle>
             <DialogDescription>
-              Change the urgency level and explain why. This teaches future
-              drafts about off-thread or business context.
+              Change the urgency level and explain why. This teaches future drafts about off-thread
+              or business context.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

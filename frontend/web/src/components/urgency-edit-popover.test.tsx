@@ -49,9 +49,7 @@ describe("UrgencyEditPopover", () => {
     await user.click(screen.getByRole("button", { name: "Edit urgency" }))
     const dialog = await screen.findByRole("dialog")
     expect(dialog).toHaveAttribute("data-size", "md")
-    expect(
-      within(dialog).getByRole("button", { name: "Save urgency edit" }),
-    ).toBeDisabled()
+    expect(within(dialog).getByRole("button", { name: "Save urgency edit" })).toBeDisabled()
   })
 
   it("sends correct payload on save", async () => {
@@ -59,14 +57,9 @@ describe("UrgencyEditPopover", () => {
     renderPopover()
     await user.click(screen.getByRole("button", { name: "Edit urgency" }))
     const dialog = await screen.findByRole("dialog")
-    await user.click(
-      within(dialog).getByRole("combobox", { name: "Urgency level" }),
-    )
+    await user.click(within(dialog).getByRole("combobox", { name: "Urgency level" }))
     await user.click(await screen.findByRole("option", { name: "HIGH" }))
-    await user.type(
-      within(dialog).getByLabelText("Urgency reason"),
-      "Client has an SLA deadline",
-    )
+    await user.type(within(dialog).getByLabelText("Urgency reason"), "Client has an SLA deadline")
     await user.click(within(dialog).getByRole("button", { name: "Save urgency edit" }))
     await waitFor(() => {
       expect(editUrgencyMock).toHaveBeenCalledWith("draft-1", {

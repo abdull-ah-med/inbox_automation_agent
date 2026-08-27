@@ -5,19 +5,12 @@ import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
-function Tabs({
-  className,
-  orientation = "horizontal",
-  ...props
-}: TabsPrimitive.Root.Props) {
+function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive.Root.Props) {
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
       data-orientation={orientation}
-      className={cn(
-        "group/tabs flex gap-2 data-horizontal:flex-col",
-        className,
-      )}
+      className={cn("group/tabs flex gap-2 data-horizontal:flex-col", className)}
       {...props}
     />
   )
@@ -28,8 +21,7 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default:
-          "h-9 gap-0 rounded-full bg-muted p-1 ring-1 ring-foreground/10",
+        default: "h-9 gap-0 rounded-full bg-muted p-1 ring-1 ring-foreground/10",
         line: "h-8 gap-1 rounded-none bg-transparent p-0",
       },
     },
@@ -69,10 +61,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
   )
 }
 
-function TabsIndicator({
-  className,
-  ...props
-}: TabsPrimitive.Indicator.Props) {
+function TabsIndicator({ className, ...props }: TabsPrimitive.Indicator.Props) {
   return (
     <TabsPrimitive.Indicator
       data-slot="tabs-indicator"
@@ -96,11 +85,4 @@ function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   )
 }
 
-export {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsIndicator,
-  TabsContent,
-  tabsListVariants,
-}
+export { Tabs, TabsList, TabsTrigger, TabsIndicator, TabsContent, tabsListVariants }

@@ -2,8 +2,7 @@
 
 const ASK_RE =
   /\b(please (send|review|confirm|process|reply)|can you|could you|need you to|what is the status)\b/i
-const CLOSE_RE =
-  /\b(thanks|thank you|sounds good|appreciate it|we are all set|all set)\b/i
+const CLOSE_RE = /\b(thanks|thank you|sounds good|appreciate it|we are all set|all set)\b/i
 const CONDITIONAL_RE = /let me know if you(?:'re| are) unable/i
 const THANKS_LINE_RE = /^\s*(?:thanks|thank you)[!.,]?\s*$/i
 

@@ -13,8 +13,7 @@ type MessageScrollerContextValue = {
   scrollToEnd: () => void
 }
 
-const MessageScrollerContext =
-  React.createContext<MessageScrollerContextValue | null>(null)
+const MessageScrollerContext = React.createContext<MessageScrollerContextValue | null>(null)
 
 const useMessageScroller = () => {
   const value = React.useContext(MessageScrollerContext)
@@ -51,53 +50,33 @@ function MessageScrollerProvider({ children }: { children: React.ReactNode }) {
     [handleScroll, pinnedToEnd, scrollToEnd],
   )
 
-  return (
-    <MessageScrollerContext.Provider value={value}>
-      {children}
-    </MessageScrollerContext.Provider>
-  )
+  return <MessageScrollerContext.Provider value={value}>{children}</MessageScrollerContext.Provider>
 }
 
-function MessageScroller({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function MessageScroller({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="message-scroller"
-      className={cn(
-        "relative flex size-full min-h-0 flex-col overflow-hidden",
-        className,
-      )}
+      className={cn("relative flex size-full min-h-0 flex-col overflow-hidden", className)}
       {...props}
     />
   )
 }
 
-function MessageScrollerViewport({
-  className,
-  ...props
-}: React.ComponentProps<"div">) {
+function MessageScrollerViewport({ className, ...props }: React.ComponentProps<"div">) {
   const { viewportRef, handleScroll } = useMessageScroller()
   return (
     <div
       ref={viewportRef}
       data-slot="message-scroller-viewport"
       onScroll={handleScroll}
-      className={cn(
-        "size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain",
-        className,
-      )}
+      className={cn("size-full min-h-0 min-w-0 overflow-y-auto overscroll-contain", className)}
       {...props}
     />
   )
 }
 
-function MessageScrollerContent({
-  className,
-  children,
-  ...props
-}: React.ComponentProps<"div">) {
+function MessageScrollerContent({ className, children, ...props }: React.ComponentProps<"div">) {
   const { viewportRef, pinnedToEnd } = useMessageScroller()
   const contentRef = React.useRef<HTMLDivElement | null>(null)
 
@@ -161,10 +140,7 @@ function MessageScrollerItem({
   )
 }
 
-function MessageScrollerButton({
-  className,
-  ...props
-}: React.ComponentProps<typeof Button>) {
+function MessageScrollerButton({ className, ...props }: React.ComponentProps<typeof Button>) {
   const { pinnedToEnd, scrollToEnd } = useMessageScroller()
 
   const handleClick = () => {
@@ -183,9 +159,7 @@ function MessageScrollerButton({
       onClick={handleClick}
       className={cn(
         "absolute bottom-4 left-1/2 -translate-x-1/2 border-border bg-background text-foreground transition-[scale,opacity] duration-200",
-        pinnedToEnd
-          ? "pointer-events-none scale-95 opacity-0"
-          : "scale-100 opacity-100",
+        pinnedToEnd ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100",
         className,
       )}
       {...props}

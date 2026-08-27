@@ -28,20 +28,13 @@ describe("returning from an associated full thread", () => {
         ]}
       />,
     )
-    await user.click(
-      screen.getByRole("button", { name: "Back to Hart reminder 8/15" }),
-    )
+    await user.click(screen.getByRole("button", { name: "Back to Hart reminder 8/15" }))
     expect(push).toHaveBeenCalledWith("/threads/thread-src")
     expect(push).not.toHaveBeenCalledWith("/mailboxes/info")
   })
 
   it("shows a link back to the original thread subject", () => {
-    render(
-      <ThreadOriginBanner
-        originId="thread-src"
-        originSubject="Hart reminder 8/15"
-      />,
-    )
+    render(<ThreadOriginBanner originId="thread-src" originSubject="Hart reminder 8/15" />)
     const link = screen.getByRole("link", { name: "Back to Hart reminder 8/15" })
     expect(link).toHaveAttribute("href", "/threads/thread-src")
     expect(link).toHaveTextContent("Hart reminder 8/15")

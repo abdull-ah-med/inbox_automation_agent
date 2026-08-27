@@ -14,11 +14,7 @@ import {
 import { cn } from "@/lib/utils"
 import type { MailboxOverview } from "@/lib/types"
 
-export const MailboxSummaryCard = ({
-  mailbox,
-}: {
-  mailbox: MailboxOverview
-}) => {
+export const MailboxSummaryCard = ({ mailbox }: { mailbox: MailboxOverview }) => {
   const label = mailbox.label || inboxLabel(mailbox.mailbox)
   const isEmpty = mailbox.thread_count === 0
 
@@ -26,9 +22,9 @@ export const MailboxSummaryCard = ({
     <Link
       href={`/mailboxes/${encodeURIComponent(mailbox.mailbox)}`}
       aria-label={`Open ${label} inbox`}
-      className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="focus-visible:ring-ring block h-full rounded-xl outline-none focus-visible:ring-2"
     >
-      <Card className="h-full gap-0 transition-colors hover:bg-muted/40">
+      <Card className="hover:bg-muted/40 h-full gap-0 transition-colors">
         <CardHeader className="gap-2 pb-4">
           <div className="flex items-start justify-between gap-2">
             <span
@@ -42,17 +38,15 @@ export const MailboxSummaryCard = ({
             ) : null}
           </div>
           {mailbox.email_address ? (
-            <p className="truncate text-xs text-muted-foreground">
-              {mailbox.email_address}
-            </p>
+            <p className="text-muted-foreground truncate text-xs">{mailbox.email_address}</p>
           ) : null}
-          <p className="text-2xl font-semibold text-card-foreground">
+          <p className="text-card-foreground text-2xl font-semibold">
             {mailbox.awaiting_action_count}
-            <span className="ml-1.5 text-sm font-normal text-muted-foreground">
+            <span className="text-muted-foreground ml-1.5 text-sm font-normal">
               awaiting action
             </span>
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-muted-foreground text-xs">
             {mailbox.thread_count} total
             {mailbox.stale_count > 0 ? ` · ${mailbox.stale_count} stale` : ""}
             {mailbox.filtered_count > 0
@@ -63,35 +57,28 @@ export const MailboxSummaryCard = ({
         <Separator />
         <CardContent className="pt-4">
           {isEmpty ? (
-            <p className="text-sm text-muted-foreground">
-              No mail ingested for this inbox yet. New threads appear after the
-              next poll.
+            <p className="text-muted-foreground text-sm">
+              No mail ingested for this inbox yet. New threads appear after the next poll.
             </p>
           ) : mailbox.recent_threads?.length ? (
             <ul className="space-y-2">
               {mailbox.recent_threads.slice(0, 3).map((thread) => (
                 <li key={thread.id} className="min-w-0">
                   <div className="mb-0.5 flex flex-wrap gap-1">
-                    <StatusBadge
-                      label={stateLabel(thread.state)}
-                      tone={stateTone(thread.state)}
-                    />
+                    <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
                     {thread.urgency ? (
-                      <StatusBadge
-                        label={thread.urgency}
-                        tone={urgencyTone(thread.urgency)}
-                      />
+                      <StatusBadge label={thread.urgency} tone={urgencyTone(thread.urgency)} />
                     ) : null}
                   </div>
-                  <p className="truncate text-sm font-medium text-card-foreground">
+                  <p className="text-card-foreground truncate text-sm font-medium">
                     {thread.subject || "(no subject)"}
                   </p>
                   {thread.teaching_note ? (
-                    <p className="line-clamp-1 text-xs text-muted-foreground">
+                    <p className="text-muted-foreground line-clamp-1 text-xs">
                       {thread.teaching_note}
                     </p>
                   ) : (
-                    <p className="truncate text-xs text-muted-foreground">
+                    <p className="text-muted-foreground truncate text-xs">
                       {thread.last_sender ?? "Unknown"} ·{" "}
                       {formatRelativeTime(thread.last_message_at)}
                     </p>
@@ -100,9 +87,7 @@ export const MailboxSummaryCard = ({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-muted-foreground">
-              No threads awaiting action right now.
-            </p>
+            <p className="text-muted-foreground text-sm">No threads awaiting action right now.</p>
           )}
         </CardContent>
       </Card>
