@@ -4,6 +4,7 @@ import { Fragment, useState, type ReactNode, type KeyboardEvent } from "react"
 import Link from "next/link"
 
 import { EMAIL_QUOTE_PATTERNS } from "@/lib/email-quote-patterns"
+import { splitNestedQuotedSegments } from "@/lib/split-nested-quoted-segments"
 import { cn, textLinkClass } from "@/lib/utils"
 import type { ChatCitation } from "@/lib/types"
 
@@ -376,6 +377,35 @@ const resolveBodyParts = ({
   return split
 }
 
+const QuotedLevel = ({
+  segments,
+  depth,
+  citations,
+}: {
+  segments: string[]
+  depth: number
+  citations?: ChatCitation[]
+}): ReactNode => {
+  if (segments.length === 0) return null
+
+  const [head, ...rest] = segments
+  if (!head) return null
+
+  return (
+    <div
+      data-quoted-level={depth}
+      className="border-border dark:text-muted-foreground border-l-2 pl-3 break-words wrap-anywhere text-gray-500"
+    >
+      <MainBody text={head} citations={citations} />
+      {rest.length > 0 ? (
+        <div className="mt-3">
+          <QuotedLevel segments={rest} depth={depth + 1} citations={citations} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 const QuotedHistoryToggle = ({
   quoted,
   citations,
@@ -384,6 +414,7 @@ const QuotedHistoryToggle = ({
   citations?: ChatCitation[]
 }) => {
   const [showQuoted, setShowQuoted] = useState(false)
+  const segments = splitNestedQuotedSegments(quoted)
 
   const handleToggleQuoted = () => {
     setShowQuoted((value) => !value)
@@ -410,11 +441,8 @@ const QuotedHistoryToggle = ({
         {showQuoted ? "Hide quoted earlier" : "Quoted earlier"}
       </button>
       {showQuoted ? (
-        <div
-          data-quoted-history
-          className="border-border dark:text-muted-foreground mt-3 border-l-2 pl-3 break-words wrap-anywhere whitespace-pre-wrap text-gray-500"
-        >
-          <BodyText text={quoted} citations={citations} />
+        <div data-quoted-history className="mt-3">
+          <QuotedLevel segments={segments} depth={0} citations={citations} />
         </div>
       ) : null}
     </div>

@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react"
+import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it } from "vitest"
 
@@ -97,8 +97,37 @@ describe("EmailBody", () => {
 
     const quoted = screen.getByText(/From: Alice/).closest("[data-quoted-history]")
     expect(quoted).not.toBeNull()
-    expect(quoted?.className).toMatch(/border-l/)
-    expect(quoted?.className).toMatch(/pl-/)
+    const level = screen.getByText(/From: Alice/).closest("[data-quoted-level]")
+    expect(level).not.toBeNull()
+    expect(level?.getAttribute("data-quoted-level")).toBe("0")
+    expect(level?.className).toMatch(/border-l/)
+    expect(level?.className).toMatch(/pl-/)
+  })
+
+  it("nests each older Outlook quote one indent deeper so order is visible", async () => {
+    const user = userEvent.setup()
+    const body =
+      "Thanks for the update.\n\n" +
+      "________________________________\n" +
+      "From: Beau Norris <beau.norris@sample-lab-vendor.example.com>\n" +
+      "Sent: Wednesday, August 26, 2026 4:49 PM\n" +
+      "To: Elise Chouest <sampleagent@sample-site.example.com>\n" +
+      "Subject: RE: Open Items\n\n" +
+      "I just wanted to double check on definitions.\n\n" +
+      "From: Elise Chouest <sampleagent@sample-site.example.com>\n" +
+      "Sent: Wednesday, August 26, 2026 11:56 AM\n" +
+      "To: Beau Norris <beau.norris@sample-lab-vendor.example.com>\n" +
+      "Subject: Open Items\n\n" +
+      "We're working through our build spec.\n"
+
+    render(<EmailBody text={body} collapseQuotes />)
+    await user.click(screen.getByRole("button", { name: "Show quoted earlier messages" }))
+
+    const newer = screen.getByText(/double check on definitions/).closest("[data-quoted-level]")
+    const older = screen.getByText(/working through our build spec/).closest("[data-quoted-level]")
+    expect(newer?.getAttribute("data-quoted-level")).toBe("0")
+    expect(older?.getAttribute("data-quoted-level")).toBe("1")
+    expect(newer?.contains(older as Node)).toBe(true)
   })
 })
 
@@ -191,5 +220,59 @@ describe("EmailBody Zendesk walls", () => {
     const chrome = screen.getByText(/Your request \(40197\) has been updated/)
     expect(chrome.closest("[data-email-chrome]")).not.toBeNull()
     expect(screen.getByText(/search ID that I can look into/)).toBeInTheDocument()
+  })
+
+  it("structures agent byline and date inside expanded Quoted earlier", async () => {
+    const user = userEvent.setup()
+    const stacked =
+      "Your request (40145) has been solved. To add additional comments, reply to this email.\n\n" +
+      "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n" +
+      "Alex Taylor (SampleHelpdesk)\n\n" +
+      "Aug 26, 2026, 3:48 PM MDT\n\n" +
+      "Elise,\n\n" +
+      "I am going to go ahead and close out this ticket.\n\n" +
+      "Alex Taylor\n" +
+      "Customer Support\n\n" +
+      "[https://sample-helpdesk.example.com/system/photos/25898357572372/purple_flower_5.jpg]\n\n" +
+      "Alex Taylor (SampleHelpdesk)\n\n" +
+      "Aug 25, 2026, 10:11 AM MDT\n\n" +
+      "Elise,\n\n" +
+      "I wanted to check in with you on this to see if you have further questions.\n\n" +
+      "Alex Taylor\n" +
+      "Customer Support\n"
+
+    render(<EmailBody text={stacked} collapseQuotes />)
+    await user.click(screen.getByRole("button", { name: "Show quoted earlier messages" }))
+
+    const quoted = screen.getByText(/further questions/).closest("[data-quoted-history]")
+    expect(quoted).toBeTruthy()
+    const quotedByline = within(quoted as HTMLElement).getByText("Alex Taylor (SampleHelpdesk)")
+    expect(quotedByline.closest("[data-email-byline]")).toBeTruthy()
+    const quotedDate = within(quoted as HTMLElement).getByText(/Aug 25, 2026/)
+    expect(quotedDate.closest("[data-email-date]")).toBeTruthy()
+  })
+
+  it("strips mailto and cid junk from expanded Quoted earlier", async () => {
+    const user = userEvent.setup()
+    const body =
+      "Thanks for the update.\n\n" +
+      "________________________________\n" +
+      "From: Beau Norris <beau.norris@sample-lab-vendor.example.com>\n" +
+      "Sent: Wednesday, August 26, 2026 11:04 AM\n" +
+      "To: Elise Chouest <sampleagent@sample-site.example.com>\n" +
+      "Subject: RE: Open Items\n\n" +
+      "Please review with @Hooker, Ruth E<mailto:ruth.hooker@sample-lab-vendor.example.com>.\n\n" +
+      "[cid:image004.png@01DD3549.0D900550]\n\n" +
+      "Thanks,\n" +
+      "Beau\n"
+
+    render(<EmailBody text={body} collapseQuotes />)
+    await user.click(screen.getByRole("button", { name: "Show quoted earlier messages" }))
+
+    const quoted = screen.getByText(/Please review with/).closest("[data-quoted-history]")
+    expect(quoted).toBeTruthy()
+    expect(quoted).toHaveTextContent("Please review with @Hooker, Ruth E.")
+    expect(quoted).not.toHaveTextContent(/mailto:/i)
+    expect(quoted).not.toHaveTextContent(/\[cid:/i)
   })
 })
