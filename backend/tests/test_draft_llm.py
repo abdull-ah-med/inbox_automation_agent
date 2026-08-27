@@ -102,7 +102,7 @@ def test_build_user_content_injects_reply_addressee_from_thread_tip() -> None:
     )
     content = draft_llm._build_user_content(tip, context, _triage())
     assert "Reply addressee (hard constraint):" in content
-    assert "Salute: Dev" in content
+    assert "Salute: team" in content
     assert "Primary To: dev@sample-site.example.com" in content
     assert "Source: last_outbound_to" in content
     assert "Do not greet the thread opener" in content

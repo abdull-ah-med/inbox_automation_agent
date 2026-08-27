@@ -631,6 +631,10 @@ async def list_stored_associations(
                 match_reasons=reasons,
             )
         )
+    items.sort(
+        key=lambda item: item.last_message_at.timestamp() if item.last_message_at else 0.0,
+        reverse=True,
+    )
     return items
 
 

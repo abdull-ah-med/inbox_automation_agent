@@ -152,8 +152,127 @@ def test_person_local_part_still_used_when_no_display_name() -> None:
     assert addressee.salute_name == "Jane"
 
 
+def test_surname_local_part_prefers_signature_first_name() -> None:
+    """Worked example: cblumenthal@… signs as Cydney Blumenthal / Director.
+
+    Local-part fallback would salute "Cblumenthal"; the draft must use Cydney.
+    """
+    mailbox = "info@sample-services.example.com"
+    body = (
+        "Hi!\n\n"
+        "Below is an email chain between applicant Davien Neal and our client. "
+        "Is there anything else that needs to be done?\n\n"
+        "Cydney Blumenthal\n\n"
+        "Director of Digital Services\n\n"
+        "Office 202-555-0103\n"
+        "Mobile 202-555-0104\n"
+        "Email cblumenthal@sample-vendor.example.com\n"
+    )
+    messages = [
+        _msg(
+            message_id="1",
+            sender="cblumenthal@sample-vendor.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text=body,
+        ),
+    ]
+    addressee = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+    )
+    assert addressee is not None
+    assert addressee.email == "cblumenthal@sample-vendor.example.com"
+    assert addressee.salute_name == "Cydney"
+
+
+def test_zendesk_auto_ack_without_agent_salutes_team_not_role_or_owner() -> None:
+    """Zendesk 'request received' has no agent byline — only quoted prior mail.
+
+    Saluting Helpdesk (role) or Elise (mailbox owner / quoted sign-off) is wrong.
+    Use the neutral team greeting Elise herself uses outbound.
+    """
+    mailbox = "info@sample-services.example.com"
+    tip = (
+        "##- Please type your reply above this line -##\n\n"
+        "Your request (40214) has been received and is being reviewed by our "
+        "support staff.\n\n"
+        "To add additional comments, reply to this email.\n\n"
+        "[https://sample-helpdesk.example.com/images/2016/default-avatar-80.png]\n\n"
+        "info\n\n"
+        "Aug 26, 2026, 7:22 AM MDT\n\n"
+        "INTERNAL: This message originated inside the organization.\n"
+        "Hi team,\n\n"
+        "We've had a few candidates report certificate warnings.\n\n"
+        "Best,\n"
+        "Elise\n"
+    )
+    messages = [
+        _msg(
+            message_id="1",
+            sender="helpdesk@sample-helpdesk.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text=tip,
+        ),
+    ]
+    addressee = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+    )
+    assert addressee is not None
+    assert addressee.email == "helpdesk@sample-helpdesk.example.com"
+    assert addressee.salute_name == "team"
+
+
+def test_zendesk_auto_ack_never_salutes_owner_even_when_quote_strip_leaks() -> None:
+    """If prior Thanks,Elise leaks into the unique tip, still do not salute Elise."""
+    mailbox = "info@sample-services.example.com"
+    tip = (
+        "##- Please type your reply above this line -##\n\n"
+        "Your request (40214) has been updated. To add additional comments, "
+        "reply to this email.\n\n"
+        "Thanks,\n"
+        "Elise\n"
+    )
+    messages = [
+        _msg(
+            message_id="1",
+            sender="helpdesk@sample-helpdesk.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text=tip,
+        ),
+    ]
+    with_owner = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+    )
+    without_owner = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner=None,
+    )
+    assert with_owner is not None
+    assert with_owner.salute_name == "team"
+    assert with_owner.salute_name.casefold() != "elise"
+    # Must not depend on MAILBOX_OWNERS being configured.
+    assert without_owner is not None
+    assert without_owner.salute_name == "team"
+    assert without_owner.salute_name.casefold() != "elise"
+
+
 def test_latest_outbound_to_wins_over_earlier_inbound_sender() -> None:
-    """Multi-party: opener is Smit; tip of thread is outbound to Dev → salute Dev."""
+    """Multi-party: opener is Smit; tip is outbound to Dev@ with no person name.
+
+    Primary To stays Dev@; salute falls back to team (never a role label).
+    """
     mailbox = "inquiries@sample-site.example.com"
     messages = [
         _msg(
@@ -174,7 +293,7 @@ def test_latest_outbound_to_wins_over_earlier_inbound_sender() -> None:
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
     assert addressee is not None
     assert addressee.email == "dev@sample-site.example.com"
-    assert addressee.salute_name == "Dev"
+    assert addressee.salute_name == "team"
     assert addressee.source == "last_outbound_to"
 
 

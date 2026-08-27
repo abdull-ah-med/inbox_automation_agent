@@ -23,7 +23,8 @@ _AGENT_BYLINE = re.compile(
     + "\u2019"
     + r"\-]{1,40})?\s*\([^)\n]{2,80}\)\s*$"
 )
-# Bare closing: "Alex Taylor\nCustomer Support" (no Thanks line).
+# Bare closing: "Alex Taylor\nCustomer Support" or "Cydney Blumenthal\nDirector of …"
+# Title vocabulary follows common business-signature patterns (Director/VP/Manager/…).
 _TITLE_CLOSING = re.compile(
     r"(?im)\n([A-Z][a-zA-Z'"
     + "\u2019"
@@ -31,8 +32,23 @@ _TITLE_CLOSING = re.compile(
     + "\u2019"
     + r"\-]{1,40})?\s*\n+"
     r"(?:customer support|support|help desk|helpdesk|technical support|"
-    r"account manager|success manager)\s*(?:\n|$)"
+    r"account manager|success manager|"
+    r"director(?:\s+of\s+[^\n]{2,80})?|"
+    r"vice president(?:\s+of\s+[^\n]{2,80})?|"
+    r"vp(?:\s+of\s+[^\n]{2,80})?|"
+    r"manager(?:\s+of\s+[^\n]{2,80})?|"
+    r"head of [^\n]{2,80}|"
+    r"president|ceo|cto|cfo|coo|founder|co-founder|"
+    r"engineer|analyst|consultant|specialist|coordinator|"
+    r"administrator|executive)\s*(?:\n|$)"
 )
+# Zendesk ticket chrome with no named agent on the newest comment.
+_ZENDESK_TICKET_CHROME = re.compile(
+    r"(?is)(?:##-\s*please type your reply above this line\s*-##|"
+    r"your request\s*\(\d+\)\s*has been (?:received|updated))"
+)
+# Neutral greeting when the tip is a role mailbox / ticket system with no person.
+_TEAM_SALUTE = "team"
 
 # Local-parts that are job/role mailboxes, not personal names.
 _ROLE_LOCALS = frozenset(
@@ -233,13 +249,61 @@ def addressee_first_name_from_body(
     body: str | None,
     *,
     reject_names: frozenset[str] | set[str] | None = None,
+    allow_signature: bool = True,
 ) -> str | None:
-    """Best personal name for a role-mailbox tip body (agent byline > signature)."""
-    return (
-        agent_byline_first_name(body, reject_names=reject_names)
-        or signature_first_name(body, reject_names=reject_names)
-        or title_closing_first_name(body, reject_names=reject_names)
-    )
+    """Best personal name for a tip body (agent byline > signature > title closing)."""
+    byline = agent_byline_first_name(body, reject_names=reject_names)
+    if byline:
+        return byline
+    if allow_signature:
+        signed = signature_first_name(body, reject_names=reject_names)
+        if signed:
+            return signed
+    return title_closing_first_name(body, reject_names=reject_names)
+
+
+def _is_zendesk_ticket_chrome(body: str | None) -> bool:
+    """True when the unique tip looks like Zendesk ticket mail, not a person."""
+    text = _unique_reply_text(body)
+    if not text:
+        return False
+    return _ZENDESK_TICKET_CHROME.search(text) is not None
+
+
+def _tip_person_name(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """Personal name from the tip body; Zendesk chrome ignores leaked sign-offs."""
+    if _is_zendesk_ticket_chrome(body):
+        # Auto-acks and updates often embed our prior Thanks,Owner. Only trust
+        # agent byline / support-title closing — never signature_first_name.
+        return addressee_first_name_from_body(
+            body,
+            reject_names=reject_names,
+            allow_signature=False,
+        )
+    return addressee_first_name_from_body(body, reject_names=reject_names)
+
+
+def _finalize_salute(
+    salute: str,
+    *,
+    email: str,
+    owner: str | None,
+) -> str:
+    """Never greet a role label or the mailbox owner we sign as."""
+    cleaned = (salute or "").strip()
+    if not cleaned:
+        return _TEAM_SALUTE
+    if owner and cleaned.casefold() == owner.casefold():
+        return _TEAM_SALUTE
+    if is_role_mailbox_salute(salute_name=cleaned, email=email):
+        return _TEAM_SALUTE
+    if cleaned.casefold() == _TEAM_SALUTE:
+        return _TEAM_SALUTE
+    return cleaned
 
 
 def _direction_value(direction: object) -> str:
@@ -272,7 +336,7 @@ def _better_salute_for_email(
             and _usable_person_name(from_party, reject_names=reject_names)
         ):
             return from_party
-        signed = addressee_first_name_from_body(
+        signed = _tip_person_name(
             getattr(msg, "body_text", None),
             reject_names=reject_names,
         )
@@ -295,11 +359,10 @@ def resolve_reply_addressee(
     sender, else outbound To). First hit wins — so an outbound tip to Dev beats
     an earlier inbound from Smit.
 
-    When the tip address is a role mailbox (``Dev@``, ``support@``, …), enrich
-    the salute from an in-thread display name or signature for that same email
-    (e.g. ``Thanks,\\nDivyansh``) instead of greeting the role label.
-
-    Never salute the mailbox owner — that person signs the outbound reply.
+    Prefer a personal name from the tip body (signature / agent byline / job
+    title) over an email local-part. Role mailboxes (``Dev@``, ``helpdesk@``,
+    …) and Zendesk auto-acks without an agent fall back to ``team`` — never
+    salute the mailbox owner (that person signs the outbound reply).
     """
     if not messages:
         return None
@@ -326,15 +389,16 @@ def resolve_reply_addressee(
         else:
             source = "thread_counterpart"
         salute = salute_name_from_party(raw)
-        if is_role_mailbox_salute(salute_name=salute, email=email):
-            tip_signed = None
-            # Only the inbound tip's body belongs to the addressee.
-            if direction == "inbound":
-                tip_signed = addressee_first_name_from_body(
-                    getattr(msg, "body_text", None),
-                    reject_names=reject,
-                )
-            better = tip_signed or _better_salute_for_email(
+        tip_body = getattr(msg, "body_text", None)
+        tip_signed = (
+            _tip_person_name(tip_body, reject_names=reject)
+            if direction == "inbound"
+            else None
+        )
+        if tip_signed:
+            salute = tip_signed
+        elif is_role_mailbox_salute(salute_name=salute, email=email):
+            better = _better_salute_for_email(
                 email=email,
                 messages=message_list,
                 reject_names=reject,
@@ -342,17 +406,14 @@ def resolve_reply_addressee(
             if better:
                 salute = better
         elif owner and salute.casefold() == owner.casefold():
-            # Display name accidentally matched the owner; try body enrichment.
-            better = addressee_first_name_from_body(
-                getattr(msg, "body_text", None) if direction == "inbound" else None,
-                reject_names=reject,
-            ) or _better_salute_for_email(
+            better = _better_salute_for_email(
                 email=email,
                 messages=message_list,
                 reject_names=reject,
             )
             if better:
                 salute = better
+        salute = _finalize_salute(salute, email=email, owner=owner)
         return ReplyAddressee(
             raw=raw.strip(),
             email=email,
@@ -373,7 +434,8 @@ def format_reply_addressee_block(addressee: ReplyAddressee) -> str:
         "The reply_body greeting must address Salute (e.g. "
         f'"Hi {addressee.salute_name},"). Do not greet the thread opener '
         "unless they are this addressee. Do not salute a mailbox role label "
-        "(Dev, Support, Info, …) when Salute is a personal name. Primary "
+        "(Dev, Support, Info, Helpdesk, …) or the mailbox owner you sign as. "
+        'When Salute is "team", greet "Hi team,". Primary '
         "suggested_recipients must match Primary To when a single recipient "
         "is appropriate.\n"
     )
