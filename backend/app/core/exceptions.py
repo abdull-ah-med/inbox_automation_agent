@@ -67,6 +67,10 @@ class ReplyMemoryNotFoundError(InboxTriageError):
     """Raised when a reply-memory (tone reference) id does not exist."""
 
 
+class RejectionMemoryNotFoundError(InboxTriageError):
+    """Raised when a rejection-memory id does not exist."""
+
+
 class SkillNameConflictError(InboxTriageError):
     """Raised when creating/updating a skill with a duplicate name."""
 

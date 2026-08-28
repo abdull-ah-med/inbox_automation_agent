@@ -19,7 +19,9 @@ from app.api.simulate.ingest import router as simulate_ingest_router
 from app.api.web.chat import router as chat_router
 from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
+from app.api.web.mailbox_contacts import router as mailbox_contacts_router
 from app.api.web.mailboxes import router as mailboxes_router
+from app.api.web.rejection_memory import router as rejection_memory_router
 from app.api.web.reply_memory import router as reply_memory_router
 from app.api.web.reports import router as reports_router
 from app.api.web.search import router as search_router
@@ -51,6 +53,7 @@ from app.core.exceptions import (
     InvalidCursorError,
     InvalidDateRangeError,
     InvalidTokenError,
+    RejectionMemoryNotFoundError,
     ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
     RuleEngineError,
@@ -87,6 +90,7 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     ThreadNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNotFoundError: status.HTTP_404_NOT_FOUND,
     ReplyMemoryNotFoundError: status.HTTP_404_NOT_FOUND,
+    RejectionMemoryNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNameConflictError: status.HTTP_409_CONFLICT,
     SkillBudgetExceededError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ThreadStateError: status.HTTP_409_CONFLICT,
@@ -316,11 +320,13 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(reports_router)
     app.include_router(mailboxes_router)
+    app.include_router(mailbox_contacts_router)
     app.include_router(threads_router)
     app.include_router(drafts_router)
     app.include_router(skills_router)
     app.include_router(skill_candidates_router)
     app.include_router(reply_memory_router)
+    app.include_router(rejection_memory_router)
     app.include_router(tone_profiles_router)
     app.include_router(graph_webhook_router)
     if mount_dev_routes:
