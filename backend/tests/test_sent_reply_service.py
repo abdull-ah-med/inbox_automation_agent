@@ -391,8 +391,8 @@ async def test_snapshot_empty_when_no_reply_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_meeting_accepted_does_not_resolve_thread() -> None:
-    """Graph meeting responses must not create sent_replies or set RESOLVED."""
+async def test_meeting_accepted_resolves_thread() -> None:
+    """Elise RSVP'd in Calendar — that is the tip action, so the thread closes."""
     thread_id = uuid.uuid4()
     message = _message(
         thread_id=thread_id,
@@ -403,20 +403,35 @@ async def test_meeting_accepted_does_not_resolve_thread() -> None:
         meeting_response_type="accepted",
     )
     session = AsyncMock()
+    created = _sent_reply(
+        thread_id=thread_id,
+        message_id=message.id,
+        draft_id=None,
+        sent_body_snapshot="",
+        matched_by="time_window",
+    )
 
     with (
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[]),
-        ) as drafts_mock,
+        ),
         patch(
             "app.services.sent_reply_service.sent_reply_repo.insert_sent_reply",
-            AsyncMock(),
+            AsyncMock(return_value=(created, True)),
         ) as insert_mock,
         patch(
             "app.services.sent_reply_service.thread_repo.set_thread_outcome",
-            AsyncMock(),
+            AsyncMock(return_value=object()),
         ) as outcome_mock,
+        patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(return_value=SimpleNamespace(urgency="NORMAL", id=thread_id)),
+        ),
+        patch(
+            "app.services.sent_reply_service.audit_service.log_event",
+            AsyncMock(),
+        ) as audit_mock,
     ):
         result = await sent_reply_service.resolve_thread_from_outbound(
             session,
@@ -426,10 +441,104 @@ async def test_meeting_accepted_does_not_resolve_thread() -> None:
             mailbox="elise@example.com",
         )
 
-    assert result is None
+    assert result is not None
+    insert_kwargs = insert_mock.await_args.kwargs
+    assert insert_kwargs["draft_id"] is None
+    assert insert_kwargs["sent_body_snapshot"] == ""
+    outcome_mock.assert_awaited_once()
+    assert outcome_mock.await_args.kwargs["state"] == "RESOLVED"
+    assert audit_mock.await_args.kwargs["event_type"] == "thread.resolved.sent_reply_detected"
+
+
+@pytest.mark.asyncio
+async def test_meeting_accepted_does_not_link_unapproved_letter() -> None:
+    """Calendar accept is not the drafted RSVP email — do not time-window match it."""
+    thread_id = uuid.uuid4()
+    draft = _draft(thread_id=thread_id)
+    message = _message(
+        thread_id=thread_id,
+        body_text="",
+        unique_body_text="",
+        meeting_message_type="meetingAccepted",
+        meeting_response_type="accepted",
+    )
+    session = AsyncMock()
+    created = _sent_reply(thread_id=thread_id, message_id=message.id, draft_id=None)
+
+    with (
+        patch(
+            "app.services.sent_reply_service.draft_repo.list_by_thread",
+            AsyncMock(return_value=[draft]),
+        ) as drafts_mock,
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.insert_sent_reply",
+            AsyncMock(return_value=(created, True)),
+        ) as insert_mock,
+        patch(
+            "app.services.sent_reply_service.thread_repo.set_thread_outcome",
+            AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(return_value=SimpleNamespace(urgency=None, id=thread_id)),
+        ),
+        patch(
+            "app.services.sent_reply_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+    ):
+        await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread_id,
+            message=message,
+            conversation_id="conv-meeting-2",
+            mailbox="elise@example.com",
+        )
+
     drafts_mock.assert_not_awaited()
-    insert_mock.assert_not_awaited()
-    outcome_mock.assert_not_awaited()
+    assert insert_mock.await_args.kwargs["draft_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_meeting_cancelled_outbound_resolves_thread() -> None:
+    thread_id = uuid.uuid4()
+    message = _message(
+        thread_id=thread_id,
+        body_text="",
+        unique_body_text="",
+        meeting_message_type="meetingCancelled",
+    )
+    session = AsyncMock()
+    created = _sent_reply(thread_id=thread_id, message_id=message.id, draft_id=None)
+
+    with (
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.insert_sent_reply",
+            AsyncMock(return_value=(created, True)),
+        ),
+        patch(
+            "app.services.sent_reply_service.thread_repo.set_thread_outcome",
+            AsyncMock(return_value=object()),
+        ) as outcome_mock,
+        patch(
+            "app.services.sent_reply_service.thread_repo.get_by_id",
+            AsyncMock(return_value=SimpleNamespace(urgency=None, id=thread_id)),
+        ),
+        patch(
+            "app.services.sent_reply_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+    ):
+        result = await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread_id,
+            message=message,
+            conversation_id="conv-cancel-1",
+            mailbox="elise@example.com",
+        )
+
+    assert result is not None
+    assert outcome_mock.await_args.kwargs["state"] == "RESOLVED"
 
 
 @pytest.mark.asyncio

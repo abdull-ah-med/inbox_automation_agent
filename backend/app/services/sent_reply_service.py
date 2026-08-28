@@ -112,24 +112,19 @@ async def resolve_thread_from_outbound(
     """Link an outbound message to a draft (when possible) and set RESOLVED.
 
     Idempotent on ``message.id`` via unique constraint. Never logs body text.
-    Skips Graph-identified meeting messages (accepts/declines/requests).
+    Calendar accepts/declines/cancels still resolve (Elise acted) but do not
+    attach a drafted letter — they are not email replies to learn from.
     """
-    if is_meeting_message(message):
-        logger.info(
-            "sent_reply_skip_meeting_message",
-            thread_id=str(thread_id),
-            message_id=str(message.id),
-            mailbox=mailbox,
-            meeting_message_type=message.meeting_message_type,
-        )
-        return None
-
     sent_at = _normalize_sent_at(message.received_at)
-    draft_id, matched_by = await _pick_draft_match(
-        session,
-        thread_id=thread_id,
-        sent_at=sent_at,
-    )
+    if is_meeting_message(message):
+        draft_id: uuid.UUID | None = None
+        matched_by: MatchedBy = "time_window"
+    else:
+        draft_id, matched_by = await _pick_draft_match(
+            session,
+            thread_id=thread_id,
+            sent_at=sent_at,
+        )
 
     sent_reply, created = await sent_reply_repo.insert_sent_reply(
         session,

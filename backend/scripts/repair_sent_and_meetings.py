@@ -105,8 +105,6 @@ async def _repair_tip_outbound(*, apply: bool) -> tuple[int, int]:
             tip: MessageSchema = max(rows, key=lambda row: row.received_at)
             if tip.direction != EmailDirectionEnum.OUTBOUND.value:
                 continue
-            if sent_reply_service.is_meeting_message(tip):
-                continue
             existing = await sent_reply_repo.get_by_thread(session, thread.id)
             if existing is not None:
                 continue
