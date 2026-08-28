@@ -114,6 +114,10 @@ async def resolve_thread_from_outbound(
     Idempotent on ``message.id`` via unique constraint. Never logs body text.
     Calendar accepts/declines/cancels still resolve (Elise acted) but do not
     attach a drafted letter — they are not email replies to learn from.
+
+    Does not set RESOLVED when a newer message is already the tip (inbound
+    follow-up, or a later send). Graph Sent Items often uses a different id
+    than conversation sync; that must not close an open follow-up.
     """
     sent_at = _normalize_sent_at(message.received_at)
     if is_meeting_message(message):
@@ -150,6 +154,20 @@ async def resolve_thread_from_outbound(
             mailbox=mailbox,
         )
         return sent_reply
+
+    messages = await message_repo.list_by_thread(session, thread_id)
+    if messages:
+        tip = max(messages, key=lambda row: (row.received_at, str(row.id)))
+        if tip.id != message.id:
+            logger.info(
+                "sent_reply_skipped_newer_tip",
+                thread_id=str(thread_id),
+                message_id=str(message.id),
+                tip_id=str(tip.id),
+                tip_direction=tip.direction,
+                mailbox=mailbox,
+            )
+            return sent_reply
 
     await thread_repo.set_thread_outcome(
         session,

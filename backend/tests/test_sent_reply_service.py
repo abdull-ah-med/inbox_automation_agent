@@ -69,12 +69,20 @@ def _message(
     )
 
 
+def _this_outbound_is_tip(message: MessageSchema) -> object:
+    return patch(
+        "app.services.sent_reply_service.message_repo.list_by_thread",
+        AsyncMock(return_value=[message]),
+    )
+
+
 async def _resolve_capturing_snapshot(message: MessageSchema) -> str:
     """Call resolve with stubs; return the snapshot passed to insert."""
     thread_id = message.thread_id
     session = AsyncMock()
     created = _sent_reply(thread_id=thread_id, message_id=message.id)
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[]),
@@ -136,6 +144,7 @@ async def test_resolve_matches_approved_draft() -> None:
     )
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[draft]),
@@ -202,6 +211,7 @@ async def test_resolve_falls_back_to_time_window() -> None:
     )
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[draft]),
@@ -296,6 +306,7 @@ async def test_resolve_skips_approved_draft_already_linked() -> None:
     )
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[recent, approved]),
@@ -412,6 +423,7 @@ async def test_meeting_accepted_resolves_thread() -> None:
     )
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[]),
@@ -451,6 +463,68 @@ async def test_meeting_accepted_resolves_thread() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resolve_does_not_close_thread_when_newer_inbound_exists() -> None:
+    """Sent Items copy of Elise's Aug 27 send must not RESOLVE Ruth's Aug 28 follow-up.
+
+    Graph assigns a new id in Sent Items, so this is a fresh sent_replies insert,
+    not a Redis-heal duplicate. Closing is illegal while the tip is inbound.
+    """
+    thread_id = uuid.uuid4()
+    sent_at = datetime(2026, 8, 27, 14, 23, 19, tzinfo=UTC)
+    inbound_at = datetime(2026, 8, 28, 17, 16, 10, tzinfo=UTC)
+    outbound = _message(thread_id=thread_id, received_at=sent_at)
+    inbound = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-ruth-followup",
+        direction="inbound",
+        sender="ruth.hooker@sample-lab-vendor.example.com",
+        body_text="Following up on the integration",
+        received_at=inbound_at,
+        to_recipients=["sampleagent@sample-site.example.com"],
+        cc_recipients=[],
+    )
+    session = AsyncMock()
+    created = _sent_reply(thread_id=thread_id, message_id=outbound.id)
+    outcome_mock = AsyncMock()
+
+    with (
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[outbound, inbound]),
+        ),
+        patch(
+            "app.services.sent_reply_service.draft_repo.list_by_thread",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.insert_sent_reply",
+            AsyncMock(return_value=(created, True)),
+        ) as insert_mock,
+        patch(
+            "app.services.sent_reply_service.thread_repo.set_thread_outcome",
+            outcome_mock,
+        ),
+        patch(
+            "app.services.sent_reply_service.audit_service.log_event",
+            AsyncMock(),
+        ) as audit_mock,
+    ):
+        result = await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread_id,
+            message=outbound,
+            conversation_id="conv-ruth-followup",
+            mailbox="sampleagent@sample-site.example.com",
+        )
+
+    assert result is not None
+    assert insert_mock.await_count == 1
+    outcome_mock.assert_not_awaited()
+    audit_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_meeting_accepted_does_not_link_unapproved_letter() -> None:
     """Calendar accept is not the drafted RSVP email — do not time-window match it."""
     thread_id = uuid.uuid4()
@@ -466,6 +540,7 @@ async def test_meeting_accepted_does_not_link_unapproved_letter() -> None:
     created = _sent_reply(thread_id=thread_id, message_id=message.id, draft_id=None)
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.draft_repo.list_by_thread",
             AsyncMock(return_value=[draft]),
@@ -512,6 +587,7 @@ async def test_meeting_cancelled_outbound_resolves_thread() -> None:
     created = _sent_reply(thread_id=thread_id, message_id=message.id, draft_id=None)
 
     with (
+        _this_outbound_is_tip(message),
         patch(
             "app.services.sent_reply_service.sent_reply_repo.insert_sent_reply",
             AsyncMock(return_value=(created, True)),
