@@ -286,7 +286,7 @@ async def test_list_related_keeps_near_subject_alert_from_search_hits(db_session
     from app.services import related_thread_service
     from app.services.related_match import alert_fingerprint
 
-    alerts = "alerts@ops.example"
+    alerts = "noreply@ops.example"
     source = Thread(
         id=uuid.uuid4(),
         mailbox=SALES,

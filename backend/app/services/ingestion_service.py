@@ -273,6 +273,7 @@ def _to_email_message_schema(
             sender=sender,
             subject=message.subject,
             headers=_graph_headers_map(message),
+            sender_display_name=_sender_display_name(message),
         ),
         subject=message.subject or "(no subject)",
         body_text=body_text,
@@ -852,6 +853,9 @@ async def _heal_completed_outbound(
 
     Happens when conversation sync ingested the send (direction=outbound) and
     triage completed the dedup key before Sent Items ever called resolve.
+
+    Never re-applies RESOLVED when a newer inbound is the tip — Sent Items
+    lookback of an old send must not undo follow-up drafting.
     """
     _ = mailbox
     from app.services import sent_reply_service
@@ -867,10 +871,13 @@ async def _heal_completed_outbound(
         return None
 
     sent = await sent_reply_repo.get_by_thread(session, thread.id)
-    if sent is not None and thread.state == ThreadStateEnum.RESOLVED.value:
+    already_replied = await sent_reply_service.thread_tip_already_replied(
+        session, thread.id
+    )
+    if already_replied and thread.state == ThreadStateEnum.RESOLVED.value:
         return None
-    if sent is not None:
-        # Row exists but state drifted (e.g. re-drafted after resolve). Re-apply.
+    if already_replied:
+        # Tip is still the send we resolved; state drifted (re-drafted). Re-apply.
         await thread_repo.set_thread_outcome(
             session,
             thread.id,
@@ -888,6 +895,26 @@ async def _heal_completed_outbound(
             thread_id=str(thread.id),
             conversation_id=thread.conversation_id,
         )
+    if sent is not None:
+        # Follow-up inbound after a recorded send — do not slam RESOLVED.
+        logger.info(
+            "outbound_heal_skipped_newer_inbound",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return None
+
+    messages = await message_repo.list_by_thread(session, thread.id)
+    tip = max(messages, key=lambda row: row.received_at) if messages else None
+    if tip is None or tip.id != existing.id:
+        logger.info(
+            "outbound_heal_skipped_not_tip",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return None
 
     await sent_reply_service.resolve_thread_from_outbound(
         session,

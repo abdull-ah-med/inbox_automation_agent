@@ -105,15 +105,17 @@ async def _stamp_thread(*, thread: Thread, graph, apply: bool) -> tuple[int, int
             f"headers={headers}"
         )
         if not apply:
-            if email.sender_display_name or email.is_automated:
+            would_stamp_name = bool(email.sender_display_name and not row.sender_name)
+            would_restamp_automated = email.is_automated != bool(row.is_automated)
+            if would_stamp_name or would_restamp_automated:
                 updated += 1
             continue
 
         values: dict[str, object] = {}
         if email.sender_display_name and not row.sender_name:
             values["sender_name"] = email.sender_display_name
-        if email.is_automated and not row.is_automated:
-            values["is_automated"] = True
+        if email.is_automated != bool(row.is_automated):
+            values["is_automated"] = email.is_automated
         if not values:
             continue
         async with factory() as session:

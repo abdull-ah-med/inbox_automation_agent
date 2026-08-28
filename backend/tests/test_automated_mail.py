@@ -1,7 +1,12 @@
-"""Automated mail is tagged from sender/subject, not the LLM.
+"""Automated mail is tagged from RFC signals and narrow locals, not the LLM.
 
-Oracles are hand-picked noreply/out-of-office addresses. A production
-change that tags a named colleague, or misses noreply@, must fail these.
+Oracles are worked examples from staging: PHMSA listserv, Zendesk/SampleHelpdesk
+tickets, Exchange OOO, and named counterparties. A production change that tags
+Alex Taylor as a robot, or misses noreply@ / Auto-Submitted, must fail these.
+
+RFC 3834 Auto-Submitted (not X-Auto-Response-Suppress) is the auto-reply
+signal. RFC 2919 List-Id is a mailing list. RFC 2369 List-Unsubscribe alone
+is not — Gmail/Yahoo 2024 and ticket systems put it on human agent mail.
 """
 
 from __future__ import annotations
@@ -18,7 +23,14 @@ def test_noreply_sender_is_automated() -> None:
 def test_no_reply_and_mailer_daemon_are_automated() -> None:
     assert is_automated_mail(sender="no-reply@acme.example", subject="Confirm")
     assert is_automated_mail(sender="mailer-daemon@acme.example", subject="bounce")
-    assert is_automated_mail(sender="notifications@stripe.example", subject="Paid")
+
+
+def test_notifications_local_alone_is_not_automated() -> None:
+    """Stripe/Zendesk-style notifications@ is transactional, not a robot local."""
+    assert not is_automated_mail(
+        sender="notifications@stripe.example",
+        subject="Paid",
+    )
 
 
 def test_named_person_is_not_automated() -> None:
@@ -39,10 +51,14 @@ def test_out_of_office_subject_is_automated_even_from_a_person() -> None:
     )
 
 
-def test_alert_and_monitor_senders_are_automated() -> None:
-    assert is_automated_mail(sender="alerts@vendor.example", subject="Disk full")
-    assert is_automated_mail(sender="monitor@ops.example", subject="Latency spike")
-    assert is_automated_mail(sender="ops@vendor.example", subject="Alert: payment sync failed")
+def test_alerts_and_monitor_locals_are_not_automated() -> None:
+    """Role mailboxes are not robots. Subject 'Alert:' is also too broad."""
+    assert not is_automated_mail(sender="alerts@vendor.example", subject="Disk full")
+    assert not is_automated_mail(sender="monitor@ops.example", subject="Latency spike")
+    assert not is_automated_mail(
+        sender="ops@vendor.example",
+        subject="Alert: payment sync failed",
+    )
 
 
 def test_enrich_flags_tags_automated_without_touching_spam() -> None:
@@ -72,7 +88,7 @@ def test_enrich_flags_creates_automated_tag_without_prior_triage() -> None:
 
 
 def test_list_unsubscribe_header_marks_govdelivery_as_automated() -> None:
-    """PHMSA-shaped listserv: named local-part, List-Unsubscribe present."""
+    """PHMSA listserv: subscriptions local + List-Unsubscribe (RFC 2369)."""
     assert is_automated_mail(
         sender="phmsa.subscriptions@info.dot.gov",
         subject="Registration is open for the 2026 PHMSA Hazmat Multimodal Event",
@@ -82,11 +98,77 @@ def test_list_unsubscribe_header_marks_govdelivery_as_automated() -> None:
     )
 
 
+def test_list_id_marks_mailing_list_as_automated() -> None:
+    """RFC 2919 List-Id identifies a mailing list even with a brand From."""
+    assert is_automated_mail(
+        sender="office@dot.gov",
+        sender_display_name="Office of Hazardous Material Safety",
+        subject="Hazmat bulletin",
+        headers={"List-Id": "<phmsa.list.govdelivery.com>"},
+    )
+
+
+def test_zendesk_agent_with_list_unsubscribe_is_not_automated() -> None:
+    """SampleHelpdesk/Zendesk injects List-Unsubscribe on named-agent tickets."""
+    assert not is_automated_mail(
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Applicant screening",
+        headers={
+            "List-Unsubscribe": "<mailto:unsub@sample-helpdesk.example.com>",
+        },
+    )
+
+
+def test_rfc8058_bulk_without_person_from_is_automated() -> None:
+    """List-Unsubscribe-Post is Gmail/Yahoo bulk marketing, not a ticket agent."""
+    assert is_automated_mail(
+        sender="news@vendor.example",
+        sender_display_name="Vendor Newsletter",
+        subject="August product update",
+        headers={
+            "List-Unsubscribe": "<https://vendor.example/unsub>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+    )
+
+
+def test_rfc8058_with_named_agent_is_not_automated() -> None:
+    assert not is_automated_mail(
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Applicant",
+        headers={
+            "List-Unsubscribe": "<https://sample-helpdesk.example.com/unsub>",
+            "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+    )
+
+
+def test_x_auto_response_suppress_is_not_automated() -> None:
+    """MS-OXCMAIL: sender asks Exchange not to OOO them. Most M365 human mail."""
+    assert not is_automated_mail(
+        sender="ruth.hooker@sample-lab-vendor.example.com",
+        sender_display_name="Hooker, Ruth E",
+        subject="SampleLab integration follow-up",
+        headers={"X-Auto-Response-Suppress": "All"},
+    )
+
+
 def test_auto_submitted_auto_generated_is_automated() -> None:
     assert is_automated_mail(
         sender="jane@client.example",
         subject="Ticket received",
         headers={"Auto-Submitted": "auto-generated"},
+    )
+
+
+def test_auto_submitted_auto_replied_is_automated() -> None:
+    assert is_automated_mail(
+        sender="beau.norris@sample-lab-vendor.example.com",
+        sender_display_name="Norris, Beau P",
+        subject="Automatic reply: Re: integration",
+        headers={"Auto-Submitted": "auto-replied"},
     )
 
 

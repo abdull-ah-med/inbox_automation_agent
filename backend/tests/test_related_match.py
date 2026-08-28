@@ -40,7 +40,7 @@ CPU_90 = UUID("cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa")
 DEADLINE_REMINDER = UUID("99999999-9999-9999-9999-999999999999")
 FAR_ALERT = UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 
-ALERT_SENDER = "alerts@ops.example"
+ALERT_SENDER = "noreply@ops.example"
 DISK_90_SUBJECT = "ALERT: Disk 90% on db-1"
 DISK_91_SUBJECT = "ALERT: Disk 91% on db-1"
 
@@ -290,7 +290,7 @@ def test_alert_fingerprint_is_mailbox_sender_base_subject_for_automated_only() -
         sender=ALERT_SENDER,
         subject=DISK_90_SUBJECT,
     )
-    assert disk == "sales@example.com|alerts@ops.example|disk 90% on db-1"
+    assert disk == "sales@example.com|noreply@ops.example|disk 90% on db-1"
     human = alert_fingerprint(
         mailbox="sales@example.com",
         sender=SENDER,

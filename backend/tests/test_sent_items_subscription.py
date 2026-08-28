@@ -392,6 +392,14 @@ async def test_outbound_completed_dedup_heals_unresolved_shared_send() -> None:
             AsyncMock(return_value=None),
         ),
         patch(
+            "app.services.ingestion_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[existing]),
+        ),
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[existing]),
+        ),
+        patch(
             "app.services.sent_reply_service.resolve_thread_from_outbound",
             AsyncMock(return_value=object()),
         ) as resolve,
@@ -477,6 +485,10 @@ async def test_outbound_completed_dedup_stays_duplicate_when_already_resolved() 
             AsyncMock(return_value=sent),
         ),
         patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[existing]),
+        ),
+        patch(
             "app.services.sent_reply_service.resolve_thread_from_outbound",
             AsyncMock(return_value=object()),
         ) as resolve,
@@ -491,6 +503,119 @@ async def test_outbound_completed_dedup_stays_duplicate_when_already_resolved() 
 
     assert result.status == "duplicate"
     resolve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_outbound_heal_does_not_reresolve_when_tip_is_newer_inbound() -> None:
+    """Ruth follow-up after Elise send: Sent Items poll of the old outbound
+    must not slam DRAFTED back to RESOLVED.
+
+    Worked example: send 2026-08-27 14:23, inbound tip 2026-08-28 17:16,
+    sent_replies row still points at the old outbound.
+    """
+    import uuid
+
+    from app.models.schemas.email import ThreadStateEnum
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    mailbox = "sampleagent@sample-site.example.com"
+    message_id = "AAMkAG-elise-old-send"
+    conversation_id = "conv-ruth-followup"
+    thread_id = uuid.uuid4()
+    outbound_pk = uuid.uuid4()
+    inbound_pk = uuid.uuid4()
+    sent_at = datetime(2026, 8, 27, 14, 23, 19, tzinfo=UTC)
+    inbound_at = datetime(2026, 8, 28, 17, 16, 10, tzinfo=UTC)
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="completed")
+    session = AsyncMock()
+    graph_client = MagicMock()
+    graph_client.get_message = AsyncMock()
+
+    existing = MessageSchema(
+        id=outbound_pk,
+        thread_id=thread_id,
+        graph_message_id=message_id,
+        direction="outbound",
+        sender=mailbox,
+        body_text="Thanks — looping in Beau",
+        body_preview="Thanks — looping in Beau",
+        body_content_type="text",
+        received_at=sent_at,
+    )
+    inbound_tip = MessageSchema(
+        id=inbound_pk,
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-ruth-followup",
+        direction="inbound",
+        sender="ruth.hooker@sample-lab-vendor.example.com",
+        body_text="Following up on the integration",
+        body_preview="Following up on the integration",
+        body_content_type="text",
+        received_at=inbound_at,
+    )
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox=mailbox,
+        conversation_id=conversation_id,
+        subject="Re: SampleLab integration",
+        state=ThreadStateEnum.DRAFTED.value,
+        last_message_at=inbound_at,
+        last_updated_at=inbound_at,
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=outbound_pk,
+        draft_id=None,
+        sent_body_snapshot="Thanks — looping in Beau",
+        sent_at=sent_at,
+        matched_by="time_window",
+        created_at=sent_at,
+    )
+    set_outcome = AsyncMock()
+
+    with (
+        patch(
+            "app.services.ingestion_service.message_repo.get_by_graph_id",
+            AsyncMock(return_value=existing),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.ingestion_service.thread_repo.set_thread_outcome",
+            set_outcome,
+        ),
+        patch(
+            "app.repositories.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[existing, inbound_tip]),
+        ),
+        patch(
+            "app.services.sent_reply_service.resolve_thread_from_outbound",
+            AsyncMock(return_value=object()),
+        ) as resolve,
+    ):
+        result = await ingestion_service.handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+
+    assert result.status == "duplicate"
+    set_outcome.assert_not_awaited()
+    resolve.assert_not_awaited()
+    graph_client.get_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

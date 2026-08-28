@@ -126,14 +126,24 @@ async def inbound_automated_by_threads(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],
 ) -> dict[uuid.UUID, bool]:
-    """True when any inbound row on the thread was stamped automated at ingest."""
+    """True when the latest inbound on the thread was stamped automated at ingest."""
     if not thread_ids:
         return {}
-    stmt = (
-        select(Message.thread_id, func.bool_or(Message.is_automated))
+    ranked = (
+        select(
+            Message.thread_id,
+            Message.is_automated,
+            func.row_number()
+            .over(
+                partition_by=Message.thread_id,
+                order_by=(Message.received_at.desc(), Message.id.desc()),
+            )
+            .label("rn"),
+        )
         .where(Message.thread_id.in_(thread_ids), Message.direction == "inbound")
-        .group_by(Message.thread_id)
+        .subquery()
     )
+    stmt = select(ranked.c.thread_id, ranked.c.is_automated).where(ranked.c.rn == 1)
     result = await session.execute(stmt)
     return {thread_id: bool(flag) for thread_id, flag in result.all()}
 

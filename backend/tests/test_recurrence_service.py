@@ -1,6 +1,6 @@
 """Cross-thread alert cluster and automatic urgency floor oracles.
 
-Mailbox sales@example.com. All mail from alerts@ops.example (automated).
+Mailbox sales@example.com. All mail from noreply@ops.example (automated).
 Worked times are wall-clock literals; expected urgencies are HIGH/CRITICAL
 from the locked 2/3 floor, not from the implementation.
 """
@@ -26,7 +26,7 @@ from app.services.related_match import alert_cluster_keys
 pytestmark = pytest.mark.db
 
 SALES = "sales@example.com"
-ALERTS = "alerts@ops.example"
+ALERTS = "noreply@ops.example"
 DISK_90 = "ALERT: Disk 90% on db-1"
 DISK_91 = "ALERT: Disk 91% on db-1"
 T0 = datetime(2026, 8, 20, 10, 0, tzinfo=UTC)
