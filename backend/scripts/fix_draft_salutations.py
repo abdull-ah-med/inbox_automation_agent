@@ -182,6 +182,8 @@ async def _resolve_salute(
                 conversation_id=conversation_id,
                 mailbox=mailbox,
                 sender=message.sender,
+                sender_display_name=getattr(message, "sender_name", None),
+                is_automated=bool(getattr(message, "is_automated", False)),
                 subject=subject,
                 body_text=message.body_text,
                 body_preview=message.body_preview,

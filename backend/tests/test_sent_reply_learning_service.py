@@ -23,7 +23,11 @@ SENT_BODY = "Thanks — we will send the packet today."
 
 
 def _settings() -> Settings:
-    return Settings(environment="local", openai_api_key="sk-test")
+    return Settings(
+        environment="local",
+        openai_api_key="sk-test",
+        salute_directory_enabled=False,
+    )
 
 
 def _inbound(*, message_id: str = "inbound-1") -> EmailMessageSchema:
@@ -461,6 +465,10 @@ async def test_run_catchup_triages_inbound_skips_sonnet_promotes_and_keeps_resol
             new=AsyncMock(side_effect=_run_triage),
         ) as triage_mock,
         patch(
+            "app.services.pipeline.already_replied.latest_proposed_has_teaching_note",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
             "app.services.pipeline.service.draft_llm.generate_draft",
             new=AsyncMock(),
         ) as draft_llm,
@@ -602,6 +610,10 @@ async def test_phased_pipeline_skips_sonnet_when_sent_reply_already_exists() -> 
         patch(
             "app.services.pipeline.service.sent_reply_repo.get_by_thread",
             new=AsyncMock(return_value=_sent_reply(thread_id=thread_id)),
+        ),
+        patch(
+            "app.services.pipeline.already_replied.latest_proposed_has_teaching_note",
+            new=AsyncMock(return_value=True),
         ),
         patch(
             "app.services.pipeline.service.draft_llm.generate_draft",

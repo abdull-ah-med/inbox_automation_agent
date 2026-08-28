@@ -55,6 +55,8 @@ def _message_to_email(
         conversation_id=conversation_id,
         mailbox=mailbox,
         sender=message.sender,
+        sender_display_name=message.sender_name,
+        is_automated=bool(message.is_automated),
         subject=subject,
         body_text=message.body_text,
         body_preview=message.body_preview,

@@ -216,6 +216,7 @@ async def run_catchup_after_outbound(
         )
         from app.models.schemas.email import ThreadStateEnum
         from app.services import ingestion_service
+        from app.services.pipeline import already_replied
         from app.services.pipeline import service as pipeline_service
 
         async with session_factory() as session:
@@ -276,25 +277,60 @@ async def run_catchup_after_outbound(
             apply_thread_state=False,
         )
 
-        state.draft_status = "SKIPPED"
-        state.slack_delivery = "not_required"
-        await pipeline_service._embed_in_fresh_session(
-            state=state,
-            openai_client=resolved_openai,
-            settings=settings,
-            session_factory=session_factory,
-        )
+        has_notes = False
+        async with session_factory() as session:
+            has_notes = await already_replied.latest_proposed_has_teaching_note(session, thread_id)
+            if session.in_transaction():
+                await session.commit()
 
-        async with session_factory() as session, session.begin():
-            await pipeline_service._safe_audit(
-                session,
+        skip_briefing = has_notes or (state.triage is not None and state.triage.is_spam)
+        if skip_briefing:
+            state.draft_status = "SKIPPED"
+            state.slack_delivery = "not_required"
+            await pipeline_service._embed_in_fresh_session(
                 state=state,
-                event_type="draft.skipped_already_replied",
-                payload={
-                    "draft_status": state.draft_status,
-                    "reason": "already_replied",
-                },
+                openai_client=resolved_openai,
+                settings=settings,
+                session_factory=session_factory,
             )
+            async with session_factory() as session, session.begin():
+                await pipeline_service._safe_audit(
+                    session,
+                    state=state,
+                    event_type="draft.skipped_already_replied",
+                    payload={
+                        "draft_status": state.draft_status,
+                        "reason": "already_replied",
+                    },
+                )
+        else:
+            if state.triage is not None:
+                state.triage.draft_needed = False
+            state.draft_status = "PENDING"
+            inputs = await pipeline_service._phased_load_draft_inputs(
+                state=state,
+                email=inbound,
+                message_id=inbound.message_id,
+                thread_id=thread_id,
+                client=client,
+                openai_client=resolved_openai,
+                settings=settings,
+                session_factory=session_factory,
+            )
+            state = await pipeline_service._phased_generate_and_persist_draft(
+                state,
+                inputs=inputs,
+                email=inbound,
+                message_id=inbound.message_id,
+                thread_id=thread_id,
+                client=client,
+                settings=settings,
+                session_factory=session_factory,
+            )
+            async with session_factory() as session, session.begin():
+                await pipeline_service._apply_draft_outcome_state(
+                    session, state=state, thread_id=thread_id
+                )
 
         routing = state.triage.routing_category if state.triage is not None else None
         approved: DraftResponseSchema | None = None
