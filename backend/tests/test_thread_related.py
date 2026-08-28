@@ -233,7 +233,7 @@ async def test_urgency_feedback_without_escalation_is_409(app) -> None:
             )
 
     assert response.status_code == 409
-    assert "bump" in response.json()["detail"].lower()
+    assert response.json()["detail"] == "Invalid thread state"
 
 
 @pytest.mark.asyncio
