@@ -58,6 +58,35 @@ def test_decide_action_needed_preserves_needs_context() -> None:
     assert triage.needs_context is True
 
 
+def test_decide_action_without_email_reply_still_pending() -> None:
+    """Calendar RSVP: Elise must act, but Sonnet still runs a briefing (no letter)."""
+    outcome, status = decide_triage_outcome(
+        _triage(has_action_items=True, draft_needed=False),
+    )
+    assert outcome == "action_needed"
+    assert status == "PENDING"
+
+
+def test_decide_clamps_draft_needed_when_no_action_items() -> None:
+    triage = _triage(has_action_items=False, draft_needed=True)
+    outcome, status = decide_triage_outcome(triage)
+    assert outcome == "no_action_discarded"
+    assert status == "SKIPPED"
+    assert triage.draft_needed is False
+
+
+def test_legacy_triage_json_without_draft_needed_defaults_to_true() -> None:
+    triage = TriageResultSchema.model_validate(
+        {
+            "is_spam": False,
+            "has_action_items": True,
+            "action_items_summary": "Reply to the client",
+            "needs_context": False,
+        }
+    )
+    assert triage.draft_needed is True
+
+
 def _state(
     *,
     mailbox: str = "elise@example.com",

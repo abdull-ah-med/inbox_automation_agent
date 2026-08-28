@@ -83,6 +83,13 @@ def pipeline_ready_for_dedup(state: EmailTriageState) -> bool:
     return False
 
 
+def slack_review_card_required(state: EmailTriageState) -> bool:
+    """Approve/Reject Slack cards are only for letters, not empty briefing bodies."""
+    if state.draft_status != "DRAFTED" or state.draft is None:
+        return False
+    return bool((state.draft.reply_body or "").strip())
+
+
 def _select_original_email(
     *,
     message_id: str,
@@ -823,7 +830,7 @@ async def _phased_load_draft_inputs(
     async with session_factory() as session:
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
         active_skills: list = []
-        if state.triage is not None:
+        if state.triage is not None and state.triage.draft_needed:
             try:
                 active_skills = await skill_repo.list_active_for_selection(session)
             except Exception:
@@ -836,7 +843,7 @@ async def _phased_load_draft_inputs(
                 active_skills = []
         await session.commit()
 
-    if state.triage is not None:
+    if state.triage is not None and state.triage.draft_needed:
         try:
             selected = await skill_selection_service.select_from_active(
                 active_skills,
@@ -1070,7 +1077,7 @@ async def _phased_finalize_draft_and_slack(
 
     # --- Slack only after draft row is committed ---
     if state.draft_status == "DRAFTED":
-        if post_slack:
+        if post_slack and slack_review_card_required(state):
             state = await _post_slack_card_after_commit(
                 state,
                 redis=redis,

@@ -26,6 +26,7 @@ from app.llm.context_pack import pack_cross_thread, pack_same_thread
 from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
 from app.llm.prompts import (
+    BRIEFING_SYSTEM_PROMPT,
     DRAFT_SYSTEM_PROMPT,
     PROMPT_VERSION,
     UNTRUSTED_CONSTRAINTS_TAG,
@@ -38,7 +39,7 @@ from app.llm.prompts import (
     wrap_untrusted,
 )
 from app.models.schemas.classification import TriageResultSchema
-from app.models.schemas.draft import DraftSchema
+from app.models.schemas.draft import BriefingSchema, DraftSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema
 from app.services.skill_reference_service import SkillReferenceLoader
@@ -47,6 +48,7 @@ logger = structlog.get_logger(__name__)
 
 # Reply + teaching note + suggested_actions JSON; 800 truncated mid-string in practice.
 DRAFT_MAX_TOKENS = 2048
+BRIEFING_MAX_TOKENS = 512
 MAX_TOOL_ITERATIONS = 4
 
 READ_SKILL_REFERENCE_TOOL: dict[str, Any] = {
@@ -242,6 +244,7 @@ def _build_user_content(
         f"- spam_reason: {spam_reason}\n"
         f"- has_action_items: {triage.has_action_items}\n"
         f"- action_items_summary: {action_summary}\n"
+        f"- draft_needed: {triage.draft_needed}\n"
         f"- needs_context: {triage.needs_context}\n"
         f"- context_reason: {context_reason}\n"
         f"- routing_category: {triage.routing_category}\n"
@@ -251,11 +254,76 @@ def _build_user_content(
     )
 
 
-def _system_blocks() -> list[dict[str, Any]]:
+def _build_briefing_user_content(
+    email: EmailMessageSchema,
+    thread_context: ThreadContextSchema,
+    triage: TriageResultSchema,
+    *,
+    verbatim_tail: int = 2,
+    full_if_at_most: int = 5,
+) -> str:
+    thread_block = pack_same_thread(
+        thread_context,
+        current_message_id=email.message_id,
+        verbatim_tail=verbatim_tail,
+        full_if_at_most=full_if_at_most,
+    )
+    to_list = ", ".join(email.to_recipients) if email.to_recipients else "(none)"
+    cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else "(none)"
+    body = effective_body_text(
+        body_clean=email.body_clean,
+        body_text=email.body_text,
+        body_content_type=email.body_content_type,
+    )
+    action_summary = triage.action_items_summary or "(none)"
+    spam_reason = triage.spam_reason or "(none)"
+    context_reason = triage.context_reason or "(none)"
+    email_block = (
+        f"Mailbox: {email.mailbox}\n"
+        f"Message ID: {email.message_id}\n"
+        f"Conversation ID: {email.conversation_id}\n"
+        f"Direction: {email.direction.value}\n"
+        f"Sender: {email.sender}\n"
+        f"To: {to_list}\n"
+        f"CC: {cc_list}\n"
+        f"Subject: {email.subject}\n"
+        f"Received at: {email.received_at.isoformat()}\n"
+        f"Body:\n{body}\n\n"
+        f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
+        f"{thread_block}\n"
+    )
+    return (
+        f"{wrap_untrusted(UNTRUSTED_EMAIL_TAG, email_block)}\n"
+        f"Triage result:\n"
+        f"- is_spam: {triage.is_spam}\n"
+        f"- spam_reason: {spam_reason}\n"
+        f"- has_action_items: {triage.has_action_items}\n"
+        f"- action_items_summary: {action_summary}\n"
+        f"- draft_needed: {triage.draft_needed}\n"
+        f"- needs_context: {triage.needs_context}\n"
+        f"- context_reason: {context_reason}\n"
+        f"- routing_category: {triage.routing_category}\n"
+    )
+
+
+def _draft_from_briefing(briefing: BriefingSchema) -> DraftSchema:
+    return DraftSchema(
+        subject_line=briefing.subject_line,
+        reply_body="",
+        suggested_recipients=[],
+        forward_to=None,
+        teaching_note=briefing.teaching_note,
+        urgency=briefing.urgency,
+        urgency_reason=briefing.urgency_reason,
+        suggested_actions=briefing.suggested_actions,
+    )
+
+
+def _system_blocks(prompt: str = DRAFT_SYSTEM_PROMPT) -> list[dict[str, Any]]:
     return [
         {
             "type": "text",
-            "text": DRAFT_SYSTEM_PROMPT,
+            "text": prompt,
             "cache_control": {"type": "ephemeral"},
         }
     ]
@@ -293,6 +361,26 @@ async def _parse_final(
     if parsed is None:
         raise DraftGenerationError("Sonnet draft returned empty parsed_output")
     return parsed, *_usage_tokens(response)
+
+
+async def _parse_briefing(
+    *,
+    client: AsyncAnthropic,
+    model: str,
+    max_tokens: int,
+    user_content: str,
+) -> tuple[DraftSchema, int | None, int | None]:
+    response = await client.messages.parse(
+        model=model,
+        max_tokens=max_tokens,
+        system=_system_blocks(BRIEFING_SYSTEM_PROMPT),  # type: ignore[arg-type]
+        messages=[{"role": "user", "content": user_content}],  # type: ignore[arg-type]
+        output_format=BriefingSchema,
+    )
+    parsed = response.parsed_output
+    if parsed is None:
+        raise DraftGenerationError("Sonnet briefing returned empty parsed_output")
+    return _draft_from_briefing(parsed), *_usage_tokens(response)
 
 
 async def _run_tool_loop(
@@ -444,7 +532,8 @@ async def generate_draft(
         raise DraftGenerationError("ANTHROPIC_API_KEY is not set; cannot run Sonnet draft")
 
     model = settings.draft_model
-    max_tokens = DRAFT_MAX_TOKENS
+    briefing = not triage.draft_needed
+    max_tokens = BRIEFING_MAX_TOKENS if briefing else DRAFT_MAX_TOKENS
     # Scrub copies only — originals in Postgres stay intact for human review.
     scrubbed_confirmed: list[CrossThreadContextSchema] = []
     for item in confirmed_associations or []:
@@ -452,36 +541,55 @@ async def generate_draft(
         if isinstance(scrubbed, CrossThreadContextSchema):
             scrubbed_confirmed.append(scrubbed)
     salute_on = settings.salute_directory_enabled
-    user_content = _build_user_content(
-        scrub_email_for_llm(email),
-        scrub_thread_for_llm(thread_context),
-        triage,
-        cross_thread_context=_scrub_cross_thread(cross_thread_context),
-        tone_references=tone_references,
-        tone_profile=tone_profile,
-        skills=skills,
-        negative_constraints=negative_constraints,
-        urgency_hints=urgency_hints,
-        instruction=instruction,
-        confirmed_associations=scrubbed_confirmed,
-        verbatim_tail=settings.thread_verbatim_tail,
-        full_if_at_most=settings.thread_full_if_at_most,
-        mailbox_owner=settings.owner_for_mailbox(email.mailbox),
-        directory=directory if salute_on else None,
-        suppress_local_part=salute_on,
-    )
+    if briefing:
+        user_content = _build_briefing_user_content(
+            scrub_email_for_llm(email),
+            scrub_thread_for_llm(thread_context),
+            triage,
+            verbatim_tail=settings.thread_verbatim_tail,
+            full_if_at_most=settings.thread_full_if_at_most,
+        )
+    else:
+        user_content = _build_user_content(
+            scrub_email_for_llm(email),
+            scrub_thread_for_llm(thread_context),
+            triage,
+            cross_thread_context=_scrub_cross_thread(cross_thread_context),
+            tone_references=tone_references,
+            tone_profile=tone_profile,
+            skills=skills,
+            negative_constraints=negative_constraints,
+            urgency_hints=urgency_hints,
+            instruction=instruction,
+            confirmed_associations=scrubbed_confirmed,
+            verbatim_tail=settings.thread_verbatim_tail,
+            full_if_at_most=settings.thread_full_if_at_most,
+            mailbox_owner=settings.owner_for_mailbox(email.mailbox),
+            directory=directory if salute_on else None,
+            suppress_local_part=salute_on,
+        )
     started = time.perf_counter()
     last_error: Exception | None = None
 
     for attempt in range(2):
         try:
-            draft, input_tokens, output_tokens, tool_calls, truncated = await _run_tool_loop(
-                client=client,
-                model=model,
-                max_tokens=max_tokens,
-                user_content=user_content,
-                reference_loader=reference_loader,
-            )
+            if briefing:
+                draft, input_tokens, output_tokens = await _parse_briefing(
+                    client=client,
+                    model=model,
+                    max_tokens=max_tokens,
+                    user_content=user_content,
+                )
+                tool_calls: list[dict[str, Any]] = []
+                truncated = False
+            else:
+                draft, input_tokens, output_tokens, tool_calls, truncated = await _run_tool_loop(
+                    client=client,
+                    model=model,
+                    max_tokens=max_tokens,
+                    user_content=user_content,
+                    reference_loader=reference_loader,
+                )
             latency_ms = int((time.perf_counter() - started) * 1000)
             logger.info(
                 "draft_complete",

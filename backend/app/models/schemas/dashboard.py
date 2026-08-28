@@ -32,6 +32,7 @@ class TriageFlags(BaseModel):
 
     is_spam: bool | None = None
     has_action_items: bool | None = None
+    draft_needed: bool | None = None
     needs_context: bool | None = None
     spam_reason: str | None = None
     context_reason: str | None = None

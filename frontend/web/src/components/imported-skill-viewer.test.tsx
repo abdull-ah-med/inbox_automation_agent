@@ -82,10 +82,9 @@ describe("ImportedSkillViewer blob URL cleanup", () => {
     const user = userEvent.setup()
     renderViewer()
     await user.click(await screen.findByRole("button", { name: /toggle file assets\/guide\.pdf/i }))
-    expect(await screen.findByRole("link", { name: /download assets\/guide\.pdf/i })).toHaveAttribute(
-      "href",
-      "blob:skill-file",
-    )
+    expect(
+      await screen.findByRole("link", { name: /download assets\/guide\.pdf/i }),
+    ).toHaveAttribute("href", "blob:skill-file")
     expect(createObjectURL).toHaveBeenCalledTimes(1)
 
     await user.click(screen.getByRole("button", { name: /toggle file assets\/guide\.pdf/i }))

@@ -54,11 +54,9 @@ const suggestionVisibility = (args: {
   pendingFilter: SearchFilterKey | null
 }) => {
   const showValueSuggestions = args.open && args.valueSuggestions.length > 0
-  const showFilters =
-    args.open && args.filterKeys.length > 0 && args.valueSuggestions.length === 0
+  const showFilters = args.open && args.filterKeys.length > 0 && args.valueSuggestions.length === 0
   const showHits = args.open && args.searchable && args.valueSuggestions.length === 0
-  const showPending =
-    args.open && args.pendingFilter !== null && args.valueSuggestions.length === 0
+  const showPending = args.open && args.pendingFilter !== null && args.valueSuggestions.length === 0
   return {
     showValueSuggestions,
     showFilters,

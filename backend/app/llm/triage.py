@@ -161,6 +161,7 @@ async def triage_email(
                 latency_ms=latency_ms,
                 is_spam=triage.is_spam,
                 has_action_items=triage.has_action_items,
+                draft_needed=triage.draft_needed,
                 needs_context=triage.needs_context,
                 attempt=attempt + 1,
             )

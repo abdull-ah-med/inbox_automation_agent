@@ -17,6 +17,7 @@ export interface TokenResponse {
 export interface TriageFlags {
   is_spam: boolean | null
   has_action_items: boolean | null
+  draft_needed?: boolean | null
   needs_context: boolean | null
   spam_reason: string | null
   context_reason: string | null

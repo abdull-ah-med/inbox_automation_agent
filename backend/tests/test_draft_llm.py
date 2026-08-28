@@ -10,9 +10,9 @@ import pytest
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
 from app.llm import draft_generator as draft_llm
-from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
+from app.llm.prompts import BRIEFING_SYSTEM_PROMPT, DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
-from app.models.schemas.draft import DraftSchema
+from app.models.schemas.draft import BriefingSchema, DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema
 
@@ -366,3 +366,82 @@ async def test_generate_draft_logs_metadata_only(monkeypatch: pytest.MonkeyPatch
     assert email.body_text not in joined
     assert "Happy to send the intake packet today." not in joined
     assert "vendor@example.com" not in joined
+
+
+def _calendar_triage() -> TriageResultSchema:
+    return TriageResultSchema(
+        is_spam=False,
+        spam_reason=None,
+        has_action_items=True,
+        action_items_summary="RSVP to IDME demo in Calendar",
+        needs_context=False,
+        context_reason=None,
+        draft_needed=False,
+    )
+
+
+def _ok_briefing() -> BriefingSchema:
+    return BriefingSchema(
+        subject_line="Invitation: IDME's Demo - 2nd Week",
+        teaching_note="RSVP in Calendar; do not email a reply.",
+        urgency="NORMAL",
+        urgency_reason="Scheduled meeting with no hard operational deadline.",
+        suggested_actions=[
+            {
+                "step": 1,
+                "action": "Accept or decline in Calendar",
+                "stakeholder": "Elise",
+                "rationale": "The ask is an RSVP, not an email.",
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_without_draft_needed_uses_briefing_schema() -> None:
+    email = _email().model_copy(
+        update={
+            "sender": "siddiq@sample-partner.example.com",
+            "sender_display_name": "Abu Bakkar Siddiq",
+            "subject": "Invitation: IDME's Demo - 2nd Week",
+            "body_text": "Join with Google Meet",
+            "meeting_message_type": "meetingRequest",
+        }
+    )
+    client = AsyncMock()
+    parsed = MagicMock()
+    parsed.parsed_output = _ok_briefing()
+    parsed.usage = MagicMock(input_tokens=40, output_tokens=20)
+    client.messages.parse = AsyncMock(return_value=parsed)
+    client.messages.create = AsyncMock()
+
+    result = await draft_llm.generate_draft(
+        email,
+        _context(email),
+        _calendar_triage(),
+        client=client,
+        settings=_settings(),
+        skills=["You must always attach the rate card."],
+        reference_loader=AsyncMock(),
+    )
+
+    assert result.draft.reply_body == ""
+    assert result.draft.teaching_note == "RSVP in Calendar; do not email a reply."
+    assert result.draft.suggested_recipients == []
+    assert result.draft.forward_to is None
+    kwargs = client.messages.parse.await_args.kwargs
+
+    assert kwargs["output_format"] is BriefingSchema
+    assert "reply_body" not in BriefingSchema.model_fields
+    assert kwargs["max_tokens"] < draft_llm.DRAFT_MAX_TOKENS
+    assert kwargs["system"][0]["text"] == BRIEFING_SYSTEM_PROMPT
+    user_content = kwargs["messages"][0]["content"]
+    system_text = kwargs["system"][0]["text"]
+    assert "reply_body" not in user_content
+    assert "reply_body" not in system_text
+    assert "Hi {name}" not in user_content
+    assert "Hi Abu" not in user_content
+    assert "Sign the reply as" not in user_content
+    assert "Reply addressee" not in user_content
+    assert "rate card" not in user_content
+    client.messages.create.assert_not_called()

@@ -41,6 +41,7 @@ class TriageResultSchema(BaseModel):
     needs_context: bool
     context_reason: str | None = None
     routing_category: RoutingCategory
+    draft_needed: bool = True
 
     @model_validator(mode="before")
     @classmethod

@@ -10,6 +10,7 @@ from collections import Counter
 from typing import get_args
 
 from app.llm.prompts import (
+    BRIEFING_SYSTEM_PROMPT,
     DRAFT_SYSTEM_PROMPT,
     MESSAGE_SUMMARY_SYSTEM_PROMPT,
     PROMPT_VERSION,
@@ -20,7 +21,7 @@ from app.llm.prompts import (
     URGENCY_TAXONOMY,
 )
 from app.models.schemas.classification import ClassificationSchema
-from app.models.schemas.draft import DraftSchema
+from app.models.schemas.draft import BriefingSchema, DraftSchema
 
 
 def test_urgency_levels_match_schema() -> None:
@@ -59,10 +60,14 @@ def test_triage_prompt_documents_output_fields() -> None:
         "is_spam",
         "has_action_items",
         "needs_context",
+        "draft_needed",
         "routing_category",
     ):
         assert field in TRIAGE_SYSTEM_PROMPT
     assert "confidence" not in TRIAGE_SYSTEM_PROMPT.lower()
+    assert "outbound email from this mailbox" in TRIAGE_SYSTEM_PROMPT.lower() or (
+        "draft_needed" in TRIAGE_SYSTEM_PROMPT and "calendar" in TRIAGE_SYSTEM_PROMPT.lower()
+    )
 
 
 def test_triage_prompt_does_not_treat_vendor_operations_as_spam() -> None:
@@ -163,12 +168,12 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.1"
+    assert PROMPT_VERSION == "2026-08-28.2"
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.1"
+    assert PROMPT_VERSION == "2026-08-28.2"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -206,3 +211,25 @@ def test_draft_prompt_requires_plain_text_reply_body() -> None:
     assert "plain-text" in lowered or "plain text" in lowered
     assert "markdown" in lowered
     assert "**bold**" in DRAFT_SYSTEM_PROMPT
+
+
+def test_triage_prompt_splits_action_from_email_reply() -> None:
+    lowered = TRIAGE_SYSTEM_PROMPT.lower()
+    assert "draft_needed" in TRIAGE_SYSTEM_PROMPT
+    assert "has_action_items" in TRIAGE_SYSTEM_PROMPT
+    assert "calendar" in lowered
+    assert "listserv" in lowered or "newsletter" in lowered
+    assert "rsvp" in lowered
+
+
+def test_briefing_prompt_has_no_letter_fields() -> None:
+    assert "reply_body" not in BRIEFING_SYSTEM_PROMPT
+    assert "suggested_recipients" not in BRIEFING_SYSTEM_PROMPT
+    assert "forward_to" not in BRIEFING_SYSTEM_PROMPT
+    assert "teaching_note" in BRIEFING_SYSTEM_PROMPT
+    assert "suggested_actions" in BRIEFING_SYSTEM_PROMPT
+    assert "subject_line" in BRIEFING_SYSTEM_PROMPT
+    assert "Hi {name}" not in BRIEFING_SYSTEM_PROMPT
+    assert "reply_body" not in BriefingSchema.model_fields
+    assert "suggested_recipients" not in BriefingSchema.model_fields
+    assert PROMPT_VERSION == "2026-08-28.2"

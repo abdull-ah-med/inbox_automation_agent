@@ -17,7 +17,7 @@ describe("wrapEmailHtml", () => {
   it("sanitizes scripts and event handlers before embedding into srcDoc", () => {
     // Bug this catches: untrusted HTML passed through with onerror / <script>.
     const wrapped = wrapEmailHtml(
-      '<p>Hello</p><img src=x onerror=alert(1)><script>alert(1)</script>',
+      "<p>Hello</p><img src=x onerror=alert(1)><script>alert(1)</script>",
     )
     expect(wrapped).toContain("<p>Hello</p>")
     expect(wrapped.toLowerCase()).not.toContain("onerror")

@@ -70,22 +70,28 @@ export const DraftSection = ({
     )
   }
 
+  const noEmailReply = !(draft.body || "").trim()
+
   return (
     <Panel title="Draft reply">
       <div className="space-y-3">
         {badge ? <StatusBadge label={badge.label} tone={badge.tone} /> : null}
 
-        {replyAddressee && mailboxKey && draft?.id ? (
+        {!noEmailReply && replyAddressee && mailboxKey && draft?.id ? (
           <SaluteChip mailboxKey={mailboxKey} draftId={draft.id} replyAddressee={replyAddressee} />
         ) : null}
 
         <Field label="Subject" value={draft.subject} />
-        <div>
-          <p className="text-muted-foreground text-xs">Body</p>
-          <div className="mt-1 overflow-auto">
-            <EmailBody text={draft.body} />
+        {noEmailReply ? (
+          <p className="text-sm text-gray-700 dark:text-gray-200">No email reply needed</p>
+        ) : (
+          <div>
+            <p className="text-muted-foreground text-xs">Body</p>
+            <div className="mt-1 overflow-auto">
+              <EmailBody text={draft.body} />
+            </div>
           </div>
-        </div>
+        )}
         {draft.forward_to ? <Field label="Forward to" value={draft.forward_to} /> : null}
         {draft.feedback_note ? <Field label="Feedback note" value={draft.feedback_note} /> : null}
         {draft.approval_note ? (
@@ -116,19 +122,21 @@ export const DraftSection = ({
         ) : null}
 
         <div className="flex flex-wrap gap-2 pt-1">
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            tabIndex={0}
-            aria-label="Approve draft"
-            disabled={feedbackDone || busy}
-            onClick={onApprove}
-            onKeyDown={onApproveKeyDown}
-          >
-            <Check aria-hidden="true" />
-            Approve
-          </Button>
+          {!noEmailReply ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              tabIndex={0}
+              aria-label="Approve draft"
+              disabled={feedbackDone || busy}
+              onClick={onApprove}
+              onKeyDown={onApproveKeyDown}
+            >
+              <Check aria-hidden="true" />
+              Approve
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="sm"

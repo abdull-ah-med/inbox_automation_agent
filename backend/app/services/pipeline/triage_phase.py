@@ -148,13 +148,15 @@ def _audit_payload(state: EmailTriageState) -> dict[str, object]:
             {
                 "is_spam": triage.is_spam,
                 "has_action_items": triage.has_action_items,
+                "draft_needed": triage.draft_needed,
                 "needs_context": triage.needs_context,
                 "routing_category": triage.routing_category,
                 "is_internal": is_internal_sender(
                     state.original_email.sender,
                     state.original_email.mailbox,
                 ),
-                "is_automated": is_automated_mail(
+                "is_automated": bool(state.original_email.is_automated)
+                or is_automated_mail(
                     sender=state.original_email.sender,
                     subject=state.original_email.subject,
                 ),

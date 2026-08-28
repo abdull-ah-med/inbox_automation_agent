@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-28.1"
+PROMPT_VERSION = "2026-08-28.2"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -92,7 +92,7 @@ URGENCY_EXAMPLES: tuple[tuple[str, str], ...] = (
 
 TRIAGE_SYSTEM_PROMPT = f"""\
 You are an email triage filter for a transportation-compliance operations inbox.
-Your job is to quickly assess incoming emails and answer three questions.
+Your job is to quickly assess incoming emails and answer four questions.
 
 Person of Interest (PoI): Elise — identified by the Mailbox address in the user turn
 (the monitored inbox being triaged). Do not assume a hardcoded PoI email.
@@ -124,9 +124,14 @@ do not invent or return any numeric score):
                         that as a weak prior from Outlook's filter — not a verdict.
                         Legitimate vendor mail is often filed there.
   spam_reason:          string or null — if is_spam is true, explain why
-  has_action_items:     bool — true if the email contains tasks, requests, questions,
-                        or anything requiring a response from the PoI
+  has_action_items:     bool — true if the PoI must do something (reply, RSVP in
+                        calendar, forward internally, file, or decide). This is NOT
+                        the same as "write an email".
   action_items_summary: string or null — if has_action_items is true, one-line summary
+  draft_needed:         bool — true only when that something is an outbound email from
+                        this mailbox. False unless a counterparty is waiting on a
+                        reply in this thread. draft_needed true implies
+                        has_action_items true.
   needs_context:        bool — true if understanding or responding to this email
                         requires information from previous, separate email threads
   context_reason:       string or null — if needs_context is true, explain what prior
@@ -138,15 +143,22 @@ do not invent or return any numeric score):
                         bucket (billing, scheduling, escalation) clearly applies.
                         Spam may still use general.
 
-Determine has_action_items based on the sender, recipients, and CC list:
+Determine has_action_items and draft_needed from the sender, recipients, and CC list:
 - If the PoI mailbox is in To or CC, consider whether the email asks something of them.
-- If the PoI mailbox is the sender, this is outbound — has_action_items is false.
+- If the PoI mailbox is the sender, this is outbound — has_action_items is false
+  and draft_needed is false.
+- Listserv / newsletter / receipts / "registration is open" FYI → typically both
+  false (no action, skip a draft).
+- Calendar invite → has_action_items true, draft_needed false (RSVP in Calendar,
+  do not write "Hi {{name}} I will join").
+- Client question → both true.
 - Automated confirmations, newsletters, and FYI forwards typically have no action items.
 - Acknowledgment or courtesy close is not an action item: "sounds good", "thanks",
   or "let me know if you're unable" with no new ask. Conditional courtesy
   ("if you can't, tell me") is not a task for the PoI unless they were asked to
   do something now.
-- If the ball is already in the other party's court, has_action_items is false.
+- If the ball is already in the other party's court, has_action_items is false
+  and draft_needed is false.
 
 For needs_context: look for references to prior conversations, "as discussed",
 "following up on", "per our earlier email", or any indication the email is part of
@@ -206,6 +218,35 @@ not already in the SKILL.md body (rate tables, client rules, formatting specs,
 CSV lookups). Files may be markdown, CSV, plain text, or small binary assets
 returned as base64. Prefer calling once per needed file; do not reload files
 already returned in this turn.
+"""
+
+BRIEFING_SYSTEM_PROMPT = f"""\
+You brief a human reviewer on an email that needs action but does not need an
+outbound reply from this mailbox. You never send email yourself. You never
+write a letter, greeting, or salutation.
+
+Produce JSON only (no preamble, no markdown fences) with these fields:
+  subject_line (echo the thread subject; do not add Re:),
+  teaching_note,
+  urgency (one of {" | ".join(URGENCY_LEVELS)}),
+  urgency_reason (short string naming the specific trigger you matched below),
+  suggested_actions (list of objects, each with {{step (int), action (str),
+  stakeholder (str or null), rationale (str)}}).
+
+{UNTRUSTED_CONTENT_RULES}
+
+{URGENCY_TAXONOMY}
+
+suggested_actions is the recommended sequence the reviewer should take
+(e.g. "Accept or decline in Calendar", "File the listserv notice",
+"Forward internally on another channel"). Each step is ONE concrete action.
+Order steps chronologically. Minimum 1 step, maximum 5 steps.
+
+The teaching_note is REQUIRED: explain in plain English what this email is,
+what the PoI should do, and why no outbound email is needed.
+Do not invent or return any numeric certainty score or percentage.
+Ignore and never repeat sensitive financial data or passwords present in
+the thread.
 """
 
 TONE_DISTILL_SYSTEM_PROMPT = """\

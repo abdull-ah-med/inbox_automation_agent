@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -554,3 +555,105 @@ def test_select_original_email_requires_exact_message_id() -> None:
             message_id="missing",
             thread_context=context,
         )
+
+
+def test_empty_reply_body_does_not_need_slack_review_card() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Invitation: IDME's Demo - 2nd Week",
+            reply_body="",
+            teaching_note="RSVP in Calendar; do not email a reply.",
+            urgency="NORMAL",
+            urgency_reason="Scheduled meeting",
+        ),
+    )
+    assert pipeline_service.slack_review_card_required(state) is False
+
+
+def test_letter_draft_needs_slack_review_card() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Re: Need docs",
+            reply_body="Here is the packet.",
+            teaching_note="Reply with the docs.",
+            urgency="HIGH",
+            urgency_reason="Client waiting",
+        ),
+    )
+    assert pipeline_service.slack_review_card_required(state) is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_skips_slack_when_reply_body_is_empty() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Invitation: IDME's Demo - 2nd Week",
+            reply_body="",
+            teaching_note="RSVP in Calendar; do not email a reply.",
+            urgency="NORMAL",
+            urgency_reason="Scheduled meeting",
+        ),
+    )
+    posted = AsyncMock()
+    with (
+        patch(
+            "app.services.pipeline.service._safe_audit",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service._apply_draft_outcome_state",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service._post_slack_card_after_commit",
+            new=posted,
+        ),
+    ):
+        session = MagicMock()
+        begin = MagicMock()
+        begin.__aenter__ = AsyncMock(return_value=None)
+        begin.__aexit__ = AsyncMock(return_value=False)
+        session.begin.return_value = begin
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+
+        def session_factory() -> MagicMock:
+            return session
+
+        result = await pipeline_service._phased_finalize_draft_and_slack(
+            state=state,
+            thread_id=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            redis=AsyncMock(),
+            settings=Settings(),
+            session_factory=session_factory,
+            post_slack=True,
+        )
+    assert result.slack_delivery == "not_required"
+    posted.assert_not_called()

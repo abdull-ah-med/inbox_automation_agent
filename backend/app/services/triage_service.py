@@ -27,6 +27,8 @@ TriageOutcome = Literal[
 def decide_triage_outcome(
     triage: TriageResultSchema,
 ) -> tuple[TriageOutcome, DraftStatus]:
+    if triage.draft_needed and not triage.has_action_items:
+        triage.draft_needed = False
     if triage.is_spam:
         return "spam_discarded", "SKIPPED"
     if not triage.has_action_items:
@@ -82,6 +84,7 @@ async def run_triage(
         prompt_version=result.prompt_version,
         is_spam=triage.is_spam,
         has_action_items=triage.has_action_items,
+        draft_needed=triage.draft_needed,
         needs_context=triage.needs_context,
     )
     return state
