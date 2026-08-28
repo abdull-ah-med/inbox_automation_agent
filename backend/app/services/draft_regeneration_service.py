@@ -222,6 +222,17 @@ async def regenerate_draft(
         thread_id,
     )
 
+    directory: dict[str, str] | None = None
+    if settings.salute_directory_enabled:
+        from app.services import directory_lookup_service
+
+        directory = await directory_lookup_service.build_directory(
+            session,
+            mailbox,
+            thread_context,
+            current=email,
+        )
+
     # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
         await session.commit()
@@ -246,6 +257,7 @@ async def regenerate_draft(
         instruction=instruction,
         reference_loader=reference_loader,
         confirmed_associations=confirmed_associations,
+        directory=directory,
     )
 
     regen_message_id = f"{latest_graph_id}:regen:{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"

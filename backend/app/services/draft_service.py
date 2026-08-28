@@ -151,6 +151,17 @@ async def run_draft(
         thread_id,
     )
 
+    directory: dict[str, str] | None = None
+    if settings.salute_directory_enabled:
+        from app.services import directory_lookup_service
+
+        directory = await directory_lookup_service.build_directory(
+            session,
+            state.original_email.mailbox,
+            state.thread_context,
+            current=state.original_email,
+        )
+
     try:
         result = await draft_llm.generate_draft(
             state.original_email,
@@ -166,6 +177,7 @@ async def run_draft(
             urgency_hints=urgency_hints,
             reference_loader=reference_loader,
             confirmed_associations=confirmed_associations,
+            directory=directory,
         )
     except DraftGenerationError as exc:
         logger.warning(

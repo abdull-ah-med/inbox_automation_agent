@@ -959,6 +959,16 @@ async def _phased_generate_and_persist_draft(
                 assoc_session,
                 thread_id,
             )
+            directory: dict[str, str] | None = None
+            if settings.salute_directory_enabled:
+                from app.services import directory_lookup_service
+
+                directory = await directory_lookup_service.build_directory(
+                    assoc_session,
+                    email.mailbox,
+                    current.thread_context,
+                    current=current.original_email,
+                )
         generated = await draft_llm.generate_draft(
             current.original_email,
             current.thread_context,
@@ -973,6 +983,7 @@ async def _phased_generate_and_persist_draft(
             urgency_hints=urgency_hints,
             reference_loader=reference_loader,
             confirmed_associations=confirmed_associations,
+            directory=directory,
         )
     except DraftGenerationError as exc:
         logger.warning(

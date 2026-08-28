@@ -436,6 +436,24 @@ async def set_urgency(
     return _to_response(row)
 
 
+async def set_edited_body(
+    session: AsyncSession,
+    draft_id: uuid.UUID,
+    *,
+    edited_body: str,
+) -> DraftResponseSchema | None:
+    """Persist a non-LLM body edit (e.g. salutation rewrite)."""
+    stmt = (
+        update(Draft).where(Draft.id == draft_id).values(edited_body=edited_body).returning(Draft)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return _to_response(row)
+
+
 async def count_approvals(
     session: AsyncSession,
     *,
