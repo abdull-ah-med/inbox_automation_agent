@@ -1,6 +1,6 @@
 "use client"
 
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
@@ -213,6 +213,9 @@ const ContactFormFields = ({
   )
 }
 
+const resolveInitial = (provided: string, stored: string | null | undefined): string =>
+  provided || stored || ""
+
 export const ContactFormDialog = ({
   mode,
   mailbox,
@@ -227,7 +230,27 @@ export const ContactFormDialog = ({
   onSaved,
 }: ContactFormDialogProps) => {
   const lockEmail = emailLocked ?? mode === "edit"
-  const formKey = `${mode}|${draftId ?? ""}|${initialEmail}|${initialFirstName}|${initialFullName}|${initialNotes ?? ""}`
+  const emailKey = initialEmail.trim().toLowerCase()
+  const canLookup = open && EMAIL_RE.test(emailKey)
+
+  const { data: existing } = useQuery({
+    queryKey: ["mailbox", mailbox, "contacts", "by-email", emailKey],
+    queryFn: () => api.mailboxContacts.getOne(mailbox, emailKey),
+    enabled: canLookup,
+    retry: false,
+  })
+
+  const resolvedFirstName = resolveInitial(initialFirstName, existing?.first_name)
+  const resolvedFullName = resolveInitial(initialFullName, existing?.full_name)
+  const resolvedNotes = resolveInitial(initialNotes ?? "", existing?.notes)
+  const formKey = [
+    mode,
+    draftId ?? "",
+    emailKey,
+    resolvedFirstName,
+    resolvedFullName,
+    resolvedNotes,
+  ].join("|")
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -239,9 +262,9 @@ export const ContactFormDialog = ({
             mailbox={mailbox}
             draftId={draftId}
             initialEmail={initialEmail}
-            initialFirstName={initialFirstName}
-            initialFullName={initialFullName}
-            initialNotes={initialNotes ?? ""}
+            initialFirstName={resolvedFirstName}
+            initialFullName={resolvedFullName}
+            initialNotes={resolvedNotes}
             lockEmail={lockEmail}
             onOpenChange={onOpenChange}
             onSaved={onSaved}

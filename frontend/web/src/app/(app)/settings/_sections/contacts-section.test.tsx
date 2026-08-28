@@ -176,6 +176,59 @@ describe("ContactsSection", () => {
     expect(screen.getByText("New")).toBeInTheDocument()
   })
 
+  it("keeps full name in the dialog after save and reopen", async () => {
+    const user = userEvent.setup()
+    let items: MailboxContactView[] = []
+    listMock.mockImplementation(() => Promise.resolve({ total: items.length, items }))
+    upsertMock.mockImplementation(
+      (
+        _mailbox: string,
+        body: { email: string; first_name: string; full_name?: string },
+      ) => {
+        const row = contact({
+          email: body.email,
+          first_name: body.first_name,
+          full_name: body.full_name ?? "",
+        })
+        items = [...items, row]
+        return Promise.resolve(row)
+      },
+    )
+    renderSection()
+    expect(await screen.findByText(/No saved contacts yet/i)).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Add contact" }))
+    const createDialog = await screen.findByRole("dialog")
+    await user.type(within(createDialog).getByLabelText("Contact email"), "kelvin@example.com")
+    await user.type(within(createDialog).getByLabelText("Contact first name"), "Kelvin")
+    await user.type(within(createDialog).getByLabelText("Contact full name"), "Kelvin Collado")
+    await user.click(within(createDialog).getByRole("button", { name: "Save contact" }))
+    expect(await screen.findByText("Kelvin Collado")).toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Edit contact kelvin@example.com" }))
+    const editDialog = await screen.findByRole("dialog")
+    expect(within(editDialog).getByLabelText("Contact full name")).toHaveValue("Kelvin Collado")
+  })
+
+  it("prefills full name when editing a contact from Settings", async () => {
+    const user = userEvent.setup()
+    listMock.mockResolvedValue({
+      total: 1,
+      items: [
+        contact({
+          email: "kelvin@example.com",
+          first_name: "Kelvin",
+          full_name: "Kelvin Collado",
+        }),
+      ],
+    })
+    renderSection()
+    expect(await screen.findByText("Kelvin Collado")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Edit contact kelvin@example.com" }))
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByLabelText("Contact first name")).toHaveValue("Kelvin")
+    expect(within(dialog).getByLabelText("Contact full name")).toHaveValue("Kelvin Collado")
+  })
+
   it("edits an existing first name in the table", async () => {
     const user = userEvent.setup()
     let items = [contact({ email: "a@example.com", first_name: "Ada" })]
