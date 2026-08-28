@@ -1,16 +1,8 @@
-"""Detect automated mail from RFC headers, noreply locals, and auto-reply subjects.
+"""Detect automated mail from RFC Auto-Submitted, noreply/list locals, and OOO subjects.
 
-Automated is a per-message property. Do not treat List-Unsubscribe alone or
-X-Auto-Response-Suppress as proof the sender is a robot.
-
-Signals (independent oracles):
-- RFC 3834 Auto-Submitted: auto-replied | auto-generated | auto-notified
-- RFC 2919 List-Id (mailing list identity)
-- RFC 8058 List-Unsubscribe-Post without a person-shaped From (bulk marketing)
-- RFC 2369 List-Unsubscribe only when the mailbox looks like a list
-  (newsletter / subscriptions), e.g. PHMSA GovDelivery
-- Narrow noreply / bounce locals
-- Classic OOO / DSN subject prefixes
+Automated is a per-message property. A named person is never a robot from
+List-* or Graph/Outlook headers. Thread-level Automated is decided separately
+and stays off once a human discussion or Elise reply exists.
 """
 
 from __future__ import annotations
@@ -62,7 +54,6 @@ AUTOMATED_LOCAL_COMPACTS = _NOREPLY_COMPACT | frozenset(
     item.replace(".", "").replace("-", "").replace("_", "") for item in _LIST_MAILBOX_LOCALS
 )
 _PLUS_TAG = re.compile(r"\+.*$")
-_PRECEDENCE_BULK = frozenset({"bulk", "list", "junk"})
 _AUTO_SUBMITTED_VALUES = frozenset({"auto-generated", "auto-replied", "auto-notified"})
 _ORG_SECOND_TOKENS = frozenset(
     {
@@ -157,7 +148,11 @@ def is_automated_mail(
     headers: Mapping[str, str] | None = None,
     sender_display_name: str | None = None,
 ) -> bool:
-    """True for RFC auto-replies, mailing lists, noreply senders, and OOO subjects."""
+    """True for RFC auto-replies, noreply/list mailboxes, and OOO subjects.
+
+    A named person is never tagged from List-* / Graph headers. Outlook
+    X-Auto-Response-Suppress and List-Unsubscribe-Post are ignored.
+    """
     normalized = _normalize_headers(headers)
     auto_submitted = normalized.get("auto-submitted", "").lower()
     if auto_submitted and auto_submitted != "no":
@@ -169,6 +164,9 @@ def is_automated_mail(
     if any(text.startswith(prefix) for prefix in _AUTOMATED_SUBJECT_PREFIXES):
         return True
 
+    if _person_shaped_from(sender_display_name, sender):
+        return False
+
     local = _local_part(sender)
     if local is not None and local in _NOREPLY_LOCALS:
         return True
@@ -176,16 +174,6 @@ def is_automated_mail(
         compact = local.replace(".", "").replace("-", "").replace("_", "")
         if compact in _NOREPLY_COMPACT:
             return True
-
-    if "list-id" in normalized:
+    if _is_list_mailbox(local):
         return True
-    precedence = normalized.get("precedence", "").lower()
-    if precedence in _PRECEDENCE_BULK:
-        return True
-
-    person = _person_shaped_from(sender_display_name, sender)
-    if "list-unsubscribe-post" in normalized and not person:
-        return True
-    if "list-unsubscribe" in normalized and _is_list_mailbox(local):
-        return True
-    return False
+    return "list-id" in normalized

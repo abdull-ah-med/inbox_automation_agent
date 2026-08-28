@@ -120,9 +120,19 @@ def test_zendesk_agent_with_list_unsubscribe_is_not_automated() -> None:
     )
 
 
-def test_rfc8058_bulk_without_person_from_is_automated() -> None:
-    """List-Unsubscribe-Post is Gmail/Yahoo bulk marketing, not a ticket agent."""
-    assert is_automated_mail(
+def test_named_person_with_list_headers_is_not_automated() -> None:
+    """Ticket/SaaS List-Id is not a robot when From is a named person."""
+    assert not is_automated_mail(
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Applicant screening",
+        headers={"List-Id": "<tickets.sample-helpdesk.example.com>"},
+    )
+
+
+def test_rfc8058_bulk_headers_alone_are_not_automated() -> None:
+    """Gmail/Yahoo one-click headers are on tickets and marketing. Not a robot From."""
+    assert not is_automated_mail(
         sender="news@vendor.example",
         sender_display_name="Vendor Newsletter",
         subject="August product update",
@@ -197,9 +207,9 @@ def test_calendar_invite_from_a_person_is_not_automated() -> None:
     )
 
 
-def test_dotted_subscriptions_local_without_headers_is_not_automated() -> None:
-    """Do not treat phmsa.subscriptions as a noreply local-part by splitting on dots."""
-    assert not is_automated_mail(
+def test_subscriptions_role_mailbox_is_automated() -> None:
+    """GovDelivery-style subscriptions@ is a list mailbox, not a person."""
+    assert is_automated_mail(
         sender="phmsa.subscriptions@info.dot.gov",
         subject="Registration is open for the 2026 PHMSA Hazmat Multimodal Event",
     )

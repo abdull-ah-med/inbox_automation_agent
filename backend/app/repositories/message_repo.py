@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -126,9 +126,27 @@ async def inbound_automated_by_threads(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],
 ) -> dict[uuid.UUID, bool]:
-    """True when the latest inbound on the thread was stamped automated at ingest."""
+    """True only when every inbound is automated and nobody from our side has replied.
+
+    One OOO or listserv row does not brand a discussion. An outbound from
+    Elise (or any mailbox send) means the thread is a human conversation.
+    """
     if not thread_ids:
         return {}
+    outbound_threads = (
+        select(Message.thread_id)
+        .where(Message.thread_id.in_(thread_ids), Message.direction == "outbound")
+        .distinct()
+    )
+    human_inbound_threads = (
+        select(Message.thread_id)
+        .where(
+            Message.thread_id.in_(thread_ids),
+            Message.direction == "inbound",
+            Message.is_automated.is_(False),
+        )
+        .distinct()
+    )
     ranked = (
         select(
             Message.thread_id,
@@ -143,7 +161,14 @@ async def inbound_automated_by_threads(
         .where(Message.thread_id.in_(thread_ids), Message.direction == "inbound")
         .subquery()
     )
-    stmt = select(ranked.c.thread_id, ranked.c.is_automated).where(ranked.c.rn == 1)
+    stmt = select(
+        ranked.c.thread_id,
+        and_(
+            ranked.c.is_automated.is_(True),
+            ranked.c.thread_id.not_in(outbound_threads),
+            ranked.c.thread_id.not_in(human_inbound_threads),
+        ),
+    ).where(ranked.c.rn == 1)
     result = await session.execute(stmt)
     return {thread_id: bool(flag) for thread_id, flag in result.all()}
 
