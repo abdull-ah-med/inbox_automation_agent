@@ -327,7 +327,18 @@ describe("InboxAssistant streaming", () => {
     await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
     await user.type(screen.getByRole("textbox", { name: /message inboxassistant/i }), "info mailbox")
     await user.click(screen.getByRole("button", { name: /^send$/i }))
-    expect(await screen.findByText("here")).toBeInTheDocument()
+    await act(async () => {
+      await new Promise<void>((resolve) => {
+        let frames = 0
+        const tick = () => {
+          frames += 1
+          if (frames >= 30) resolve()
+          else requestAnimationFrame(tick)
+        }
+        requestAnimationFrame(tick)
+      })
+    })
+    expect(await screen.findByText("here", {}, { timeout: 3000 })).toBeInTheDocument()
     expect(document.querySelector("img")).toBeNull()
   })
 

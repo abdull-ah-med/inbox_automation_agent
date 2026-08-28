@@ -44,6 +44,13 @@ const PrioritySelect = ({ disabled = false }: { disabled?: boolean }) => {
 }
 
 describe("Select", () => {
+  it("shows the selected item label in the closed trigger", () => {
+    render(<PrioritySelect />)
+    const trigger = screen.getByRole("combobox", { name: "Priority" })
+    expect(trigger).toHaveTextContent("Low")
+    expect(trigger).not.toHaveTextContent(/^low$/i)
+  })
+
   it("uses the same outline button chrome as filter buttons", () => {
     render(
       <>

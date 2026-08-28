@@ -71,6 +71,11 @@ const ContactsPanel = ({
     return "No saved contacts yet. Names you set on a draft appear here automatically."
   }, [debouncedSearch])
 
+  const mailboxItems = useMemo(
+    () => mailboxes.map((row) => ({ label: row.label, value: row.mailbox })),
+    [mailboxes],
+  )
+
   const handleSearchChange = (value: string) => {
     setSearch(value)
     setOffset(0)
@@ -119,14 +124,18 @@ const ContactsPanel = ({
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           {mailboxes.length > 1 ? (
-            <Select value={selectedKey} onValueChange={handleMailboxChange}>
+            <Select
+              items={mailboxItems}
+              value={selectedKey}
+              onValueChange={handleMailboxChange}
+            >
               <SelectTrigger className="w-[220px]" aria-label="Mailbox for contacts" tabIndex={0}>
                 <SelectValue placeholder="Select mailbox" />
               </SelectTrigger>
               <SelectContent>
-                {mailboxes.map((row) => (
-                  <SelectItem key={row.mailbox} value={row.mailbox}>
-                    {row.label}
+                {mailboxItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>

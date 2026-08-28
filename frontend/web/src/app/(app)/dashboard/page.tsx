@@ -1,8 +1,7 @@
 "use client"
 
-import { useQuery } from "@tanstack/react-query"
-import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useCallback } from "react"
+import { keepPreviousData, useQuery } from "@tanstack/react-query"
+import { useState } from "react"
 
 import { AttentionQueue } from "@/components/attention-queue"
 import { ErrorPage } from "@/components/error-page"
@@ -27,32 +26,21 @@ const ATTENTION_SORT_ITEMS = [
   { label: "Most recent", value: "recent" as const },
 ]
 
-const parseAttentionSort = (value: string | null): NeedsAttentionSort =>
-  value === "recent" ? "recent" : "urgency"
-
 export default function DashboardPage() {
-  const router = useRouter()
-  const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const attentionSort = parseAttentionSort(searchParams.get("attention_sort"))
+  const [attentionSort, setAttentionSort] = useState<NeedsAttentionSort>("urgency")
 
-  const handleAttentionSortChange = useCallback(
-    (value: NeedsAttentionSort | null) => {
-      const next = new URLSearchParams(searchParams.toString())
-      if (!value || value === "urgency") next.delete("attention_sort")
-      else next.set("attention_sort", value)
-      const query = next.toString()
-      router.replace(query ? `${pathname}?${query}` : pathname)
-    },
-    [pathname, router, searchParams],
-  )
+  const handleAttentionSortChange = (value: NeedsAttentionSort | null) => {
+    if (!value) return
+    setAttentionSort(value)
+  }
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ["dashboard", "overview", attentionSort],
     queryFn: () => api.dashboard.overview(attentionSort),
+    placeholderData: keepPreviousData,
   })
 
-  if (isLoading) {
+  if (isLoading && !data) {
     return (
       <div className="space-y-6" aria-busy="true" aria-live="polite">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -108,13 +96,18 @@ export default function DashboardPage() {
                 Awaiting-action threads with urgency, spam, and context signals.
               </CardDescription>
             </div>
-            <Select value={attentionSort} onValueChange={handleAttentionSortChange}>
+            <Select
+              items={ATTENTION_SORT_ITEMS}
+              value={attentionSort}
+              onValueChange={handleAttentionSortChange}
+            >
               <SelectTrigger
                 size="sm"
                 className="w-[11.5rem] shrink-0"
                 aria-label="Sort needs attention queue"
+                aria-busy={isFetching}
               >
-                <SelectValue placeholder="Sort by" />
+                <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectGroup>

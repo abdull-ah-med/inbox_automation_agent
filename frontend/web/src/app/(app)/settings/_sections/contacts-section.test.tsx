@@ -75,6 +75,40 @@ describe("ContactsSection", () => {
     ])
   })
 
+  it("shows the mailbox label in the contacts filter, not the raw key", async () => {
+    mailboxesMock.mockResolvedValue([
+      {
+        mailbox: "sales",
+        email_address: "sales@example.com",
+        label: "Sales Inbox",
+        thread_count: 0,
+        unread_count: 0,
+        awaiting_action_count: 0,
+        filtered_count: 0,
+        stale_count: 0,
+        urgency_breakdown: {},
+        recent_threads: [],
+      },
+      {
+        mailbox: "support",
+        email_address: "support@example.com",
+        label: "Support Inbox",
+        thread_count: 0,
+        unread_count: 0,
+        awaiting_action_count: 0,
+        filtered_count: 0,
+        stale_count: 0,
+        urgency_breakdown: {},
+        recent_threads: [],
+      },
+    ])
+    listMock.mockResolvedValue({ total: 0, items: [] })
+    renderSection()
+    const mailboxFilter = await screen.findByRole("combobox", { name: "Mailbox for contacts" })
+    expect(mailboxFilter).toHaveTextContent("Sales Inbox")
+    expect(mailboxFilter).not.toHaveTextContent(/^sales$/i)
+  })
+
   it("renders visible rows for three contacts", async () => {
     listMock.mockResolvedValue({
       total: 3,

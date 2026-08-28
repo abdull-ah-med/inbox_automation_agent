@@ -16,6 +16,7 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
 }
 
 function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+  // Pair with ``<Select items={[...]}>`` so this shows labels, not raw values.
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
