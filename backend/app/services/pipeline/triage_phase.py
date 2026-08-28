@@ -62,7 +62,6 @@ _OUTCOME_EVENT_TYPES = {
 # moves to DRAFTED/REQUIRES_HUMAN once the draft step resolves further down.
 _OUTCOME_THREAD_STATE = {
     "spam_discarded": ThreadStateEnum.SPAM.value,
-    "no_action_discarded": ThreadStateEnum.NO_ACTION.value,
 }
 
 

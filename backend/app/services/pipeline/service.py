@@ -34,7 +34,6 @@ from app.services import (
     embedding_service,
     rejection_memory_service,
     reply_memory_service,
-    sent_reply_learning_service,
     sent_reply_service,
     skill_selection_service,
     slack_service,
@@ -42,6 +41,10 @@ from app.services import (
     tone_profile_service,
     triage_service,
     urgency_feedback_service,
+)
+from app.services.pipeline.already_replied import (
+    latest_proposed_has_teaching_note,
+    promote_and_resolve_sent_tip,
 )
 from app.services.pipeline.draft_phase import (
     _apply_draft_outcome_state,
@@ -409,7 +412,7 @@ async def run_after_ingest(
                 settings=settings,
                 session_factory=factory,
             )
-    needs_context = bool(state.triage and state.triage.needs_context)
+    needs_context = bool(state.triage and state.triage.needs_context and state.triage.draft_needed)
 
     # Non-spam: always embed. Flow B (needs_context) embeds inside context_service.
     # Flow A embeds here before draft (shared AsyncSession is not safe across gather).
@@ -630,9 +633,7 @@ async def _phased_already_replied_exit(
     session_factory: async_sessionmaker[AsyncSession],
     anthropic_client: AsyncAnthropic | None = None,
 ) -> EmailTriageState:
-    """Skip Sonnet when Outlook already has a human reply; learn from the send."""
-    from app.models.schemas.email import ThreadStateEnum
-
+    """Skip Sonnet when a briefing already exists; learn from the Outlook send."""
     state.draft_status = "SKIPPED"
     state.slack_delivery = "not_required"
     await _embed_in_fresh_session(
@@ -651,33 +652,14 @@ async def _phased_already_replied_exit(
                 "reason": "already_replied",
             },
         )
-
-    routing = state.triage.routing_category if state.triage is not None else None
-    approved = None
-    async with session_factory() as session, session.begin():
-        sent = await sent_reply_repo.get_by_thread(session, thread_id)
-        if sent is not None:
-            approved = await sent_reply_learning_service.promote_sent_reply_as_approved(
-                session,
-                sent_reply=sent,
-                settings=settings,
-                openai_client=openai_client,
-                routing_category=routing,
-                anthropic_client=anthropic_client,
-            )
-        await thread_repo.set_thread_outcome(
-            session,
-            thread_id,
-            state=ThreadStateEnum.RESOLVED.value,
-        )
-
-    if approved is not None:
-        await sent_reply_learning_service.store_promoted_reply_memory(
-            draft=approved,
-            settings=settings,
-            openai_client=openai_client,
-            anthropic_client=anthropic_client,
-        )
+    await promote_and_resolve_sent_tip(
+        state=state,
+        thread_id=thread_id,
+        openai_client=openai_client,
+        settings=settings,
+        session_factory=session_factory,
+        anthropic_client=anthropic_client,
+    )
     return state
 
 
@@ -824,13 +806,12 @@ async def _phased_load_draft_inputs(
     skill_contents: list[str] = []
     skill_ids: list[uuid.UUID] = []
     applied_skills: list = []
-    email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
-    routing_category = state.triage.routing_category if state.triage is not None else "general"
 
+    letter = state.triage is not None and state.triage.draft_needed
     async with session_factory() as session:
         existing = await draft_repo.get_draft_by_message(session, message_id=message_id)
         active_skills: list = []
-        if state.triage is not None and state.triage.draft_needed:
+        if letter:
             try:
                 active_skills = await skill_repo.list_active_for_selection(session)
             except Exception:
@@ -843,37 +824,51 @@ async def _phased_load_draft_inputs(
                 active_skills = []
         await session.commit()
 
-    if state.triage is not None and state.triage.draft_needed:
-        try:
-            selected = await skill_selection_service.select_from_active(
-                active_skills,
-                client=client,
-                settings=settings,
-                openai_client=openai_client,
+    if not letter:
+        return _DraftPhaseInputs(
+            existing=existing,
+            skill_contents=[],
+            skill_ids=[],
+            applied_skills=[],
+            tone_references=[],
+            tone_profile_block=None,
+            negative_constraints=[],
+            urgency_hints=[],
+        )
+
+    try:
+        selected = await skill_selection_service.select_from_active(
+            active_skills,
+            client=client,
+            settings=settings,
+            openai_client=openai_client,
+            email=email,
+            triage=state.triage,
+        )
+        skill_contents = selected.blocks
+        skill_ids = selected.skill_ids
+        applied_skills = list(selected.applied)
+        async with session_factory() as session:
+            await skill_selection_service.log_skills_selected(
+                session,
                 email=email,
-                triage=state.triage,
-            )
-            skill_contents = selected.blocks
-            skill_ids = selected.skill_ids
-            applied_skills = list(selected.applied)
-            async with session_factory() as session:
-                await skill_selection_service.log_skills_selected(
-                    session,
-                    email=email,
-                    conversation_id=email.conversation_id,
-                    selected=selected,
-                )
-                await session.commit()
-        except Exception:
-            logger.exception(
-                "skill_load_failed",
                 conversation_id=email.conversation_id,
-                mailbox=email.mailbox,
-                message_id=message_id,
+                selected=selected,
             )
-            skill_contents = []
-            skill_ids = []
-            applied_skills = []
+            await session.commit()
+    except Exception:
+        logger.exception(
+            "skill_load_failed",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=message_id,
+        )
+        skill_contents = []
+        skill_ids = []
+        applied_skills = []
+
+    email_text = f"{email.subject}\n\n{email.body_clean or email.body_text}"
+    routing_category = state.triage.routing_category if state.triage is not None else "general"
 
     async with session_factory() as session:
         tone_profile_block, tone_references = await tone_profile_service.load_for_draft(
@@ -954,28 +949,30 @@ async def _phased_generate_and_persist_draft(
         from app.services.skill_reference_service import make_reference_loader
 
         reference_loader = None
-        if inputs.skill_ids:
-            reference_loader, _ = make_reference_loader(
-                active_skill_ids=set(inputs.skill_ids),
-                session_factory=session_factory,
-            )
-        from app.services import related_thread_service
-
-        async with session_factory() as assoc_session:
-            confirmed_associations = await related_thread_service.load_confirmed_contexts(
-                assoc_session,
-                thread_id,
-            )
-            directory: dict[str, str] | None = None
-            if settings.salute_directory_enabled:
-                from app.services import directory_lookup_service
-
-                directory = await directory_lookup_service.build_directory(
-                    assoc_session,
-                    email.mailbox,
-                    current.thread_context,
-                    current=current.original_email,
+        confirmed_associations: list = []
+        directory: dict[str, str] | None = None
+        if current.triage.draft_needed:
+            if inputs.skill_ids:
+                reference_loader, _ = make_reference_loader(
+                    active_skill_ids=set(inputs.skill_ids),
+                    session_factory=session_factory,
                 )
+            from app.services import related_thread_service
+
+            async with session_factory() as assoc_session:
+                confirmed_associations = await related_thread_service.load_confirmed_contexts(
+                    assoc_session,
+                    thread_id,
+                )
+                if settings.salute_directory_enabled:
+                    from app.services import directory_lookup_service
+
+                    directory = await directory_lookup_service.build_directory(
+                        assoc_session,
+                        email.mailbox,
+                        current.thread_context,
+                        current=current.original_email,
+                    )
         generated = await draft_llm.generate_draft(
             current.original_email,
             current.thread_context,
@@ -1117,12 +1114,18 @@ async def _run_phased_post_ingest(
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     already_replied = False
+    has_teaching_note = False
     if parsed_thread_id is not None:
         async with session_factory() as session:
             already_replied = await sent_reply_service.thread_tip_already_replied(
                 session,
                 parsed_thread_id,
             )
+            if already_replied:
+                has_teaching_note = await latest_proposed_has_teaching_note(
+                    session,
+                    parsed_thread_id,
+                )
             if not already_replied:
                 prior = await thread_repo.get_by_id_trusted(session, parsed_thread_id)
                 prior_sent = await sent_reply_repo.get_by_thread(session, parsed_thread_id)
@@ -1158,7 +1161,10 @@ async def _run_phased_post_ingest(
         apply_thread_state=not already_replied,
     )
 
-    if already_replied and parsed_thread_id is not None:
+    skip_sonnet = already_replied and (
+        has_teaching_note or (state.triage is not None and state.triage.is_spam)
+    )
+    if skip_sonnet and parsed_thread_id is not None:
         return await _phased_already_replied_exit(
             state=state,
             thread_id=parsed_thread_id,
@@ -1167,6 +1173,11 @@ async def _run_phased_post_ingest(
             session_factory=session_factory,
             anthropic_client=client,
         )
+
+    if already_replied and state.triage is not None:
+        state.triage.draft_needed = False
+        if state.draft_status != "SKIPPED":
+            state.draft_status = "PENDING"
 
     early = await _phased_early_draft_exit(
         state=state,
@@ -1180,7 +1191,7 @@ async def _run_phased_post_ingest(
 
     thread_id = uuid.UUID(ingest_result.thread_id)
     message_id = email.message_id
-    needs_context = bool(state.triage and state.triage.needs_context)
+    needs_context = bool(state.triage and state.triage.needs_context and state.triage.draft_needed)
     cross_thread = await _phased_resolve_cross_thread(
         state=state,
         email=email,
@@ -1235,14 +1246,24 @@ async def _run_phased_post_ingest(
         )
         _ = _embed_result
 
-    return await _phased_finalize_draft_and_slack(
+    state = await _phased_finalize_draft_and_slack(
         state=state,
         thread_id=thread_id,
         redis=redis,
         settings=settings,
         session_factory=session_factory,
-        post_slack=post_slack,
+        post_slack=post_slack and not already_replied,
     )
+    if already_replied:
+        await promote_and_resolve_sent_tip(
+            state=state,
+            thread_id=thread_id,
+            openai_client=openai_client,
+            settings=settings,
+            session_factory=session_factory,
+            anthropic_client=client,
+        )
+    return state
 
 
 async def run_post_ingest_triage(

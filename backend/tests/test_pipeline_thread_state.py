@@ -107,18 +107,30 @@ async def test_spam_outcome_persists_thread_state_spam() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_action_outcome_persists_thread_state_no_action() -> None:
+async def test_no_action_outcome_still_persists_drafted_briefing() -> None:
+    """FYI mail still gets a briefing row (empty letter) so teaching notes exist."""
+
     async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
         state.triage = TriageResultSchema(
             is_spam=False,
             has_action_items=False,
             action_items_summary=None,
             needs_context=False,
+            draft_needed=False,
         )
-        state.draft_status = "SKIPPED"
+        state.draft_status = "PENDING"
         return state
 
     async def _run_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="FYI",
+            reply_body="",
+            teaching_note="Listserv — no reply.",
+            urgency="LOW",
+            urgency_reason="FYI blast",
+            suggested_actions=[],
+        )
         return state
 
     _state, set_outcome = await _run(
@@ -126,9 +138,10 @@ async def test_no_action_outcome_persists_thread_state_no_action() -> None:
         run_draft=AsyncMock(side_effect=_run_draft),
     )
 
-    set_outcome.assert_awaited_once()
-    _args, kwargs = set_outcome.await_args
-    assert kwargs["state"] == "NO_ACTION"
+    assert _state.draft_status == "DRAFTED"
+    states = [call.kwargs["state"] for call in set_outcome.await_args_list]
+    assert "NO_ACTION" not in states
+    assert "DRAFTED" in states
 
 
 @pytest.mark.asyncio
