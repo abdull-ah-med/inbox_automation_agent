@@ -165,11 +165,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     redis = await _ping_redis()
 
     global _webhook_worker_task, _webhook_worker_stop
-    _webhook_worker_stop = asyncio.Event()
-    _webhook_worker_task = asyncio.create_task(
-        run_webhook_stream_worker(redis, stop_event=_webhook_worker_stop),
-        name="graph-webhook-stream-worker",
-    )
+    if settings.graph_webhooks_enabled:
+        _webhook_worker_stop = asyncio.Event()
+        _webhook_worker_task = asyncio.create_task(
+            run_webhook_stream_worker(redis, stop_event=_webhook_worker_stop),
+            name="graph-webhook-stream-worker",
+        )
+    else:
+        logger.info("graph_webhooks_disabled_skip_stream_worker")
 
     # Construct once at startup (or resolve None when Slack env vars are unset).
     get_slack_app(settings)
@@ -184,26 +187,33 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             "openai_api_key_missing",
             hint="Set OPENAI_API_KEY in backend/.env — email embeddings will fail until set",
         )
-    try:
-        await run_subscription_reconcile()
-    except Exception:
-        logger.exception("startup_subscription_reconcile_failed")
+    if settings.graph_webhooks_enabled:
+        try:
+            await run_subscription_reconcile()
+        except Exception:
+            logger.exception("startup_subscription_reconcile_failed")
+    else:
+        logger.info("graph_webhooks_disabled_skip_subscription_reconcile")
 
     _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(
-        run_subscription_renewal,
-        trigger="interval",
-        hours=settings.subscription_renew_interval_hours,
-        id="graph_subscription_renewal",
-        replace_existing=True,
-    )
-    _scheduler.add_job(
-        run_poll_all_mailboxes,
-        trigger="interval",
-        seconds=settings.poll_interval_seconds,
-        id="graph_poll_fallback",
-        replace_existing=True,
-    )
+    if settings.graph_webhooks_enabled:
+        _scheduler.add_job(
+            run_subscription_renewal,
+            trigger="interval",
+            hours=settings.subscription_renew_interval_hours,
+            id="graph_subscription_renewal",
+            replace_existing=True,
+        )
+    if settings.poll_enabled:
+        _scheduler.add_job(
+            run_poll_all_mailboxes,
+            trigger="interval",
+            seconds=settings.poll_interval_seconds,
+            id="graph_poll_fallback",
+            replace_existing=True,
+        )
+    else:
+        logger.warning("poll_disabled_no_graph_ingest_scheduled")
     _scheduler.add_job(
         _purge_expired_chat_cache,
         trigger="interval",
@@ -225,6 +235,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     _scheduler.start()
     logger.info(
         "scheduler_started",
+        webhooks_enabled=settings.graph_webhooks_enabled,
+        poll_enabled=settings.poll_enabled,
         renew_hours=settings.subscription_renew_interval_hours,
         poll_seconds=settings.poll_interval_seconds,
         ops_report_cron=(

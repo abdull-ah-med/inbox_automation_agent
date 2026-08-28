@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     graph_webhook_client_state: str = ""
     graph_notification_url: str = ""
     graph_lifecycle_url: str = ""
+    # When false (default): poll-primary — no Graph subscriptions, no webhook
+    # stream worker, notification POSTs ACK 202 without enqueue. Set true only
+    # when GRAPH_NOTIFICATION_URL is a reachable public HTTPS endpoint.
+    graph_webhooks_enabled: bool = False
     target_mailboxes: str = ""
     # Personal / user mailboxes whose Sent Items may close shared-inbox threads.
     # Polled outbound-only (Mail.Read). Not triaged as inboxes.
@@ -53,6 +57,8 @@ class Settings(BaseSettings):
     # Shared secret for X-Dev-Api-Key on local/dev routers (required when enable_dev_routes).
     dev_api_key: str = ""
     staleness_threshold_hours: int = Field(default=24, ge=1)
+    # Interval poller — primary ingest when graph_webhooks_enabled is false.
+    poll_enabled: bool = True
     poll_interval_seconds: int = Field(default=300, ge=60)
     subscription_renew_interval_hours: int = Field(default=48, ge=1)
     db_pool_size: int = Field(default=10, ge=1, le=50)
@@ -154,6 +160,8 @@ class Settings(BaseSettings):
         "chat_groundedness_enabled",
         "chat_semantic_cache_enabled",
         "salute_directory_enabled",
+        "graph_webhooks_enabled",
+        "poll_enabled",
         mode="before",
     )
     @classmethod
@@ -298,10 +306,20 @@ class Settings(BaseSettings):
             errors.append("GRAPH_TENANT_ID must be set when ENVIRONMENT is not local")
         if not self.mailbox_list:
             errors.append("TARGET_MAILBOXES must be set when ENVIRONMENT is not local")
-        if not self.graph_webhook_client_state.strip():
-            errors.append("GRAPH_WEBHOOK_CLIENT_STATE must be set when ENVIRONMENT is not local")
-        if len(self.graph_webhook_client_state.strip()) < 32:
-            errors.append("GRAPH_WEBHOOK_CLIENT_STATE must be at least 32 characters outside local")
+        if self.graph_webhooks_enabled:
+            if not self.graph_notification_url.strip():
+                errors.append(
+                    "GRAPH_NOTIFICATION_URL must be set when GRAPH_WEBHOOKS_ENABLED=true"
+                )
+            if not self.graph_webhook_client_state.strip():
+                errors.append(
+                    "GRAPH_WEBHOOK_CLIENT_STATE must be set when GRAPH_WEBHOOKS_ENABLED=true"
+                )
+            if len(self.graph_webhook_client_state.strip()) < 32:
+                errors.append(
+                    "GRAPH_WEBHOOK_CLIENT_STATE must be at least 32 characters when "
+                    "GRAPH_WEBHOOKS_ENABLED=true"
+                )
         return errors
 
     def _production_redis_errors(self) -> list[str]:

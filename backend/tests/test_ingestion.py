@@ -545,6 +545,7 @@ async def test_webhook_empty_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -570,6 +571,7 @@ async def test_webhook_invalid_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -594,6 +596,7 @@ async def test_webhook_enqueue_writes_stream_job_without_background_tasks() -> N
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -636,6 +639,7 @@ async def test_lifecycle_invalid_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -661,6 +665,7 @@ async def test_process_notifications_ingests_and_completes_dedup(
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -724,6 +729,7 @@ async def test_webhook_releases_dedup_when_triage_fails() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -791,6 +797,7 @@ async def test_webhook_accepts_but_skips_forged_client_state() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="expected-secret",
         target_mailboxes="user@example.com",
     )
@@ -833,6 +840,7 @@ async def test_process_notifications_skips_mismatched_client_state() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="expected-secret",
         target_mailboxes="user@example.com",
     )
@@ -872,6 +880,7 @@ async def test_webhook_acks_when_client_state_unconfigured() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="",
         target_mailboxes="user@example.com",
     )
@@ -967,6 +976,7 @@ async def test_webhook_validation_handshake_returns_plain_text() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -996,6 +1006,7 @@ async def test_webhook_validation_rejected_without_pending_window() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1020,6 +1031,7 @@ async def test_lifecycle_validation_handshake_returns_plain_text() -> None:
     app = FastAPI()
     app.include_router(graph_router)
 
+    graph_webhooks_enabled=True,
     settings = Settings(environment="local", graph_webhook_client_state="secret")
     redis = AsyncMock()
     redis.get = AsyncMock(return_value="1")
@@ -1045,6 +1057,7 @@ async def test_webhook_notification_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1083,6 +1096,7 @@ async def test_lifecycle_notification_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1151,6 +1165,7 @@ async def test_webhook_rejects_oversized_body_without_content_length() -> None:
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_max_body_bytes=1024,
     )
@@ -1178,6 +1193,7 @@ async def test_webhook_rate_limit_still_enqueues_valid_client_state() -> None:
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_rate_limit_per_minute=10,
         trust_x_forwarded_for=False,
@@ -1226,6 +1242,7 @@ async def test_webhook_rate_limit_skips_bad_client_state() -> None:
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_rate_limit_per_minute=10,
     )
@@ -1267,6 +1284,7 @@ async def test_webhook_rate_limit_uses_x_real_ip_when_trusted() -> None:
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_rate_limit_per_minute=10,
         trust_x_forwarded_for=True,

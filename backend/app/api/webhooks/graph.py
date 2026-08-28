@@ -408,11 +408,14 @@ async def receive_graph_notifications(
     if getattr(request.state, "webhook_over_rate_limit", False):
         logger.warning("graph_webhook_over_limit_valid_client_state_enqueued")
 
-    await enqueue_webhook_job(
-        redis,
-        kind="notifications",
-        payload=payload.model_dump(mode="json"),
-    )
+    if settings.graph_webhooks_enabled:
+        await enqueue_webhook_job(
+            redis,
+            kind="notifications",
+            payload=payload.model_dump(mode="json"),
+        )
+    else:
+        logger.info("graph_notification_ignored_webhooks_disabled")
     return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
@@ -464,9 +467,12 @@ async def receive_graph_lifecycle(
     if getattr(request.state, "webhook_over_rate_limit", False):
         logger.warning("graph_lifecycle_over_limit_valid_client_state_enqueued")
 
-    await enqueue_webhook_job(
-        redis,
-        kind="lifecycle",
-        payload=payload.model_dump(mode="json"),
-    )
+    if settings.graph_webhooks_enabled:
+        await enqueue_webhook_job(
+            redis,
+            kind="lifecycle",
+            payload=payload.model_dump(mode="json"),
+        )
+    else:
+        logger.info("graph_lifecycle_ignored_webhooks_disabled")
     return Response(status_code=status.HTTP_202_ACCEPTED)

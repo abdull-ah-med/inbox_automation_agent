@@ -160,6 +160,8 @@ def test_validate_production_security_requires_hardening() -> None:
         graph_client_secret="",
         graph_tenant_id="",
         target_mailboxes="",
+        graph_webhooks_enabled=True,
+        graph_notification_url="",
         graph_webhook_client_state="short",
         redis_url="redis://localhost:6379/0",
         redis_ssl_ca_certs="",
@@ -178,6 +180,7 @@ def test_validate_production_security_requires_hardening() -> None:
     assert any("GRAPH_TENANT_ID" in e for e in errors)
     assert any("TARGET_MAILBOXES" in e for e in errors)
     assert any("GRAPH_WEBHOOK_CLIENT_STATE" in e for e in errors)
+    assert any("GRAPH_NOTIFICATION_URL" in e for e in errors)
     assert any("REDIS_URL" in e for e in errors)
     assert any("MSAL_CACHE_ENCRYPTION_KEY" in e for e in errors)
     assert any("DATABASE_URL" in e for e in errors)

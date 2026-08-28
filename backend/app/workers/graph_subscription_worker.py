@@ -24,6 +24,9 @@ async def run_subscription_reconcile() -> None:
     https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
     """
     settings = get_settings()
+    if not settings.graph_webhooks_enabled:
+        logger.info("subscription_reconcile_skipped_webhooks_disabled")
+        return
     if not settings.mailbox_list:
         logger.info("subscription_reconcile_no_mailboxes")
         return
@@ -61,6 +64,9 @@ async def run_subscription_renewal() -> None:
     interval, and a crashed holder cannot delete another worker's lock.
     """
     settings = get_settings()
+    if not settings.graph_webhooks_enabled:
+        logger.info("subscription_renewal_skipped_webhooks_disabled")
+        return
     if not settings.mailbox_list:
         logger.info("subscription_renewal_no_mailboxes")
         return
