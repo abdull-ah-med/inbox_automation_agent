@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.core.automated_mail import AUTOMATED_LOCAL_COMPACTS
 from app.core.email_quotes import split_quoted_history
 from app.core.internal_mail import extract_email_address, thread_counterpart
 
@@ -50,6 +51,15 @@ _ZENDESK_TICKET_CHROME = re.compile(
 )
 # Neutral greeting when the tip is a role mailbox / ticket system with no person.
 _TEAM_SALUTE = "team"
+
+_SYSTEM_DISPLAY_LABELS = frozenset(
+    {
+        "google calendar",
+        "microsoft outlook",
+        "mailer-daemon",
+        "postmaster",
+    }
+)
 
 # Local-parts that are job/role mailboxes, not personal names.
 _ROLE_LOCALS = frozenset(
@@ -201,6 +211,27 @@ def _usable_person_name(
     if reject_names and cleaned.casefold() in {n.casefold() for n in reject_names}:
         return None
     return cleaned
+
+
+def gated_graph_display_first_name(name: str | None, email: str) -> str | None:
+    """First name from Graph From display, or None when it is not a person."""
+    cleaned = (name or "").strip().strip("\"'")
+    if not cleaned:
+        return None
+    local = _email_local(email)
+    if cleaned.casefold() == local.casefold():
+        return None
+    if cleaned.casefold() in _SYSTEM_DISPLAY_LABELS:
+        return None
+
+    for token in re.split(r"[\s,;/]+", cleaned):
+        compact = token.lower().replace(".", "").replace("-", "").replace("_", "")
+        if compact in AUTOMATED_LOCAL_COMPACTS:
+            return None
+    first = cleaned.split()[0]
+    if _is_role_token(first):
+        return None
+    return _usable_person_name(first)
 
 
 def signature_first_name(
@@ -372,13 +403,21 @@ def _better_salute_for_email(
         sender_email = extract_email_address(sender)
         if sender_email is None or sender_email.lower() != target:
             continue
+        gated = gated_graph_display_first_name(
+            getattr(msg, "sender_display_name", None),
+            target,
+        )
+        if gated and _usable_person_name(gated, reject_names=reject_names):
+            return gated, "display"
         from_party = salute_name_from_party(sender)
+        party_kind = _party_source_kind(sender)
         if (
             from_party
+            and party_kind != "local_part"
             and not is_role_mailbox_salute(salute_name=from_party, email=target)
             and _usable_person_name(from_party, reject_names=reject_names)
         ):
-            return from_party, _party_source_kind(sender)
+            return from_party, party_kind
         signed, kind = _tip_person_name(
             getattr(msg, "body_text", None),
             reject_names=reject_names,
@@ -459,9 +498,31 @@ def resolve_reply_addressee(
             if tip_signed:
                 salute = tip_signed
                 source_kind = tip_kind or "other"
-            elif is_role_mailbox_salute(salute_name=salute, email=email) or (
-                owner and salute.casefold() == owner.casefold()
-            ):
+            else:
+                display_first = gated_graph_display_first_name(
+                    getattr(msg, "sender_display_name", None),
+                    email,
+                )
+                sender_email = extract_email_address(getattr(msg, "sender", None))
+                if display_first and sender_email is not None and sender_email.lower() == email_key:
+                    salute = display_first
+                    source_kind = "display"
+                elif is_role_mailbox_salute(salute_name=salute, email=email) or (
+                    owner and salute.casefold() == owner.casefold()
+                ):
+                    better, better_kind = _better_salute_for_email(
+                        email=email,
+                        messages=message_list,
+                        reject_names=reject,
+                    )
+                    if better:
+                        salute = better
+                        source_kind = better_kind or "other"
+
+            # Local-part guesses are never used when suppression is on.
+            if suppress_local_part and source_kind == "local_part":
+                salute = ""
+            if not salute:
                 better, better_kind = _better_salute_for_email(
                     email=email,
                     messages=message_list,
@@ -470,10 +531,6 @@ def resolve_reply_addressee(
                 if better:
                     salute = better
                     source_kind = better_kind or "other"
-
-            # Local-part guesses are never used when suppression is on.
-            if suppress_local_part and source_kind == "local_part":
-                salute = ""
 
         allow_empty = suppress_local_part and source_kind == "local_part" and not directory_hit
         salute = _finalize_salute(

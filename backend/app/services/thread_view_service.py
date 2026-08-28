@@ -42,7 +42,7 @@ from app.repositories import (
 from app.services import related_thread_service
 from app.services.thread_narrative import build_activity
 
-# Keep in sync with sent_reply_service meeting skip set (avoid circular import).
+# Meeting types hide the sent-vs-draft learning panel (calendar mail is not a letter).
 _MEETING_MESSAGE_TYPES = frozenset(
     {
         "meetingRequest",
@@ -367,6 +367,7 @@ async def _resolve_reply_addressee_view(
                 conversation_id=conversation_id,
                 mailbox=mailbox,
                 sender=message.sender,
+                sender_display_name=getattr(message, "sender_name", None),
                 subject=subject,
                 body_text=message.body_text,
                 body_preview=message.body_preview,
