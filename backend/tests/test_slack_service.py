@@ -6,7 +6,7 @@ import ast
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -165,16 +165,20 @@ async def test_post_review_card_unconfigured_returns_skipped() -> None:
 async def test_post_review_card_posts_and_is_idempotent() -> None:
     redis = AsyncMock()
     redis.set = AsyncMock(side_effect=[True, False])
-    redis.delete = AsyncMock()
 
     slack_app = MagicMock()
     slack_app.client.chat_postMessage = AsyncMock(return_value={"ts": "1710000000.000100"})
 
     state = _drafted_state()
     settings = _configured_settings()
+    lock_key = slack_posted_key(state.original_email.mailbox, state.original_email.message_id)
 
-    first = await post_review_card(state, redis=redis, slack_app=slack_app, settings=settings)
-    second = await post_review_card(state, redis=redis, slack_app=slack_app, settings=settings)
+    with patch(
+        "app.services.slack_service.compare_delete",
+        new_callable=AsyncMock,
+    ) as compare_delete:
+        first = await post_review_card(state, redis=redis, slack_app=slack_app, settings=settings)
+        second = await post_review_card(state, redis=redis, slack_app=slack_app, settings=settings)
 
     assert first.status == "posted"
     assert first.message_ts == "1710000000.000100"
@@ -182,34 +186,38 @@ async def test_post_review_card_posts_and_is_idempotent() -> None:
     assert second.status == "already_posted"
     assert second.ok_for_dedup is True
     assert redis.set.await_count == 2
-    lock_key = slack_posted_key(state.original_email.mailbox, state.original_email.message_id)
     redis.set.assert_any_await(lock_key, "1", nx=True, ex=SLACK_POSTED_TTL_SECONDS)
     assert slack_app.client.chat_postMessage.await_count == 1
     call_kwargs = slack_app.client.chat_postMessage.await_args.kwargs
     assert call_kwargs["channel"] == "C0123456789"
     assert len(call_kwargs["blocks"]) == 7
-    redis.delete.assert_not_awaited()
+    compare_delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_post_review_card_releases_lock_on_slack_error() -> None:
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock()
 
     slack_app = MagicMock()
     slack_app.client.chat_postMessage = AsyncMock(side_effect=RuntimeError("slack down"))
+    state = _drafted_state()
+    lock_key = slack_posted_key(state.original_email.mailbox, state.original_email.message_id)
 
-    result = await post_review_card(
-        _drafted_state(),
-        redis=redis,
-        slack_app=slack_app,
-        settings=_configured_settings(),
-    )
+    with patch(
+        "app.services.slack_service.compare_delete",
+        new_callable=AsyncMock,
+    ) as compare_delete:
+        result = await post_review_card(
+            state,
+            redis=redis,
+            slack_app=slack_app,
+            settings=_configured_settings(),
+        )
 
     assert result.status == "failed"
     assert result.ok_for_dedup is False
-    redis.delete.assert_awaited_once()
+    compare_delete.assert_awaited_once_with(redis, lock_key, "1")
 
 
 @pytest.mark.asyncio
@@ -232,19 +240,24 @@ async def test_post_review_card_skips_when_not_drafted() -> None:
 async def test_post_review_card_missing_ts_releases_lock_and_fails() -> None:
     redis = AsyncMock()
     redis.set = AsyncMock(return_value=True)
-    redis.delete = AsyncMock()
     slack_app = MagicMock()
     slack_app.client.chat_postMessage = AsyncMock(return_value={"ok": True})
+    state = _drafted_state()
+    lock_key = slack_posted_key(state.original_email.mailbox, state.original_email.message_id)
 
-    result = await post_review_card(
-        _drafted_state(),
-        redis=redis,
-        slack_app=slack_app,
-        settings=_configured_settings(),
-    )
+    with patch(
+        "app.services.slack_service.compare_delete",
+        new_callable=AsyncMock,
+    ) as compare_delete:
+        result = await post_review_card(
+            state,
+            redis=redis,
+            slack_app=slack_app,
+            settings=_configured_settings(),
+        )
     assert result.status == "failed"
     assert result.ok_for_dedup is False
-    redis.delete.assert_awaited_once()
+    compare_delete.assert_awaited_once_with(redis, lock_key, "1")
 
 
 def test_build_review_card_summary_and_reply_fallbacks() -> None:

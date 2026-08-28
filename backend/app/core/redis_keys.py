@@ -20,6 +20,8 @@ VALIDATION_PENDING_TTL_SECONDS = 120
 MSAL_TOKEN_CACHE_KEY = "msal:token_cache"
 MSAL_TOKEN_CACHE_LOCK_KEY = "msal:token_cache:lock"
 MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS = 30
+# Bound shared MSAL blob lifetime so abandoned cache entries expire.
+MSAL_TOKEN_CACHE_TTL_SECONDS = 7 * 24 * 3600  # 604800
 
 SCHEDULER_POLL_LOCK_KEY = "scheduler:lock:poll"
 SCHEDULER_RENEW_LOCK_KEY = "scheduler:lock:renew"
@@ -30,6 +32,13 @@ SCHEDULER_RECONCILE_LOCK_KEY = "scheduler:lock:reconcile"
 RECONCILE_LOCK_TTL_SECONDS = 600
 
 WEBHOOK_VALIDATION_PENDING_KEY = "graph:webhook:validation_pending"
+
+# Durable Graph webhook offload (Redis Streams). Survives process restart;
+# BackgroundTasks does not.
+GRAPH_WEBHOOK_STREAM_KEY = "graph:webhook:stream"
+GRAPH_WEBHOOK_CONSUMER_GROUP = "webhook-processors"
+GRAPH_WEBHOOK_STREAM_MAXLEN = 10_000
+GRAPH_WEBHOOK_CLAIM_MIN_IDLE_MS = 60_000
 
 
 def _normalize_folder(folder: str) -> str:

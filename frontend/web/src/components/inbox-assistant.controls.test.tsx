@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   askChat,
+  createSession,
   deliverStream,
   groundedResponse,
   renderWithClient,
@@ -303,5 +304,51 @@ describe("InboxAssistant controls", () => {
       "aria-describedby",
       "inboxassistant-validation",
     )
+  })
+
+  it("resets the session when the mailbox changes and creates a new session for the next ask", async () => {
+    // Bug this catches: switching mailbox reused the prior session_id / transcript.
+    const salesSessionId = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    const allSessionId = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    createSession.mockImplementation(async (body: { mailbox?: string | null }) => {
+      if (body.mailbox === "sales@example.com") {
+        return { session_id: salesSessionId, mailbox: "sales@example.com" }
+      }
+      return { session_id: allSessionId, mailbox: null }
+    })
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderWithClient(<InboxAssistant />)
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    await user.type(
+      screen.getByRole("textbox", { name: /message inboxassistant/i }),
+      "billing disputes waiting on review",
+    )
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(
+      await screen.findByText("The overdue billing dispute is waiting on review."),
+    ).toBeInTheDocument()
+    expect(createSession).toHaveBeenCalledWith({ mailbox: null })
+    expect(askChat.mock.calls[0]?.[0]).toMatchObject({ session_id: allSessionId })
+
+    await user.click(screen.getByRole("combobox", { name: "Mailbox" }))
+    await user.click(await screen.findByRole("option", { name: "Sales" }))
+    await waitFor(() => {
+      expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
+    })
+    expect(screen.getByText("Ask about the inbox")).toBeInTheDocument()
+    expect(screen.queryByRole("log")).not.toBeInTheDocument()
+    expect(
+      screen.queryByText("The overdue billing dispute is waiting on review."),
+    ).not.toBeInTheDocument()
+
+    await user.type(screen.getByRole("textbox", { name: /message inboxassistant/i }), "sales backlog")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    await waitFor(() => {
+      expect(createSession).toHaveBeenCalledWith({ mailbox: "sales@example.com" })
+    })
+    expect(askChat.mock.calls.at(-1)?.[0]).toMatchObject({
+      message: "sales backlog",
+      session_id: salesSessionId,
+    })
   })
 })

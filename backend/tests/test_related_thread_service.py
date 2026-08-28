@@ -428,3 +428,74 @@ async def test_dismiss_hides_association_on_both_threads(db_session) -> None:
     from_sibling = await related_thread_service.list_stored_associations(db_session, sibling.id)
     assert from_source == []
     assert from_sibling == []
+
+
+@pytest.mark.asyncio
+async def test_load_confirmed_contexts_batches_thread_and_message_fetches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SPEC: no per-id N+1 — list_by_ids + list_by_thread_ids once each."""
+    import uuid
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
+    from app.services import related_thread_service
+
+    id_a, id_b = uuid.uuid4(), uuid.uuid4()
+    pairs = [(id_a, 0.9), (id_b, 0.8)]
+    thread_a = SimpleNamespace(
+        id=id_a, conversation_id="conv-a", mailbox="sales@example.com", subject="A"
+    )
+    thread_b = SimpleNamespace(
+        id=id_b, conversation_id="conv-b", mailbox="sales@example.com", subject="B"
+    )
+    msg_a = SimpleNamespace(id=uuid.uuid4())
+    msg_b = SimpleNamespace(id=uuid.uuid4())
+
+    list_by_ids = AsyncMock(return_value={id_a: thread_a, id_b: thread_b})
+    list_by_thread_ids = AsyncMock(return_value={id_a: [msg_a], id_b: [msg_b]})
+    get_by_id = AsyncMock(side_effect=AssertionError("must not N+1 get_by_id"))
+    list_by_thread = AsyncMock(side_effect=AssertionError("must not N+1 list_by_thread"))
+
+    def fake_row_to_email(row, **kwargs):  # type: ignore[no-untyped-def]
+        return EmailMessageSchema(
+            message_id=str(row.id),
+            conversation_id=kwargs["conversation_id"],
+            mailbox=kwargs["mailbox"],
+            sender="sender@example.com",
+            subject=kwargs["subject"],
+            body_text="body",
+            body_preview="body",
+            received_at=datetime(2026, 8, 1, tzinfo=UTC),
+            direction=EmailDirectionEnum.INBOUND,
+        )
+
+    monkeypatch.setattr(
+        related_thread_service.association_review_repo,
+        "confirmed_pairs",
+        AsyncMock(return_value=pairs),
+    )
+    monkeypatch.setattr(related_thread_service.thread_repo, "list_by_ids", list_by_ids)
+    monkeypatch.setattr(related_thread_service.message_repo, "list_by_thread_ids", list_by_thread_ids)
+    monkeypatch.setattr(
+        related_thread_service.thread_repo,
+        "get_by_id_trusted",
+        get_by_id,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        related_thread_service.message_repo,
+        "list_by_thread",
+        list_by_thread,
+        raising=False,
+    )
+    monkeypatch.setattr(related_thread_service, "_row_to_email", fake_row_to_email)
+
+    packed = await related_thread_service.load_confirmed_contexts(AsyncMock(), uuid.uuid4())
+    assert [c.matched_conversation_id for c in packed] == ["conv-a", "conv-b"]
+    list_by_ids.assert_awaited_once()
+    list_by_thread_ids.assert_awaited_once()
+    get_by_id.assert_not_awaited()
+    list_by_thread.assert_not_awaited()

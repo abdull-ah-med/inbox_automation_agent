@@ -1,4 +1,4 @@
-import { screen, act, waitFor } from "@testing-library/react"
+import { screen, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -33,29 +33,6 @@ import { InboxAssistant } from "@/components/inbox-assistant"
 describe("InboxAssistant streaming", () => {
   beforeEach(() => {
     resetInboxAssistantMocks()
-  })
-
-  it("keeps the transcript when the mailbox filter changes", async () => {
-    const user = userEvent.setup({ pointerEventsCheck: 0 })
-    renderWithClient(<InboxAssistant />)
-    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
-    await user.type(
-      screen.getByRole("textbox", { name: /message inboxassistant/i }),
-      "billing disputes waiting on review",
-    )
-    await user.click(screen.getByRole("button", { name: /^send$/i }))
-    expect(
-      await screen.findByText("The overdue billing dispute is waiting on review."),
-    ).toBeInTheDocument()
-    await user.click(screen.getByRole("combobox", { name: "Mailbox" }))
-    await user.click(await screen.findByRole("option", { name: "Sales" }))
-    await waitFor(() => {
-      expect(screen.queryByRole("listbox")).not.toBeInTheDocument()
-    })
-    expect(
-      await screen.findByText("The overdue billing dispute is waiting on review."),
-    ).toBeInTheDocument()
-    expect(screen.queryByText("Ask about the inbox")).not.toBeInTheDocument()
   })
 
   it("restores a stored session when InboxAssistant opens on an empty chat", async () => {

@@ -1,4 +1,4 @@
-import { clearAuthSession, setAuthSession } from "@/features/auth/auth-store"
+import { setAuthSession } from "@/features/auth/auth-store"
 import {
   ApiError,
   CSRF_COOKIE,
@@ -48,6 +48,6 @@ export const authApi = {
         new_password: newPassword,
       }),
     })
-    clearAuthSession()
+    await clearServerSession()
   },
 }

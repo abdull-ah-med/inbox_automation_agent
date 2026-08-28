@@ -209,3 +209,55 @@ async def test_email_sends_via_smtp_never_graph() -> None:
     assert sent is True
     send.assert_called_once()
     graph_send.assert_not_called()
+
+
+def test_smtp_starttls_uses_default_ssl_context() -> None:
+    """SPEC: STARTTLS must verify certs (ssl.create_default_context → CERT_REQUIRED)."""
+    import ssl
+    from unittest.mock import MagicMock, patch
+
+    from app.models.schemas.ops_report import MailboxVolume, OpsMetricsResponse
+    from app.services.ops_report_job import _send_smtp
+
+    settings = Settings(
+        environment="local",
+        ops_report_email_enabled=True,
+        ops_report_smtp_host="smtp.example.com",
+        ops_report_smtp_port=587,
+        ops_report_smtp_to="ops@example.com",
+        ops_report_smtp_from="reports@example.com",
+    )
+    metrics = OpsMetricsResponse(
+        period=OpsPeriod(
+            date_from=datetime(2026, 8, 3, tzinfo=UTC),
+            date_to=datetime(2026, 8, 9, tzinfo=UTC),
+        ),
+        volume_by_mailbox=[],
+        total_volume=0,
+        spam_filtered=0,
+        approvals=0,
+        rejects=0,
+        approval_rate=0.0,
+        top_reject_themes=[],
+        avg_resolve_hours=None,
+        resolve_sample_count=0,
+        generated_at=datetime.now(UTC),
+    )
+    smtp = MagicMock()
+    smtp_cm = MagicMock()
+    smtp_cm.__enter__.return_value = smtp
+    smtp_cm.__exit__.return_value = False
+    ctx = ssl.create_default_context()
+
+    with (
+        patch("app.services.ops_report_job.smtplib.SMTP", return_value=smtp_cm) as smtp_ctor,
+        patch("app.services.ops_report_job.ssl.create_default_context", return_value=ctx) as create_ctx,
+    ):
+        _send_smtp(settings, metrics, b"%PDF", "ops-weekly.pdf")
+
+    smtp_ctor.assert_called_once()
+    create_ctx.assert_called_once()
+    smtp.starttls.assert_called_once()
+    kwargs = smtp.starttls.call_args.kwargs
+    assert "context" in kwargs
+    assert kwargs["context"].verify_mode == ssl.CERT_REQUIRED

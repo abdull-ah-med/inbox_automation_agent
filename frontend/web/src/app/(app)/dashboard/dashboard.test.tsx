@@ -153,12 +153,14 @@ describe("dashboard page", () => {
   it("keeps mailbox cards visible while the attention sort refetch runs", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     let finishRecent: ((value: typeof overviewPayload) => void) | undefined
-    overview.mockImplementationOnce(async () => overviewPayload).mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishRecent = resolve
-        }),
-    )
+    overview
+      .mockImplementationOnce(async () => overviewPayload)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRecent = resolve
+          }),
+      )
 
     renderPage()
     expect(await screen.findByText(/1 awaiting action · 0 stale/i)).toBeInTheDocument()

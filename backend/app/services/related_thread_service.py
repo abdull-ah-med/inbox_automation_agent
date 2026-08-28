@@ -560,12 +560,17 @@ async def load_confirmed_contexts(
 ) -> list[CrossThreadContextSchema]:
     """Local-DB messages for confirmed associations. Never packs unconfirmed hits."""
     pairs = await association_review_repo.confirmed_pairs(session, source_thread_id)
+    if not pairs:
+        return []
+    related_ids = [related_id for related_id, _score in pairs]
+    related_map = await thread_repo.list_by_ids(session, related_ids)
+    grouped = await message_repo.list_by_thread_ids(session, list(related_map.keys()))
     contexts: list[CrossThreadContextSchema] = []
     for related_id, score in pairs:
-        related = await thread_repo.get_by_id_trusted(session, related_id)
+        related = related_map.get(related_id)
         if related is None:
             continue
-        rows = await message_repo.list_by_thread(session, related.id)
+        rows = grouped.get(related.id, [])
         if not rows:
             continue
         contexts.append(

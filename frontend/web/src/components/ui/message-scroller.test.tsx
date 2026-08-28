@@ -46,6 +46,19 @@ describe("MessageScroller", () => {
   })
 
   it("keeps stick-to-bottom instant when content grows while pinned", () => {
+    const resizeCallbacks: Array<() => void> = []
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(callback: () => void) {
+          resizeCallbacks.push(callback)
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+
     const { rerender } = render(
       <MessageScrollerProvider>
         <MessageScroller>
@@ -95,6 +108,9 @@ describe("MessageScroller", () => {
         </MessageScroller>
       </MessageScrollerProvider>,
     )
+
+    // Content growth is observed via ResizeObserver, not a no-deps layout effect.
+    resizeCallbacks.forEach((callback) => callback())
 
     expect(scrollTop).toBe(400)
     expect(scrollTo).not.toHaveBeenCalled()

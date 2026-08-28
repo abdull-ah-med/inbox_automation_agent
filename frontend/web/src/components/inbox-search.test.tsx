@@ -157,4 +157,25 @@ describe("InboxSearch", () => {
       /search-cancel-button\]:cursor-pointer/,
     )
   })
+
+  it("marks the keyboard-highlighted suggestion as aria-selected and sets activedescendant", async () => {
+    // Bug this catches: listbox options never expose which row is active.
+    const user = userEvent.setup()
+    renderSearch()
+    const input = screen.getByRole("searchbox", { name: /search mail/i })
+    await user.click(input)
+    const fromOption = screen.getByRole("option", { name: /^from:/i })
+    expect(fromOption).toHaveAttribute("aria-selected", "false")
+
+    await user.keyboard("{ArrowDown}")
+    expect(fromOption).toHaveAttribute("aria-selected", "true")
+    expect(fromOption).toHaveAttribute("id")
+    expect(input).toHaveAttribute("aria-activedescendant", fromOption.id)
+
+    await user.keyboard("{ArrowDown}")
+    const containsOption = screen.getByRole("option", { name: /^contains:/i })
+    expect(containsOption).toHaveAttribute("aria-selected", "true")
+    expect(fromOption).toHaveAttribute("aria-selected", "false")
+    expect(input).toHaveAttribute("aria-activedescendant", containsOption.id)
+  })
 })

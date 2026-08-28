@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -69,6 +71,7 @@ from app.core.exceptions import (
 from app.core.logging import configure_logging
 from app.core.middleware.security_headers import SecurityHeadersMiddleware
 from app.core.middleware.slowapi_asgi import SlowAPIStreamingMiddleware
+from app.core.public_errors import public_detail
 from app.core.rate_limit import limiter
 from app.db.session import dispose_engine, get_session_factory
 from app.workers.graph_subscription_worker import (
@@ -77,6 +80,7 @@ from app.workers.graph_subscription_worker import (
 )
 from app.workers.ops_report_worker import run_weekly_ops_report
 from app.workers.poll_fallback_worker import run_poll_all_mailboxes
+from app.workers.webhook_stream_worker import run_webhook_stream_worker
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +112,8 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
 }
 
 _scheduler: AsyncIOScheduler | None = None
+_webhook_worker_task: asyncio.Task[None] | None = None
+_webhook_worker_stop: asyncio.Event | None = None
 
 
 async def _ping_redis() -> Redis:
@@ -136,7 +142,7 @@ async def _purge_expired_chat_cache() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    global _scheduler
+    global _scheduler, _webhook_worker_task, _webhook_worker_stop
     logger.info("app_startup")
 
     settings = get_settings()
@@ -156,7 +162,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             + "; ".join(security_errors)
         )
 
-    await _ping_redis()
+    redis = await _ping_redis()
+
+    global _webhook_worker_task, _webhook_worker_stop
+    _webhook_worker_stop = asyncio.Event()
+    _webhook_worker_task = asyncio.create_task(
+        run_webhook_stream_worker(redis, stop_event=_webhook_worker_stop),
+        name="graph-webhook-stream-worker",
+    )
 
     # Construct once at startup (or resolve None when Slack env vars are unset).
     get_slack_app(settings)
@@ -223,6 +236,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     yield
 
+    if _webhook_worker_stop is not None:
+        _webhook_worker_stop.set()
+    if _webhook_worker_task is not None:
+        _webhook_worker_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await _webhook_worker_task
+        _webhook_worker_task = None
     if _scheduler is not None:
         _scheduler.shutdown(wait=False)
         _scheduler = None
@@ -344,15 +364,9 @@ def create_app() -> FastAPI:
         exc: InboxTriageError,
     ) -> JSONResponse:
         status_code = EXCEPTION_STATUS_MAP.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
-        if isinstance(exc, GraphClientError):
-            detail = "Upstream Microsoft Graph request failed"
-        elif isinstance(exc, AuthError):
-            detail = str(exc) or "Authentication failed"
-        else:
-            detail = str(exc)
         return JSONResponse(
             status_code=status_code,
-            content={"detail": detail, "error_type": type(exc).__name__},
+            content={"detail": public_detail(exc), "error_type": type(exc).__name__},
         )
 
     return app

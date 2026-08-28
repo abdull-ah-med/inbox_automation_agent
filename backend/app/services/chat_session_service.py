@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings
+from app.core.mailbox_keys import resolve_allowed_mailbox
 from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
 from app.repositories import chat_session_repo
 
@@ -79,8 +81,12 @@ async def create_session(
     *,
     user_id: uuid.UUID,
     mailbox: str | None,
+    settings: Settings,
 ) -> chat_session_repo.ChatSessionSchema:
-    return await chat_session_repo.create(session, user_id=user_id, mailbox=mailbox)
+    resolved: str | None = None
+    if mailbox is not None and mailbox.strip():
+        resolved = resolve_allowed_mailbox(settings, mailbox)
+    return await chat_session_repo.create(session, user_id=user_id, mailbox=resolved)
 
 
 async def get_session(

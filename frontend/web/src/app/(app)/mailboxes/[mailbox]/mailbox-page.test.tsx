@@ -5,12 +5,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const replace = vi.fn()
 const listThreads = vi.fn()
+const searchParamsString = vi.fn(() => "")
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, push: vi.fn(), back: vi.fn() }),
   usePathname: () => "/mailboxes/sales",
   useParams: () => ({ mailbox: "sales" }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(searchParamsString()),
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -38,6 +39,7 @@ describe("Mailbox page filters", () => {
   beforeEach(() => {
     replace.mockReset()
     listThreads.mockReset()
+    searchParamsString.mockReturnValue("")
     listThreads.mockResolvedValue({ items: [], next_cursor: null })
     vi.stubGlobal(
       "IntersectionObserver",
@@ -73,5 +75,36 @@ describe("Mailbox page filters", () => {
     await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
     await user.click(await screen.findByRole("option", { name: "Needs human review" }))
     expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=REQUIRES_HUMAN")
+  })
+})
+
+describe("Mailbox page — useSearchParams Suspense boundary", () => {
+  beforeEach(() => {
+    replace.mockReset()
+    listThreads.mockReset()
+    searchParamsString.mockReturnValue("state=REQUIRES_HUMAN")
+    listThreads.mockResolvedValue({ items: [], next_cursor: null })
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    )
+  })
+
+  it("applies the state filter from the URL without bailing out of Suspense", async () => {
+    // Bug this catches: useSearchParams without a Suspense boundary opts the
+    // whole mailbox route into CSR bailout during prerender.
+    renderPage()
+    const stateFilter = await screen.findByRole("combobox", {
+      name: "Filter by state",
+    })
+    expect(stateFilter).toHaveTextContent(/needs human review/i)
+    expect(listThreads).toHaveBeenCalledWith(
+      "sales",
+      expect.objectContaining({ state: "REQUIRES_HUMAN" }),
+    )
   })
 })

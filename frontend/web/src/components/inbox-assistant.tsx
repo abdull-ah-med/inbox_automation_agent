@@ -108,6 +108,7 @@ export const InboxAssistant = () => {
   }
 
   const handleMailboxChange = (value: string | null) => {
+    handleReset()
     setMailbox(value ?? ALL_MAILBOXES)
   }
 

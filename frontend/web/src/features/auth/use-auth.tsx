@@ -108,13 +108,9 @@ export function useAuthState() {
 }
 
 export function useLogin() {
-  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       api.login(email, password),
-    onSuccess: (data) => {
-      queryClient.setQueryData(["auth", "me"], data.user)
-    },
   })
 }
 

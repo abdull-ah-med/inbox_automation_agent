@@ -47,6 +47,7 @@ async def create_session(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: AppSettings,
     _user: CurrentUser,
 ) -> ChatSessionCreateResponse:
     """Create a durable InboxAssistant conversation the client can resume."""
@@ -55,6 +56,7 @@ async def create_session(
         session,
         user_id=_user.id,
         mailbox=body.mailbox,
+        settings=settings,
     )
     # get_db_session never auto-commits; without this the insert rolls back.
     await session.commit()

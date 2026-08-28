@@ -587,8 +587,8 @@ async def test_webhook_invalid_payload_returns_202() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_enqueue_passes_only_payload_and_settings() -> None:
-    """Regression: request-scoped redis/graph_client must not be passed to BackgroundTasks."""
+async def test_webhook_enqueue_writes_stream_job_without_background_tasks() -> None:
+    """SPEC: notifications are durable via Redis Streams, not FastAPI BackgroundTasks."""
     app = FastAPI()
     app.include_router(graph_router)
 
@@ -597,34 +597,36 @@ async def test_webhook_enqueue_passes_only_payload_and_settings() -> None:
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
+    redis = _webhook_redis()
+    redis.xadd = AsyncMock(return_value="1-0")
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
 
-    with patch(
-        "app.api.webhooks.graph._process_notifications",
-        new_callable=AsyncMock,
-    ) as process:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post(
-                "/webhooks/graph/notifications",
-                json={
-                    "value": [
-                        {
-                            "subscriptionId": "sub-1",
-                            "clientState": "secret",
-                            "changeType": "created",
-                            "resource": "users/user@example.com/messages/msg-1",
-                            "resourceData": {"id": "msg-1"},
-                        }
-                    ]
-                },
-            )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/notifications",
+            json={
+                "value": [
+                    {
+                        "subscriptionId": "sub-1",
+                        "clientState": "secret",
+                        "changeType": "created",
+                        "resource": "users/user@example.com/messages/msg-1",
+                        "resourceData": {"id": "msg-1"},
+                    }
+                ]
+            },
+        )
 
     assert response.status_code == 202
-    process.assert_awaited_once()
-    assert len(process.await_args.args) == 2
-    assert process.await_args.kwargs == {}
-    assert process.await_args.args[1] is settings
+    redis.xadd.assert_awaited_once()
+    args, kwargs = redis.xadd.await_args
+    assert args[0] == "graph:webhook:stream"
+    fields = args[1]
+    assert fields["kind"] == "notifications"
+    assert "msg-1" in fields["payload"]
+    assert kwargs.get("maxlen") == 10_000
 
 
 @pytest.mark.asyncio
@@ -1186,7 +1188,7 @@ async def test_webhook_rate_limit_still_enqueues_valid_client_state() -> None:
     app.dependency_overrides[get_redis] = lambda: redis
 
     with patch(
-        "app.api.webhooks.graph.enqueue",
+        "app.api.webhooks.graph.enqueue_webhook_job",
     ) as enqueue_mock:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1207,7 +1209,7 @@ async def test_webhook_rate_limit_still_enqueues_valid_client_state() -> None:
             )
 
     assert response.status_code == 202
-    enqueue_mock.assert_called_once()
+    enqueue_mock.assert_awaited_once()
     # Untrusted: rate key from peer, not spoofed XFF.
     call_args = redis.eval.await_args
     assert call_args is not None
@@ -1233,7 +1235,7 @@ async def test_webhook_rate_limit_skips_bad_client_state() -> None:
     app.dependency_overrides[get_redis] = lambda: redis
 
     with patch(
-        "app.api.webhooks.graph.enqueue",
+        "app.api.webhooks.graph.enqueue_webhook_job",
     ) as enqueue_mock:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -1253,7 +1255,7 @@ async def test_webhook_rate_limit_skips_bad_client_state() -> None:
             )
 
     assert response.status_code == 202
-    enqueue_mock.assert_not_called()
+    enqueue_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1274,7 +1276,7 @@ async def test_webhook_rate_limit_uses_x_real_ip_when_trusted() -> None:
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_redis] = lambda: redis
 
-    with patch("app.api.webhooks.graph.enqueue"):
+    with patch("app.api.webhooks.graph.enqueue_webhook_job"):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             await client.post(

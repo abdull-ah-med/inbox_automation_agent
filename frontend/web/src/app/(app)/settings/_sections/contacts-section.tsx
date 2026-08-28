@@ -124,11 +124,7 @@ const ContactsPanel = ({
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           {mailboxes.length > 1 ? (
-            <Select
-              items={mailboxItems}
-              value={selectedKey}
-              onValueChange={handleMailboxChange}
-            >
+            <Select items={mailboxItems} value={selectedKey} onValueChange={handleMailboxChange}>
               <SelectTrigger className="w-[220px]" aria-label="Mailbox for contacts" tabIndex={0}>
                 <SelectValue placeholder="Select mailbox" />
               </SelectTrigger>

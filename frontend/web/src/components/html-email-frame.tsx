@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
+import { sanitize } from "isomorphic-dompurify"
+
 import { cn } from "@/lib/utils"
 
 const EMAIL_CSP =
@@ -14,6 +16,12 @@ export const isHtmlEmailSupported = (): boolean => {
 }
 
 export const wrapEmailHtml = (bodyHtml: string): string => {
+  // Sanitize on server and client (isomorphic-dompurify) so SSR never embeds
+  // raw Graph HTML into srcDoc — AgentMail / Close defense-in-depth.
+  const sanitized = sanitize(bodyHtml, {
+    FORBID_TAGS: ["script", "iframe", "object", "embed", "form"],
+    FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover", "onfocus", "onblur"],
+  })
   // Reading-pane chrome inspired by Outlook on the web (Segoe UI / Calibri, white paper).
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${EMAIL_CSP}"><base target="_blank" rel="noopener noreferrer"><style>
 html{background:#fff}
@@ -28,7 +36,7 @@ pre,code{font-family:Consolas,"Courier New",monospace;white-space:pre-wrap;word-
 p{margin:0 0 0.85em}
 hr{border:0;border-top:1px solid #edebe9;margin:1em 0}
 div.WordSection1,div[class*="WordSection"]{page:WordSection1}
-</style></head><body>${bodyHtml}</body></html>`
+</style></head><body>${sanitized}</body></html>`
 }
 
 type HtmlEmailFrameProps = {

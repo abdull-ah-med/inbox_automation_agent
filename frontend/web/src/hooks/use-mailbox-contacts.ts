@@ -3,7 +3,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
 import { api } from "@/lib/api-client"
-import type { MailboxContactPatch, MailboxContactUpsert } from "@/lib/types"
 
 export const CONTACTS_PAGE_SIZE = 50
 
@@ -32,26 +31,6 @@ const invalidateContactQueries = async (
 ) => {
   await queryClient.invalidateQueries({ queryKey: ["mailbox", mailbox, "contacts"] })
   await queryClient.invalidateQueries({ queryKey: ["thread"] })
-}
-
-export const useUpsertContact = (mailbox: string) => {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: MailboxContactUpsert) => api.mailboxContacts.upsert(mailbox, body),
-    onSuccess: async () => {
-      await invalidateContactQueries(queryClient, mailbox)
-    },
-  })
-}
-
-export const useUpdateContact = (mailbox: string) => {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (body: MailboxContactPatch) => api.mailboxContacts.update(mailbox, body),
-    onSuccess: async () => {
-      await invalidateContactQueries(queryClient, mailbox)
-    },
-  })
 }
 
 export const useDeleteContact = (mailbox: string) => {

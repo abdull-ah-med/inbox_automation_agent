@@ -24,7 +24,7 @@ from typing import Annotated
 from urllib.parse import unquote
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -52,7 +52,7 @@ from app.services import (
     sent_reply_learning_service,
     subscription_service,
 )
-from app.workers.enqueue import enqueue
+from app.workers.enqueue import enqueue_webhook_job
 
 logger = structlog.get_logger(__name__)
 
@@ -363,7 +363,6 @@ def _any_client_state_match(
 )
 async def receive_graph_notifications(
     request: Request,
-    background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
     validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
@@ -409,11 +408,10 @@ async def receive_graph_notifications(
     if getattr(request.state, "webhook_over_rate_limit", False):
         logger.warning("graph_webhook_over_limit_valid_client_state_enqueued")
 
-    enqueue(
-        background_tasks,
-        _process_notifications,
-        payload,
-        settings,
+    await enqueue_webhook_job(
+        redis,
+        kind="notifications",
+        payload=payload.model_dump(mode="json"),
     )
     return Response(status_code=status.HTTP_202_ACCEPTED)
 
@@ -425,7 +423,6 @@ async def receive_graph_notifications(
 )
 async def receive_graph_lifecycle(
     request: Request,
-    background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
     validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
@@ -467,10 +464,9 @@ async def receive_graph_lifecycle(
     if getattr(request.state, "webhook_over_rate_limit", False):
         logger.warning("graph_lifecycle_over_limit_valid_client_state_enqueued")
 
-    enqueue(
-        background_tasks,
-        _process_lifecycle_notifications,
-        payload,
-        settings,
+    await enqueue_webhook_job(
+        redis,
+        kind="lifecycle",
+        payload=payload.model_dump(mode="json"),
     )
     return Response(status_code=status.HTTP_202_ACCEPTED)

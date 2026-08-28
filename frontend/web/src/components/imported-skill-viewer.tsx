@@ -1,7 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChevronDown, ChevronRight, Download, FileText } from "lucide-react"
 
 import { EmailBody } from "@/components/email-body"
@@ -54,7 +54,17 @@ const SkillFileRow = ({ skillId, file }: { skillId: string; file: SkillFileMeta 
       }
     },
     enabled: open,
+    gcTime: 0,
   })
+
+  useEffect(() => {
+    if (!open) return
+    const url = contentQuery.data?.kind === "blob" ? contentQuery.data.url : null
+    if (!url) return
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [open, contentQuery.data])
 
   const handleToggle = () => {
     setOpen((value) => !value)
@@ -104,7 +114,7 @@ const SkillFileRow = ({ skillId, file }: { skillId: string; file: SkillFileMeta 
               {contentQuery.data.text}
             </pre>
           ) : null}
-          {contentQuery.data?.kind === "blob" ? (
+          {contentQuery.data?.kind === "blob" && open ? (
             <a
               href={contentQuery.data.url}
               download={file.relative_path.split("/").pop()}

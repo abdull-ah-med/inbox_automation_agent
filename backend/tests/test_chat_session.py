@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from app.core.config import Settings
 from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
 
 
@@ -61,6 +62,10 @@ async def test_chat_session_create_get_and_append_turn(db_session) -> None:
         db_session,
         user_id=user.id,
         mailbox="sales@example.com",
+        settings=Settings(
+            environment="local",
+            target_mailboxes="sales@example.com",
+        ),
     )
     await db_session.commit()
 
@@ -193,3 +198,102 @@ async def test_create_session_route_persists_after_request_ends(
         assert row[0] == "sales@example.com"
     finally:
         await engine.dispose()
+
+
+def test_create_session_rejects_mailbox_outside_allowlist() -> None:
+    """SPEC: non-empty mailbox must be on TARGET_MAILBOXES (or resolve key→email)."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    import pytest
+
+    from app.core.config import Settings
+    from app.core.exceptions import UnknownMailboxError
+    from app.services import chat_session_service
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com,ops@example.com",
+    )
+    db = AsyncMock()
+
+    async def _run() -> None:
+        with pytest.raises(UnknownMailboxError, match="Mailbox not found"):
+            await chat_session_service.create_session(
+                db,
+                user_id=uuid.uuid4(),
+                mailbox="attacker@evil.example",
+                settings=settings,
+            )
+
+    asyncio.run(_run())
+    # Must fail before any repo write.
+    assert not getattr(db, "add", MagicMock()).called
+
+
+def test_create_session_allows_null_and_empty_mailbox() -> None:
+    """SPEC: null/empty mailbox means all mailboxes — always allowed."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.config import Settings
+    from app.services import chat_session_service
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+    )
+    sentinel = object()
+
+    async def _run() -> None:
+        with patch(
+            "app.services.chat_session_service.chat_session_repo.create",
+            new_callable=AsyncMock,
+            return_value=sentinel,
+        ) as create:
+            db = AsyncMock()
+            for mailbox in (None, "", "   "):
+                row = await chat_session_service.create_session(
+                    db,
+                    user_id=uuid.uuid4(),
+                    mailbox=mailbox,
+                    settings=settings,
+                )
+                assert row is sentinel
+            assert create.await_count == 3
+
+    asyncio.run(_run())
+
+
+def test_create_session_resolves_allowed_mailbox_key() -> None:
+    """Oracle: key 'sales' resolves to sales@example.com when that email is allowlisted."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from app.core.config import Settings
+    from app.services import chat_session_service
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+    )
+    captured: dict[str, object] = {}
+
+    async def fake_create(session, *, user_id, mailbox):  # type: ignore[no-untyped-def]
+        captured["mailbox"] = mailbox
+        return object()
+
+    async def _run() -> None:
+        with patch(
+            "app.services.chat_session_service.chat_session_repo.create",
+            side_effect=fake_create,
+        ):
+            await chat_session_service.create_session(
+                AsyncMock(),
+                user_id=uuid.uuid4(),
+                mailbox="sales",
+                settings=settings,
+            )
+
+    asyncio.run(_run())
+    assert captured["mailbox"] == "sales@example.com"

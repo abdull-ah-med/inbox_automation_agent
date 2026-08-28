@@ -181,10 +181,7 @@ describe("ContactsSection", () => {
     let items: MailboxContactView[] = []
     listMock.mockImplementation(() => Promise.resolve({ total: items.length, items }))
     upsertMock.mockImplementation(
-      (
-        _mailbox: string,
-        body: { email: string; first_name: string; full_name?: string },
-      ) => {
+      (_mailbox: string, body: { email: string; first_name: string; full_name?: string }) => {
         const row = contact({
           email: body.email,
           first_name: body.first_name,

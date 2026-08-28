@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import smtplib
+import ssl
 from datetime import datetime
 from email.message import EmailMessage
 
@@ -70,7 +71,7 @@ def _send_smtp(
     with smtplib.SMTP(host, port, timeout=30) as smtp:
         smtp.ehlo()
         if settings.ops_report_smtp_port != 25:
-            smtp.starttls()
+            smtp.starttls(context=ssl.create_default_context())
             smtp.ehlo()
         user = settings.ops_report_smtp_user.strip()
         if user:

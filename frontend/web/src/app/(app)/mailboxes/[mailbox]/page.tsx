@@ -1,8 +1,8 @@
 "use client"
 
+import { Suspense, useCallback, useEffect, useMemo, useRef } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useMemo, useRef } from "react"
 
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { EmptyState } from "@/components/empty-state"
@@ -42,7 +42,31 @@ const URGENCY_ITEMS = [
   { label: "LOW", value: "LOW" },
 ] as const
 
+const MailboxPageSkeleton = () => (
+  <div className="space-y-4" aria-busy="true" aria-live="polite">
+    <Breadcrumbs items={[{ label: "Overview", href: "/dashboard" }, { label: "…" }]} />
+    <Skeleton className="h-10 w-48 rounded-lg" />
+    <div className="space-y-2">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <Skeleton key={i} className="h-24 w-full rounded-lg" />
+      ))}
+    </div>
+  </div>
+)
+
+// `useSearchParams` opts the client-component tree up to the nearest
+// Suspense boundary into CSR during prerendering (Next.js docs: "Missing
+// Suspense boundary with useSearchParams"). Isolate it in a child so the
+// route can still prerender a static shell instead of bailing whole-page.
 export default function MailboxPage() {
+  return (
+    <Suspense fallback={<MailboxPageSkeleton />}>
+      <MailboxPageContent />
+    </Suspense>
+  )
+}
+
+function MailboxPageContent() {
   const params = useParams<{ mailbox: string }>()
   const mailbox = decodeURIComponent(params.mailbox)
   const router = useRouter()

@@ -89,7 +89,7 @@ function MessageScrollerContent({ className, children, ...props }: React.Compone
 
   React.useLayoutEffect(() => {
     stickToEnd()
-  })
+  }, [stickToEnd])
 
   React.useEffect(() => {
     const content = contentRef.current
