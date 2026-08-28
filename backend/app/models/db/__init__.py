@@ -6,6 +6,7 @@ from app.models.db.chat_session import ChatSession
 from app.models.db.classification import Classification
 from app.models.db.draft import Draft
 from app.models.db.email_embedding import EmailEmbedding
+from app.models.db.mailbox_contact import MailboxContact
 from app.models.db.message import Message
 from app.models.db.refresh_token import RefreshToken
 from app.models.db.rejection_memory import RejectionMemory
@@ -32,6 +33,7 @@ __all__ = [
     "Classification",
     "Draft",
     "EmailEmbedding",
+    "MailboxContact",
     "Message",
     "RefreshToken",
     "RejectionMemory",
