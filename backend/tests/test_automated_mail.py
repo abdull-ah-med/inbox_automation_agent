@@ -215,7 +215,22 @@ def test_subscriptions_role_mailbox_is_automated() -> None:
     )
 
 
-def test_enrich_flags_keeps_stored_automated_for_pretty_from() -> None:
+def test_enrich_flags_stale_audit_does_not_brand_a_human_thread() -> None:
+    """P3 Showcase: first inbound was usdot@ listserv; Steve's reply is human.
+
+    Thread-level Automated is False because not every inbound is a robot.
+    A year-old triage audit must not keep the badge on.
+    """
+    flags = TriageFlags(is_spam=False, has_action_items=False, is_automated=True)
+    enriched = enrich_triage_flags(
+        flags,
+        sender="srusso@sample-information.example.com",
+        mailbox="sampleagent@sample-site.example.com",
+        subject="Re: You're Invited! Public-Private Partnerships (P3) Showcase",
+        is_automated=False,
+    )
+    assert enriched is not None
+    assert enriched.is_automated is False
     """Listservs with a brand From stay automated when ingest stored the flag."""
     flags = TriageFlags(is_spam=False, has_action_items=False, is_automated=True)
     enriched = enrich_triage_flags(

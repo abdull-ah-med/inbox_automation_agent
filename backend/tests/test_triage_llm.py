@@ -96,6 +96,13 @@ def test_build_user_content_omits_mailbox_owner_when_unset() -> None:
     assert "Mailbox owner:" not in content
 
 
+def test_build_user_content_treats_ingest_automated_as_hint_not_verdict() -> None:
+    email = _email().model_copy(update={"is_automated": True})
+    content = triage_llm._build_user_content(email, _context(email))
+    assert "not a verdict" in content.lower()
+    assert "Ingest flagged this message as automated (list/noreply headers)." not in content
+
+
 @pytest.mark.asyncio
 async def test_triage_email_happy_path_uses_settings_model_and_prompt() -> None:
     email = _email()

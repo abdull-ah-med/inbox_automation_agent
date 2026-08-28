@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-28.4"
+PROMPT_VERSION = "2026-08-28.5"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -92,7 +92,7 @@ URGENCY_EXAMPLES: tuple[tuple[str, str], ...] = (
 
 TRIAGE_SYSTEM_PROMPT = f"""\
 You are an email triage filter for a transportation-compliance operations inbox.
-Your job is to quickly assess incoming emails and answer four questions.
+Your job is to quickly assess incoming emails and answer five questions.
 
 Person of Interest (PoI): Elise — identified by the Mailbox address in the user turn
 (the monitored inbox being triaged). Do not assume a hardcoded PoI email.
@@ -132,6 +132,15 @@ do not invent or return any numeric score):
                         this mailbox. False unless a counterparty is waiting on a
                         reply in this thread. draft_needed true implies
                         has_action_items true.
+  is_automated:         bool — true only if a machine is talking: noreply receipts,
+                        listserv/newsletter blasts, OOO/DSN, or a ticket auto-ack
+                        with no human writing. False when a named person is writing
+                        (including a helpdesk/Zendesk agent such as
+                        "Alex Taylor (SampleHelpdesk)"), when this mailbox has already
+                        been in the conversation, or when the body is a human
+                        discussion even if From is a role address. Ticket chrome
+                        ("type your reply above this line") is not proof of a robot.
+                        Automated does not mean spam.
   needs_context:        bool — true if understanding or responding to this email
                         requires information from previous, separate email threads
   context_reason:       string or null — if needs_context is true, explain what prior

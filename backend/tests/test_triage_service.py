@@ -230,7 +230,7 @@ async def test_run_triage_never_discards_allowlisted_sender_as_spam() -> None:
 @pytest.mark.asyncio
 async def test_run_triage_automated_mail_stays_pending_without_a_letter() -> None:
     call = TriageCallResult(
-        triage=_triage(draft_needed=True),
+        triage=_triage(draft_needed=True, is_automated=True),
         prompt_version="v",
         model="claude-haiku-4-5",
         input_tokens=1,
@@ -252,6 +252,33 @@ async def test_run_triage_automated_mail_stays_pending_without_a_letter() -> Non
     assert state.draft_status == "PENDING"
     assert state.triage is not None
     assert state.triage.draft_needed is False
+
+
+@pytest.mark.asyncio
+async def test_run_triage_named_helpdesk_agent_keeps_the_letter() -> None:
+    call = TriageCallResult(
+        triage=_triage(draft_needed=True, is_automated=False),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(
+                sender="helpdesk@sample-helpdesk.example.com",
+                is_automated=True,
+            ),
+            client=AsyncMock(),
+            settings=Settings(),
+        )
+    assert state.triage is not None
+    assert state.triage.draft_needed is True
+    assert state.draft_status == "PENDING"
 
 
 @pytest.mark.asyncio

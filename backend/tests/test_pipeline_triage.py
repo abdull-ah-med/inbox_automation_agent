@@ -657,3 +657,39 @@ async def test_finalize_skips_slack_when_reply_body_is_empty() -> None:
         )
     assert result.slack_delivery == "not_required"
     posted.assert_not_called()
+
+
+def test_audit_payload_uses_haiku_automated_not_ingest_identity() -> None:
+    """Alex on helpdesk@: ingest tagged robot; Haiku read a human ticket reply."""
+    from app.services.pipeline.triage_phase import _audit_payload
+
+    email = EmailMessageSchema(
+        message_id="m-alex",
+        conversation_id="c-dd",
+        mailbox="info@sample-services.example.com",
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Fw: Applicant Brittany Edwards",
+        body_text="The public link can stay on for those jurisdictions.",
+        received_at=datetime(2026, 8, 28, 21, 33, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+        is_automated=True,
+    )
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        triage=TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Answer the document question",
+            needs_context=False,
+            is_automated=False,
+        ),
+    )
+    payload = _audit_payload(state)
+    assert payload["is_automated"] is False

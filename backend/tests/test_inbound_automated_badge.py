@@ -127,7 +127,59 @@ async def test_thread_is_not_automated_after_elise_replies(db_session) -> None:
 
 
 @pytest.mark.asyncio
-async def test_one_automated_inbound_does_not_brand_a_human_thread(
+async def test_p3_invite_then_steve_reply_is_not_an_automated_thread(
+    db_session,
+) -> None:
+    """usdot@ invite + Steve Russo 'who wants to go' — not every inbound is a robot."""
+    thread = await thread_repo.upsert_thread(
+        db_session,
+        mailbox=MAILBOX,
+        conversation_id="conv-p3-showcase",
+        subject="Re: You're Invited! Public-Private Partnerships (P3) Showcase",
+        last_message_at=datetime(2026, 8, 25, 16, 48, tzinfo=UTC),
+    )
+    await message_repo.create_message(
+        db_session,
+        thread_id=thread.id,
+        graph_message_id="AAMk-usdot-invite",
+        direction="inbound",
+        sender="usdot@info.dot.gov",
+        is_automated=True,
+        body_text="You're Invited! P3 Showcase",
+        body_preview="You're Invited! P3 Showcase",
+        received_at=datetime(2026, 8, 25, 16, 24, tzinfo=UTC),
+    )
+    await message_repo.create_message(
+        db_session,
+        thread_id=thread.id,
+        graph_message_id="AAMk-elise-fyi",
+        direction="outbound",
+        sender=MAILBOX,
+        is_automated=False,
+        body_text="FYI",
+        body_preview="FYI",
+        received_at=datetime(2026, 8, 25, 16, 28, tzinfo=UTC),
+    )
+    await message_repo.create_message(
+        db_session,
+        thread_id=thread.id,
+        graph_message_id="AAMk-steve-who",
+        direction="inbound",
+        sender="srusso@sample-information.example.com",
+        sender_name="Steve Russo",
+        is_automated=False,
+        body_text="Wwhhhooo wants to go ?? LOLOL",
+        body_preview="Wwhhhooo wants to go ?? LOLOL",
+        received_at=datetime(2026, 8, 25, 16, 35, tzinfo=UTC),
+    )
+    await db_session.commit()
+
+    flags = await message_repo.inbound_automated_by_threads(db_session, [thread.id])
+    assert flags[thread.id] is False
+
+
+@pytest.mark.asyncio
+async def test_thread_with_human_inbound_is_not_automated_when_later_ooo_arrives(
     db_session,
 ) -> None:
     """Beau's OOO plus Ruth's human mail is a discussion, not an automated thread."""

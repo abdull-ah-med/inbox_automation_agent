@@ -115,7 +115,25 @@ def test_automated_listserv_never_needs_a_letter() -> None:
         body_text="Join us in Houston",
         is_automated=True,
     )
-    assert resolve_draft_needed(email=email, triage=_triage(draft_needed=True)) is False
+    assert (
+        resolve_draft_needed(email=email, triage=_triage(draft_needed=True, is_automated=True))
+        is False
+    )
+
+
+def test_named_helpdesk_agent_still_gets_a_letter() -> None:
+    """Alex on helpdesk@: ingest may tag the mailbox; Haiku saw a human reply."""
+    email = _email(
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Fw: Applicant Brittany Edwards",
+        body_text="The public link can stay on for those jurisdictions.",
+        is_automated=True,
+    )
+    assert (
+        resolve_draft_needed(email=email, triage=_triage(draft_needed=True, is_automated=False))
+        is True
+    )
 
 
 def test_generic_meeting_request_never_needs_a_letter() -> None:

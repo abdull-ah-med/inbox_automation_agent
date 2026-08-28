@@ -101,7 +101,7 @@ def resolve_draft_needed(
     """Return whether Sonnet should emit a reply_body."""
     if triage.is_spam:
         return False
-    if email.is_automated:
+    if triage.is_automated:
         return False
     meeting = (email.meeting_message_type or "").strip()
     if meeting in _MEETING_TYPES:

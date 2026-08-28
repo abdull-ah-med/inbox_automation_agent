@@ -124,7 +124,12 @@ def enrich_triage_flags(
     is_automated: bool | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> TriageFlags | None:
-    """Attach internal/automated tags and clear a stored spam flag on internal mail."""
+    """Attach internal/automated tags and clear a stored spam flag on internal mail.
+
+    When ``is_automated`` is passed (thread SQL, including False), it is the
+    badge. A stale triage audit or a listserv From on an older inbound must
+    not keep Automated on after a human has joined the thread.
+    """
     from app.core.automated_mail import is_automated_mail
 
     domains = extra_domains
@@ -139,7 +144,10 @@ def enrich_triage_flags(
     internal = is_internal_sender(sender, mailbox, extra_domains=domains)
     computed = is_automated_mail(sender=sender, subject=subject, headers=headers)
     prior = bool(flags.is_automated) if flags is not None else False
-    automated = computed or bool(is_automated) or prior
+    if is_automated is not None:
+        automated = bool(is_automated)
+    else:
+        automated = computed or prior
     if flags is None:
         if not internal and not automated:
             return None

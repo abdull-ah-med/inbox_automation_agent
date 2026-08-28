@@ -61,6 +61,7 @@ def test_triage_prompt_documents_output_fields() -> None:
         "has_action_items",
         "needs_context",
         "draft_needed",
+        "is_automated",
         "routing_category",
     ):
         assert field in TRIAGE_SYSTEM_PROMPT
@@ -68,6 +69,16 @@ def test_triage_prompt_documents_output_fields() -> None:
     assert "outbound email from this mailbox" in TRIAGE_SYSTEM_PROMPT.lower() or (
         "draft_needed" in TRIAGE_SYSTEM_PROMPT and "calendar" in TRIAGE_SYSTEM_PROMPT.lower()
     )
+
+
+def test_triage_prompt_asks_haiku_for_automated_from_the_letter() -> None:
+    """Badge is content: named ticket agents and human threads are not robots."""
+    lowered = TRIAGE_SYSTEM_PROMPT.lower()
+    assert "is_automated" in TRIAGE_SYSTEM_PROMPT
+    assert "named" in lowered or "person" in lowered
+    assert "helpdesk" in lowered or "zendesk" in lowered or "ticket" in lowered
+    assert "type your reply" in lowered or "ticket chrome" in lowered
+    assert "does not mean spam" in lowered
 
 
 def test_triage_prompt_does_not_treat_vendor_operations_as_spam() -> None:
@@ -168,12 +179,12 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.4"
+    assert PROMPT_VERSION == "2026-08-28.5"
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.4"
+    assert PROMPT_VERSION == "2026-08-28.5"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -233,4 +244,4 @@ def test_briefing_prompt_has_no_letter_fields() -> None:
     assert "Hi {name}" not in BRIEFING_SYSTEM_PROMPT
     assert "reply_body" not in BriefingSchema.model_fields
     assert "suggested_recipients" not in BriefingSchema.model_fields
-    assert PROMPT_VERSION == "2026-08-28.4"
+    assert PROMPT_VERSION == "2026-08-28.5"

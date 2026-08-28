@@ -7,7 +7,6 @@ import uuid
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.automated_mail import is_automated_mail
 from app.core.internal_mail import is_internal_sender
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.audit_events import TriageAuditEvent
@@ -154,11 +153,7 @@ def _audit_payload(state: EmailTriageState) -> dict[str, object]:
                     state.original_email.sender,
                     state.original_email.mailbox,
                 ),
-                "is_automated": bool(state.original_email.is_automated)
-                or is_automated_mail(
-                    sender=state.original_email.sender,
-                    subject=state.original_email.subject,
-                ),
+                "is_automated": bool(triage.is_automated),
             }
         )
     if state.error_logs:

@@ -73,9 +73,13 @@ def _build_user_content(
 
     meeting = (email.meeting_message_type or "").strip()
     meeting_line = f"Graph meetingMessageType: {meeting}\n" if meeting else ""
-    automated_line = "Ingest flagged this message as automated (list/noreply headers).\n"
-    if not email.is_automated:
-        automated_line = ""
+    automated_line = ""
+    if email.is_automated:
+        automated_line = (
+            "Ingest hint (not a verdict): headers/From looked automated. "
+            "Judge from the body and thread — a named person on a helpdesk "
+            "address is not a robot.\n"
+        )
     email_block = (
         f"Mailbox: {email.mailbox}\n"
         f"{owner_line}"
@@ -170,6 +174,7 @@ async def triage_email(
                 has_action_items=triage.has_action_items,
                 draft_needed=triage.draft_needed,
                 needs_context=triage.needs_context,
+                is_automated=triage.is_automated,
                 attempt=attempt + 1,
             )
             return TriageCallResult(

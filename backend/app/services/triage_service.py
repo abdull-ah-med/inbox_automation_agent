@@ -97,5 +97,6 @@ async def run_triage(
         has_action_items=triage.has_action_items,
         draft_needed=triage.draft_needed,
         needs_context=triage.needs_context,
+        is_automated=triage.is_automated,
     )
     return state
