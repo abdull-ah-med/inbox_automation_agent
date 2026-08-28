@@ -465,7 +465,7 @@ async def test_run_catchup_triages_inbound_skips_sonnet_promotes_and_keeps_resol
             new=AsyncMock(side_effect=_run_triage),
         ) as triage_mock,
         patch(
-            "app.services.pipeline.service.latest_proposed_has_teaching_note",
+            "app.services.pipeline.already_replied.latest_proposed_has_teaching_note",
             new=AsyncMock(return_value=True),
         ),
         patch(
