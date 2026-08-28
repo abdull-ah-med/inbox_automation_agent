@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.dashboard import TriageFlags
@@ -120,6 +121,8 @@ def enrich_triage_flags(
     mailbox: str | None,
     subject: str | None = None,
     extra_domains: list[str] | None = None,
+    is_automated: bool | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> TriageFlags | None:
     """Attach internal/automated tags and clear a stored spam flag on internal mail."""
     from app.core.automated_mail import is_automated_mail
@@ -134,7 +137,9 @@ def enrich_triage_flags(
             domains = []
 
     internal = is_internal_sender(sender, mailbox, extra_domains=domains)
-    automated = is_automated_mail(sender=sender, subject=subject)
+    computed = is_automated_mail(sender=sender, subject=subject, headers=headers)
+    prior = bool(flags.is_automated) if flags is not None else False
+    automated = computed or bool(is_automated) or prior
     if flags is None:
         if not internal and not automated:
             return None

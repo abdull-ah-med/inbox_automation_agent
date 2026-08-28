@@ -41,7 +41,7 @@ DEFAULT_MESSAGE_SELECT = (
     "id,subject,bodyPreview,body,uniqueBody,sender,from,toRecipients,ccRecipients,"
     "bccRecipients,receivedDateTime,conversationId,isRead,hasAttachments,importance,"
     "microsoft.graph.eventMessage/meetingMessageType,"
-    "microsoft.graph.eventMessageResponse/responseType"
+    "microsoft.graph.eventMessageResponse/responseType,internetMessageHeaders"
 )
 # Outlook View: body only, Prefer html (filtered — never outlook.allow-unsafe-html).
 HTML_BODY_SELECT = "id,body,uniqueBody"

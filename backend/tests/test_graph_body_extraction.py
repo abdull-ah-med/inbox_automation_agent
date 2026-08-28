@@ -181,3 +181,63 @@ def test_meeting_accepted_is_mapped_onto_email_schema() -> None:
     assert email.meeting_message_type == "meetingAccepted"
     assert email.meeting_response_type == "accepted"
     assert email.body_text == ""
+
+
+def test_ingest_keeps_graph_display_name_and_list_unsubscribe_as_automated() -> None:
+    email = _to_email(
+        GraphMessageSchema.model_validate(
+            {
+                "id": "AAMk-phmsa-1",
+                "subject": "Registration is open for the 2026 PHMSA Hazmat Multimodal Event",
+                "bodyPreview": "Join us",
+                "body": {"contentType": "text", "content": "Join us"},
+                "from": {
+                    "emailAddress": {
+                        "name": "PHMSA Subscriptions",
+                        "address": "phmsa.subscriptions@info.dot.gov",
+                    }
+                },
+                "internetMessageHeaders": [
+                    {
+                        "name": "List-Unsubscribe",
+                        "value": (
+                            "<https://public.govdelivery.com/accounts/USPHMSA/unsubscriber/new>"
+                        ),
+                    }
+                ],
+                "receivedDateTime": "2026-08-28T17:30:43Z",
+                "conversationId": CONVERSATION_ID,
+            }
+        )
+    )
+
+    assert email.sender == "phmsa.subscriptions@info.dot.gov"
+    assert email.sender_display_name == "PHMSA Subscriptions"
+    assert email.is_automated is True
+
+
+def test_ingest_keeps_person_display_name_and_calendar_is_not_automated() -> None:
+    email = _to_email(
+        GraphMessageSchema.model_validate(
+            {
+                "id": "AAMk-cal-1",
+                "subject": "Invitation: IDME's Demo - 2nd Week",
+                "bodyPreview": "Join with Google Meet",
+                "body": {"contentType": "text", "content": "Join with Google Meet"},
+                "from": {
+                    "emailAddress": {
+                        "name": "Abu Bakkar Siddiq",
+                        "address": "siddiq@sample-partner.example.com",
+                    }
+                },
+                "meetingMessageType": "meetingRequest",
+                "receivedDateTime": "2026-08-28T06:27:05Z",
+                "conversationId": CONVERSATION_ID,
+            }
+        )
+    )
+
+    assert email.sender == "siddiq@sample-partner.example.com"
+    assert email.sender_display_name == "Abu Bakkar Siddiq"
+    assert email.is_automated is False
+    assert email.meeting_message_type == "meetingRequest"

@@ -133,3 +133,33 @@ async def test_create_message_does_not_shrink_nonempty_body(db_session) -> None:
     assert loaded is not None
     assert loaded.body_text == "Will do."
     assert loaded.unique_body_text == "Will do."
+
+
+@pytest.mark.asyncio
+async def test_create_message_persists_graph_display_name_and_automated_flag(db_session) -> None:
+    thread = await thread_repo.upsert_thread(
+        db_session,
+        mailbox=MAILBOX,
+        conversation_id="conv-phmsa-1",
+        subject="Registration is open for the 2026 PHMSA Hazmat Multimodal Event",
+        last_message_at=datetime(2026, 8, 28, 17, 30, tzinfo=UTC),
+    )
+    row = await message_repo.create_message(
+        db_session,
+        thread_id=thread.id,
+        graph_message_id="AAMk-phmsa-persist-1",
+        direction="inbound",
+        sender="phmsa.subscriptions@info.dot.gov",
+        sender_name="PHMSA Subscriptions",
+        is_automated=True,
+        body_text="Join us",
+        body_preview="Join us",
+        received_at=datetime(2026, 8, 28, 17, 30, tzinfo=UTC),
+    )
+    await db_session.commit()
+
+    loaded = await message_repo.get_by_id(db_session, row.id, TenantScope.single(MAILBOX))
+    assert loaded is not None
+    assert loaded.sender == "phmsa.subscriptions@info.dot.gov"
+    assert loaded.sender_name == "PHMSA Subscriptions"
+    assert loaded.is_automated is True

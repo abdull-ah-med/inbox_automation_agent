@@ -54,6 +54,8 @@ class EmailMessageSchema(BaseModel):
     # Graph eventMessage / eventMessageResponse fields (null for normal mail).
     meeting_message_type: str | None = None
     meeting_response_type: str | None = None
+    sender_display_name: str | None = None
+    is_automated: bool = False
     # Optional packed-prompt fields (populated when summaries exist).
     summary_one_line: str | None = None
     summary_json: dict[str, object] | None = None

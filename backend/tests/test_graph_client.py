@@ -64,6 +64,7 @@ async def test_get_message_calls_correct_url(client: GraphClient) -> None:
     select = kwargs["params"]["$select"]
     assert "microsoft.graph.eventMessage/meetingMessageType" in select
     assert "microsoft.graph.eventMessageResponse/responseType" in select
+    assert "internetMessageHeaders" in select
 
 
 @pytest.mark.asyncio

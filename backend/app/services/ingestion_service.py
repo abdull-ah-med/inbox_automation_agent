@@ -25,6 +25,7 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.automated_mail import is_automated_mail
 from app.core.config import Settings, get_settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
@@ -141,6 +142,26 @@ def _sender_address(message: GraphMessageSchema) -> str:
     return "unknown"
 
 
+def _sender_display_name(message: GraphMessageSchema) -> str | None:
+    for candidate in (message.from_, message.sender):
+        if candidate and candidate.email_address:
+            name = (candidate.email_address.name or "").strip()
+            address = (candidate.email_address.address or "").strip()
+            if name and name.casefold() != address.casefold():
+                return name
+    return None
+
+
+def _graph_headers_map(message: GraphMessageSchema) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in message.internet_message_headers:
+        name = (item.name or "").strip()
+        value = (item.value or "").strip()
+        if name and value:
+            out[name] = value
+    return out
+
+
 def _recipient_addresses(
     recipients: list[GraphRecipientSchema],
 ) -> list[str]:
@@ -247,6 +268,12 @@ def _to_email_message_schema(
         conversation_id=conversation_id,
         mailbox=mailbox,
         sender=sender,
+        sender_display_name=_sender_display_name(message),
+        is_automated=is_automated_mail(
+            sender=sender,
+            subject=message.subject,
+            headers=_graph_headers_map(message),
+        ),
         subject=message.subject or "(no subject)",
         body_text=body_text,
         body_preview=message.body_preview,
@@ -390,6 +417,10 @@ async def build_thread_context_from_db(
                 bcc_recipients=list(row.bcc_recipients or []),
                 has_attachments=bool(row.has_attachments),
                 graph_folder=row.graph_folder,
+                meeting_message_type=row.meeting_message_type,
+                meeting_response_type=row.meeting_response_type,
+                sender_display_name=row.sender_name,
+                is_automated=bool(row.is_automated),
                 summary_one_line=row.summary_one_line,
                 summary_json=row.summary_json,
             )
@@ -529,6 +560,8 @@ async def ingest_graph_message(
                 body_clean_computed_at=datetime.now(UTC),
                 meeting_message_type=email_msg.meeting_message_type,
                 meeting_response_type=email_msg.meeting_response_type,
+                sender_name=email_msg.sender_display_name,
+                is_automated=email_msg.is_automated,
             )
             persisted_by_graph_id[thread_msg.id] = persisted
 
@@ -772,6 +805,8 @@ async def handle_outbound_notification(
             body_clean_computed_at=datetime.now(UTC),
             meeting_message_type=email_msg.meeting_message_type,
             meeting_response_type=email_msg.meeting_response_type,
+            sender_name=email_msg.sender_display_name,
+            is_automated=email_msg.is_automated,
         )
 
         await sent_reply_service.resolve_thread_from_outbound(
@@ -820,8 +855,6 @@ async def _heal_completed_outbound(
     if existing is None:
         return None
     if existing.direction != EmailDirectionEnum.OUTBOUND.value:
-        return None
-    if sent_reply_service.is_meeting_message(existing):
         return None
 
     thread = await thread_repo.get_by_id_trusted(session, existing.thread_id)
@@ -938,7 +971,10 @@ async def ingest_simulated_message(
                 to_recipients=list(payload.to_recipients),
                 cc_recipients=list(payload.cc_recipients),
                 bcc_recipients=list(payload.bcc_recipients),
-                has_attachments=payload.has_attachments,
+                is_automated=is_automated_mail(
+                    sender=payload.sender,
+                    subject=payload.subject,
+                ),
             )
         )
         await message_repo.create_message(
@@ -959,6 +995,7 @@ async def ingest_simulated_message(
             body_clean=email_msg.body_clean,
             body_clean_version=email_clean.CLEAN_VERSION,
             body_clean_computed_at=datetime.now(UTC),
+            is_automated=email_msg.is_automated,
         )
 
         thread_context = ThreadContextSchema(

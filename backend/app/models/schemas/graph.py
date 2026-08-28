@@ -77,6 +77,13 @@ class GraphRecipientSchema(BaseModel):
     email_address: GraphEmailAddressSchema | None = Field(default=None, alias="emailAddress")
 
 
+class GraphInternetMessageHeaderSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    name: str | None = None
+    value: str | None = None
+
+
 class GraphMessageBodySchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -116,6 +123,10 @@ class GraphMessageSchema(BaseModel):
     importance: str | None = None
     meeting_message_type: str | None = Field(default=None, alias="meetingMessageType")
     response_type: str | None = Field(default=None, alias="responseType")
+    internet_message_headers: list[GraphInternetMessageHeaderSchema] = Field(
+        default_factory=list,
+        alias="internetMessageHeaders",
+    )
     # Set by the poller; not a Graph JSON field.
     source_folder: str | None = None
 

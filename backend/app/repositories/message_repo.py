@@ -39,6 +39,8 @@ class MessageSchema(BaseModel):
     graph_folder: str | None = None
     meeting_message_type: str | None = None
     meeting_response_type: str | None = None
+    sender_name: str | None = None
+    is_automated: bool = False
     summary_json: dict[str, Any] | None = None
     summary_one_line: str | None = None
     summarized_at: datetime | None = None
@@ -142,6 +144,8 @@ async def create_message(
     body_clean_computed_at: datetime | None = None,
     meeting_message_type: str | None = None,
     meeting_response_type: str | None = None,
+    sender_name: str | None = None,
+    is_automated: bool = False,
 ) -> MessageSchema:
     """Insert a message or fill an empty existing row on ``graph_message_id`` conflict."""
     insert_stmt = insert(Message).values(
@@ -164,6 +168,8 @@ async def create_message(
         body_clean_computed_at=body_clean_computed_at,
         meeting_message_type=meeting_message_type,
         meeting_response_type=meeting_response_type,
+        sender_name=sender_name,
+        is_automated=is_automated,
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["graph_message_id"],
@@ -210,6 +216,16 @@ async def create_message(
             )
             .returning(Message)
         )
+        updated = (await session.execute(stmt)).scalar_one()
+        await session.flush()
+        return MessageSchema.model_validate(updated)
+    fill: dict[str, object] = {}
+    if sender_name and not existing.sender_name:
+        fill["sender_name"] = sender_name
+    if is_automated and not existing.is_automated:
+        fill["is_automated"] = True
+    if fill:
+        stmt = update(Message).where(Message.id == existing.id).values(**fill).returning(Message)
         updated = (await session.execute(stmt)).scalar_one()
         await session.flush()
         return MessageSchema.model_validate(updated)
