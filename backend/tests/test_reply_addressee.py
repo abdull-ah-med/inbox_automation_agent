@@ -135,7 +135,8 @@ def test_role_mailbox_outbound_tip_uses_prior_inbound_display_or_signature() -> 
     assert addressee.salute_name == "Divyansh"
 
 
-def test_person_local_part_still_used_when_no_display_name() -> None:
+def test_person_local_part_without_signature_uses_empty_sentinel() -> None:
+    """Bare jane.doe@ with no display/signature must not salute 'Jane' from local-part."""
     mailbox = "sales@example.com"
     messages = [
         _msg(
@@ -149,7 +150,28 @@ def test_person_local_part_still_used_when_no_display_name() -> None:
     ]
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
     assert addressee is not None
+    # "Jane Doe\\nVendor Co" is not a recognized title closing; no directory → empty.
+    assert addressee.salute_name == ""
+    assert addressee.source_kind == "local_part"
+    assert addressee.directory_hit is False
+
+
+def test_person_local_part_with_signature_uses_first_name() -> None:
+    mailbox = "sales@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="jane.doe@vendor.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Please advise.\n\nThanks,\nJane\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
     assert addressee.salute_name == "Jane"
+    assert addressee.source_kind == "signature"
 
 
 def test_surname_local_part_prefers_signature_first_name() -> None:

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-21.2"
+PROMPT_VERSION = "2026-08-28.1"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -195,6 +195,8 @@ profile still governs greeting style and formality.
 When a Reply addressee block is present, the reply_body greeting must address that
 Salute name (not the thread opener unless they are the addressee). Align the
 primary suggested recipient with Primary To when a single To is appropriate.
+If Salute is (none — no personal name known), open with Hi, (bare). Never
+fabricate a first name from an email address.
 
 Skill reference tool:
 When a skill lists "Available reference files", you may call read_skill_reference

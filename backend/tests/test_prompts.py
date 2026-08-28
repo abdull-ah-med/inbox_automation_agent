@@ -161,12 +161,14 @@ def test_draft_prompt_version_bumped_for_suggested_actions() -> None:
 def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "Reply addressee" in DRAFT_SYSTEM_PROMPT or "addressee" in DRAFT_SYSTEM_PROMPT.lower()
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
-    assert PROMPT_VERSION == "2026-08-21.2"
+    assert "no personal name known" in DRAFT_SYSTEM_PROMPT
+    assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
+    assert PROMPT_VERSION == "2026-08-28.1"
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-21.2"
+    assert PROMPT_VERSION == "2026-08-28.1"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -104,6 +105,8 @@ def _build_user_content(
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
     mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
+    suppress_local_part: bool = True,
 ) -> str:
     thread_block = pack_same_thread(
         thread_context,
@@ -191,6 +194,8 @@ def _build_user_content(
         mailbox=email.mailbox,
         messages=cast(Any, list(thread_context.messages) or [email]),
         mailbox_owner=mailbox_owner,
+        directory=directory,
+        suppress_local_part=suppress_local_part,
     )
     addressee_block = ""
     if addressee is not None:
@@ -432,6 +437,7 @@ async def generate_draft(
     instruction: str | None = None,
     reference_loader: SkillReferenceLoader | None = None,
     confirmed_associations: list[CrossThreadContextSchema] | None = None,
+    directory: Mapping[str, str] | None = None,
 ) -> DraftCallResult:
     """Call Sonnet (tool loop when loader provided) and return a structured draft."""
     if not settings.anthropic_api_key.strip():
@@ -445,6 +451,7 @@ async def generate_draft(
         scrubbed = _scrub_cross_thread(item)
         if isinstance(scrubbed, CrossThreadContextSchema):
             scrubbed_confirmed.append(scrubbed)
+    salute_on = settings.salute_directory_enabled
     user_content = _build_user_content(
         scrub_email_for_llm(email),
         scrub_thread_for_llm(thread_context),
@@ -460,6 +467,8 @@ async def generate_draft(
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
         mailbox_owner=settings.owner_for_mailbox(email.mailbox),
+        directory=directory if salute_on else None,
+        suppress_local_part=salute_on,
     )
     started = time.perf_counter()
     last_error: Exception | None = None

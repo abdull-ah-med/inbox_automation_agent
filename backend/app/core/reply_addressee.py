@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -119,6 +120,9 @@ class ReplyAddressee:
     email: str
     salute_name: str
     source: str  # latest_inbound | last_outbound_to | thread_counterpart
+    directory_hit: bool = False
+    # display | signature | byline | title_close | local_part | directory | team | other
+    source_kind: str = "other"
 
 
 def salute_name_from_party(raw: str) -> str:
@@ -250,16 +254,23 @@ def addressee_first_name_from_body(
     *,
     reject_names: frozenset[str] | set[str] | None = None,
     allow_signature: bool = True,
-) -> str | None:
-    """Best personal name for a tip body (agent byline > signature > title closing)."""
+) -> tuple[str | None, str | None]:
+    """Best personal name for a tip body (agent byline > signature > title closing).
+
+    Returns ``(name, source_kind)`` where source_kind is byline / signature /
+    title_close, or ``(None, None)`` when no person name is found.
+    """
     byline = agent_byline_first_name(body, reject_names=reject_names)
     if byline:
-        return byline
+        return byline, "byline"
     if allow_signature:
         signed = signature_first_name(body, reject_names=reject_names)
         if signed:
-            return signed
-    return title_closing_first_name(body, reject_names=reject_names)
+            return signed, "signature"
+    titled = title_closing_first_name(body, reject_names=reject_names)
+    if titled:
+        return titled, "title_close"
+    return None, None
 
 
 def _is_zendesk_ticket_chrome(body: str | None) -> bool:
@@ -274,7 +285,7 @@ def _tip_person_name(
     body: str | None,
     *,
     reject_names: frozenset[str] | set[str] | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """Personal name from the tip body; Zendesk chrome ignores leaked sign-offs."""
     if _is_zendesk_ticket_chrome(body):
         # Auto-acks and updates often embed our prior Thanks,Owner. Only trust
@@ -287,15 +298,47 @@ def _tip_person_name(
     return addressee_first_name_from_body(body, reject_names=reject_names)
 
 
+def _party_source_kind(raw: str) -> str:
+    """Classify how ``salute_name_from_party`` derived its value."""
+    text = (raw or "").strip()
+    if not text:
+        return "other"
+    angled = _ANGLE.match(text)
+    if angled:
+        display = angled.group("name").strip().strip("\"'")
+        if display:
+            first = display.split()[0]
+            if not _is_role_token(first):
+                return "display"
+        return "local_part"
+    addr = extract_email_address(text)
+    if addr is not None:
+        return "local_part"
+    return "other"
+
+
+def _normalize_directory(directory: Mapping[str, str] | None) -> dict[str, str]:
+    if not directory:
+        return {}
+    return {
+        key.strip().lower(): value.strip()
+        for key, value in directory.items()
+        if key and value and str(value).strip()
+    }
+
+
 def _finalize_salute(
     salute: str,
     *,
     email: str,
     owner: str | None,
+    allow_empty: bool = False,
 ) -> str:
     """Never greet a role label or the mailbox owner we sign as."""
     cleaned = (salute or "").strip()
     if not cleaned:
+        if allow_empty and not _is_role_token(_email_local(email)):
+            return ""
         return _TEAM_SALUTE
     if owner and cleaned.casefold() == owner.casefold():
         return _TEAM_SALUTE
@@ -318,10 +361,10 @@ def _better_salute_for_email(
     email: str,
     messages: list[_MessageLike] | tuple[_MessageLike, ...] | None,
     reject_names: frozenset[str] | set[str] | None = None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     """Prefer a human display/signature name for the same address elsewhere in-thread."""
     if not messages:
-        return None
+        return None, None
     target = email.strip().lower()
     # Newest first: latest signature / display for this person wins.
     for msg in reversed(list(messages)):
@@ -335,16 +378,14 @@ def _better_salute_for_email(
             and not is_role_mailbox_salute(salute_name=from_party, email=target)
             and _usable_person_name(from_party, reject_names=reject_names)
         ):
-            return from_party
-        signed = _tip_person_name(
+            return from_party, _party_source_kind(sender)
+        signed, kind = _tip_person_name(
             getattr(msg, "body_text", None),
             reject_names=reject_names,
         )
         if signed:
-            return signed
-    # Also check outbound tip body when Elise already used a short name? Skip —
-    # "Thanks Div." is ambiguous without more parsing.
-    return None
+            return signed, kind
+    return None, None
 
 
 def resolve_reply_addressee(
@@ -352,6 +393,8 @@ def resolve_reply_addressee(
     mailbox: str | None,
     messages: list[_MessageLike] | tuple[_MessageLike, ...] | None,
     mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
+    suppress_local_part: bool = True,
 ) -> ReplyAddressee | None:
     """Pick who to salute from the tip of the thread, not the thread opener.
 
@@ -363,12 +406,18 @@ def resolve_reply_addressee(
     title) over an email local-part. Role mailboxes (``Dev@``, ``helpdesk@``,
     …) and Zendesk auto-acks without an agent fall back to ``team`` — never
     salute the mailbox owner (that person signs the outbound reply).
+
+    When ``directory`` maps the addressee email to a first name, that alias wins
+    over scraped display/signature names (except role mailboxes). When the only
+    available salute would be a fabricated local-part, return an empty
+    ``salute_name`` so the draft opens with a bare ``Hi,``.
     """
     if not messages:
         return None
     message_list = list(messages)
     owner = _owner_first_name(mailbox_owner)
     reject = frozenset({owner}) if owner else frozenset()
+    directory_map = _normalize_directory(directory)
     for msg in reversed(message_list):
         direction = _direction_value(msg.direction)
         raw = thread_counterpart(
@@ -389,34 +438,74 @@ def resolve_reply_addressee(
         else:
             source = "thread_counterpart"
         salute = salute_name_from_party(raw)
+        source_kind = _party_source_kind(raw)
         tip_body = getattr(msg, "body_text", None)
-        tip_signed = (
-            _tip_person_name(tip_body, reject_names=reject) if direction == "inbound" else None
+        tip_signed, tip_kind = (
+            _tip_person_name(tip_body, reject_names=reject)
+            if direction == "inbound"
+            else (None, None)
         )
         if tip_signed:
             salute = tip_signed
+            source_kind = tip_kind or "other"
         elif is_role_mailbox_salute(salute_name=salute, email=email) or (
             owner and salute.casefold() == owner.casefold()
         ):
-            better = _better_salute_for_email(
+            better, better_kind = _better_salute_for_email(
                 email=email,
                 messages=message_list,
                 reject_names=reject,
             )
             if better:
                 salute = better
-        salute = _finalize_salute(salute, email=email, owner=owner)
+                source_kind = better_kind or "other"
+
+        directory_hit = False
+        email_key = email.strip().lower()
+        directory_name = directory_map.get(email_key)
+        if directory_name and not _is_role_token(_email_local(email)):
+            salute = directory_name
+            source_kind = "directory"
+            directory_hit = True
+        elif suppress_local_part and source_kind == "local_part":
+            salute = ""
+
+        allow_empty = suppress_local_part and source_kind == "local_part" and not directory_hit
+        salute = _finalize_salute(
+            salute,
+            email=email,
+            owner=owner,
+            allow_empty=allow_empty,
+        )
+        if salute == _TEAM_SALUTE:
+            source_kind = "team"
+            directory_hit = False
         return ReplyAddressee(
             raw=raw.strip(),
             email=email,
             salute_name=salute,
             source=source,
+            directory_hit=directory_hit,
+            source_kind=source_kind,
         )
     return None
 
 
 def format_reply_addressee_block(addressee: ReplyAddressee) -> str:
     """Trusted draft-prompt block: hard constraint for salutation + primary To."""
+    if not addressee.salute_name:
+        return (
+            "Reply addressee (hard constraint):\n"
+            "- Salute: (none — no personal name known)\n"
+            f"- Primary To: {addressee.email}\n"
+            f"- Source: {addressee.source}\n"
+            f"- Full party: {addressee.raw}\n"
+            'The reply_body greeting must open with "Hi," (bare, no name) — do NOT '
+            "invent a name from the email address, do NOT use the local-part, do NOT "
+            'guess. Tone profile still governs formality (e.g. "Hello,"). Primary '
+            "suggested_recipients must match Primary To when a single recipient "
+            "is appropriate.\n"
+        )
     return (
         "Reply addressee (hard constraint):\n"
         f"- Salute: {addressee.salute_name}\n"
