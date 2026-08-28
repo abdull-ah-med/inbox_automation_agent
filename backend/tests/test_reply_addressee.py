@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 
 from app.core.reply_addressee import (
     resolve_reply_addressee,
-    salute_name_from_party,
 )
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
 
@@ -32,16 +31,6 @@ def _msg(
         direction=direction,
         to_recipients=list(to or []),
     )
-
-
-def test_salute_name_uses_display_first_name() -> None:
-    assert salute_name_from_party("Smit Patel <smit.patel@sample-transport.example.com>") == "Smit"
-    assert salute_name_from_party("Divyansh <Dev@sample-site.example.com>") == "Divyansh"
-
-
-def test_salute_name_falls_back_to_local_part() -> None:
-    assert salute_name_from_party("Dev@sample-site.example.com") == "Dev"
-    assert salute_name_from_party("smit.patel@sample-transport.example.com") == "Smit"
 
 
 def test_role_mailbox_inbound_uses_signature_name_not_local_part() -> None:
@@ -150,9 +139,8 @@ def test_person_local_part_without_signature_uses_empty_sentinel() -> None:
     ]
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
     assert addressee is not None
-    # "Jane Doe\\nVendor Co" is not a recognized title closing; no directory → empty.
     assert addressee.salute_name == ""
-    assert addressee.source_kind == "local_part"
+    assert addressee.source_kind == "none"
     assert addressee.directory_hit is False
 
 
@@ -210,11 +198,11 @@ def test_surname_local_part_prefers_signature_first_name() -> None:
     assert addressee.salute_name == "Cydney"
 
 
-def test_zendesk_auto_ack_without_agent_salutes_team_not_role_or_owner() -> None:
+def test_zendesk_auto_ack_without_agent_uses_bare_hi() -> None:
     """Zendesk 'request received' has no agent byline — only quoted prior mail.
 
-    Saluting Helpdesk (role) or Elise (mailbox owner / quoted sign-off) is wrong.
-    Use the neutral team greeting Elise herself uses outbound.
+    Saluting Helpdesk, Elise, or 'team' is wrong. No contact and no person
+    sign → bare Hi,.
     """
     mailbox = "info@sample-services.example.com"
     tip = (
@@ -248,7 +236,7 @@ def test_zendesk_auto_ack_without_agent_salutes_team_not_role_or_owner() -> None
     )
     assert addressee is not None
     assert addressee.email == "helpdesk@sample-helpdesk.example.com"
-    assert addressee.salute_name == "team"
+    assert addressee.salute_name == ""
 
 
 def test_zendesk_auto_ack_never_salutes_owner_even_when_quote_strip_leaks() -> None:
@@ -282,18 +270,18 @@ def test_zendesk_auto_ack_never_salutes_owner_even_when_quote_strip_leaks() -> N
         mailbox_owner=None,
     )
     assert with_owner is not None
-    assert with_owner.salute_name == "team"
+    assert with_owner.salute_name == ""
     assert with_owner.salute_name.casefold() != "elise"
     # Must not depend on MAILBOX_OWNERS being configured.
     assert without_owner is not None
-    assert without_owner.salute_name == "team"
+    assert without_owner.salute_name == ""
     assert without_owner.salute_name.casefold() != "elise"
 
 
 def test_latest_outbound_to_wins_over_earlier_inbound_sender() -> None:
-    """Multi-party: opener is Smit; tip is outbound to Dev@ with no person name.
+    """Multi-party: opener is Smit; tip is outbound to Dev@ with no person sign.
 
-    Primary To stays Dev@; salute falls back to team (never a role label).
+    Primary To stays Dev@; salute is empty (never a role label or local-part).
     """
     mailbox = "inquiries@sample-site.example.com"
     messages = [
@@ -315,7 +303,7 @@ def test_latest_outbound_to_wins_over_earlier_inbound_sender() -> None:
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
     assert addressee is not None
     assert addressee.email == "dev@sample-site.example.com"
-    assert addressee.salute_name == "team"
+    assert addressee.salute_name == ""
     assert addressee.source == "last_outbound_to"
 
 
@@ -328,6 +316,7 @@ def test_latest_inbound_wins_over_earlier_different_inbound() -> None:
             direction=EmailDirectionEnum.INBOUND,
             to=[mailbox],
             mailbox=mailbox,
+            body_text="Please send the packet.\n\nThanks,\nSmit\n",
         ),
         _msg(
             message_id="2",
@@ -335,6 +324,7 @@ def test_latest_inbound_wins_over_earlier_different_inbound() -> None:
             direction=EmailDirectionEnum.INBOUND,
             to=[mailbox],
             mailbox=mailbox,
+            body_text="Updated the layout.\n\nThanks,\nDivyansh\n",
         ),
     ]
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
@@ -359,3 +349,40 @@ def test_single_inbound_uses_that_sender() -> None:
     assert addressee is not None
     assert addressee.email == "vendor@example.com"
     assert addressee.source == "latest_inbound"
+    assert addressee.salute_name == ""
+
+
+def test_company_brand_sign_off_is_not_a_person_salute() -> None:
+    """'Thanks, SampleHelpdesk' is a brand, not Hi SampleHelpdesk."""
+    mailbox = "info@sample-services.example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="helpdesk@sample-helpdesk.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Your ticket was updated.\n\nThanks,\nSampleHelpdesk\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == ""
+
+
+def test_two_word_company_sign_off_is_not_a_person_salute() -> None:
+    """'Thanks, Sample Helpdesk' must not become Hi Digital,."""
+    mailbox = "info@sample-services.example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="helpdesk@sample-helpdesk.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Your ticket was updated.\n\nThanks,\nSample Helpdesk\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == ""

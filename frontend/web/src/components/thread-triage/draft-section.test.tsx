@@ -96,13 +96,13 @@ describe("DraftSection salute chip", () => {
     const user = userEvent.setup()
     renderSection({
       email: "samplecontact@sample-vendor.example.com",
-      salute_name: "Samplecontact",
-      source: "local_part",
-      source_kind: "local_part",
+      salute_name: "Kelvin",
+      source: "latest_inbound",
+      source_kind: "signature",
       directory_hit: false,
     })
-    expect(screen.getByRole("button", { name: "Salute: Samplecontact" })).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Salute: Samplecontact" }))
+    expect(screen.getByRole("button", { name: "Salute: Kelvin" })).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Salute: Kelvin" }))
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
     expect(screen.getByLabelText("Contact email")).toHaveValue("samplecontact@sample-vendor.example.com")
   })
@@ -111,13 +111,13 @@ describe("DraftSection salute chip", () => {
     const user = userEvent.setup()
     const { client } = renderSection({
       email: "samplecontact@sample-vendor.example.com",
-      salute_name: "Samplecontact",
-      source: "local_part",
-      source_kind: "local_part",
+      salute_name: "Kelvin",
+      source: "latest_inbound",
+      source_kind: "signature",
       directory_hit: false,
     })
     const invalidateSpy = vi.spyOn(client, "invalidateQueries")
-    await user.click(screen.getByRole("button", { name: "Salute: Samplecontact" }))
+    await user.click(screen.getByRole("button", { name: "Salute: Kelvin" }))
     const dialog = await screen.findByRole("dialog")
     const firstName = within(dialog).getByLabelText("Contact first name")
     await user.clear(firstName)
@@ -140,8 +140,8 @@ describe("DraftSection salute chip", () => {
     renderSection({
       email: "samplecontact@sample-vendor.example.com",
       salute_name: "",
-      source: "local_part",
-      source_kind: "local_part",
+      source: "latest_inbound",
+      source_kind: "none",
       directory_hit: false,
     })
     expect(screen.getByRole("button", { name: "Salute: — none —" })).toBeInTheDocument()

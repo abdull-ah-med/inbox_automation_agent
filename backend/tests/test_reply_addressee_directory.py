@@ -101,7 +101,7 @@ def test_bare_email_without_directory_uses_empty_sentinel() -> None:
     assert addressee is not None
     assert addressee.salute_name == ""
     assert addressee.directory_hit is False
-    assert addressee.source_kind == "local_part"
+    assert addressee.source_kind == "none"
 
 
 def test_signature_sourced_salute_not_emptied_even_if_equals_local_part() -> None:
@@ -148,7 +148,7 @@ def test_directory_overrides_role_mailbox() -> None:
     assert addressee.source_kind == "directory"
 
 
-def test_role_mailbox_without_directory_uses_team() -> None:
+def test_role_mailbox_without_directory_uses_bare_hi() -> None:
     mailbox = "elise@example.com"
     messages = [
         _msg(
@@ -162,12 +162,12 @@ def test_role_mailbox_without_directory_uses_team() -> None:
     ]
     addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
     assert addressee is not None
-    assert addressee.salute_name == "team"
-    assert addressee.source_kind == "team"
+    assert addressee.salute_name == ""
+    assert addressee.source_kind == "none"
 
 
-def test_priority_contacts_before_display_name() -> None:
-    """Contacts → display/signature → role/team → bare Hi,."""
+def test_priority_contacts_before_signature() -> None:
+    """Contacts → signature person name → bare Hi,. Never locals or roles."""
     mailbox = "elise@example.com"
     messages = [
         _msg(
@@ -248,7 +248,7 @@ def test_format_block_empty_salute_requires_bare_hi() -> None:
             salute_name="",
             source="latest_inbound",
             directory_hit=False,
-            source_kind="local_part",
+            source_kind="none",
         )
     )
     assert "Salute: (none — no personal name known)" in block

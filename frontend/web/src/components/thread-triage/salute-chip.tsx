@@ -15,17 +15,7 @@ type ChipPresentation = {
 }
 
 export const chipForAddressee = (addressee: ReplyAddresseeView): ChipPresentation => {
-  if (addressee.source_kind === "team") {
-    return {
-      label: "team",
-      title: "Role mailbox — click to teach a personal alias.",
-      muted: false,
-      showSavedDot: false,
-      disabled: false,
-      mode: "create",
-    }
-  }
-  if (addressee.salute_name === "") {
+  if (addressee.salute_name === "" || addressee.source_kind === "none") {
     return {
       label: "— none —",
       title: "No name — click to add.",
@@ -45,19 +35,9 @@ export const chipForAddressee = (addressee: ReplyAddresseeView): ChipPresentatio
       mode: "edit",
     }
   }
-  if (addressee.source_kind === "local_part") {
-    return {
-      label: addressee.salute_name,
-      title: "Guessed from email address — click to correct.",
-      muted: true,
-      showSavedDot: false,
-      disabled: false,
-      mode: "create",
-    }
-  }
   return {
     label: addressee.salute_name,
-    title: "From the sender's own signature/display name — click to override.",
+    title: "From the sender's signature — click to override.",
     muted: false,
     showSavedDot: false,
     disabled: false,
@@ -122,7 +102,7 @@ export const SaluteChip = ({ mailboxKey, draftId, replyAddressee }: SaluteChipPr
         onOpenChange={setDialogOpen}
         initialEmail={replyAddressee.email}
         initialFirstName={
-          replyAddressee.source_kind === "team" || replyAddressee.salute_name === ""
+          replyAddressee.salute_name === "" || replyAddressee.source_kind === "none"
             ? ""
             : replyAddressee.salute_name
         }

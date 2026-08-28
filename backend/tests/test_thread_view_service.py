@@ -96,7 +96,11 @@ async def test_dashboard_overview_assembles_configured_mailboxes() -> None:
 
 @pytest.mark.asyncio
 async def test_thread_view_404_when_missing() -> None:
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     session = AsyncMock()
     with patch(
         "app.services.thread_view_service.thread_repo.get_by_id",
@@ -114,7 +118,11 @@ async def test_thread_view_assembles_detail() -> None:
     from app.repositories.message_repo import MessageSchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     now = datetime.now(UTC)
@@ -217,7 +225,11 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
     from app.repositories.sent_reply_repo import SentReplySchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     draft_id = uuid.uuid4()
@@ -343,7 +355,11 @@ async def test_thread_view_heals_blank_sent_snapshot_from_linked_message() -> No
     from app.repositories.sent_reply_repo import SentReplySchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     draft_id = uuid.uuid4()
@@ -469,7 +485,11 @@ async def test_thread_view_omits_sent_reply_panel_for_meeting_accept() -> None:
     from app.repositories.sent_reply_repo import SentReplySchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     now = datetime.now(UTC)
@@ -575,7 +595,11 @@ async def test_thread_view_omits_sent_reply_panel_when_snapshot_still_empty() ->
     from app.repositories.sent_reply_repo import SentReplySchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     now = datetime.now(UTC)
@@ -680,7 +704,11 @@ async def test_thread_view_proposed_skips_outlook_catchup_latest() -> None:
     from app.repositories.sent_reply_repo import SentReplySchema
     from app.repositories.thread_repo import ThreadSchema
 
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     message_id = uuid.uuid4()
     llm_draft_id = uuid.uuid4()
@@ -831,7 +859,11 @@ def test_compute_draft_vs_sent_diff_still_flags_reply_edits() -> None:
 
 @pytest.mark.asyncio
 async def test_list_thread_audit_requires_mailbox_scope() -> None:
-    settings = Settings(environment="local", target_mailboxes="sales@example.com")
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
     thread_id = uuid.uuid4()
     now = datetime.now(UTC)
     thread = SimpleNamespace(
