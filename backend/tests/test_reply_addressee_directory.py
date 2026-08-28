@@ -124,7 +124,8 @@ def test_signature_sourced_salute_not_emptied_even_if_equals_local_part() -> Non
     assert addressee.directory_hit is False
 
 
-def test_role_mailbox_still_team_even_with_directory_entry() -> None:
+def test_directory_overrides_role_mailbox() -> None:
+    """Contacts win first — a taught alias for Dev@ should not stay 'team'."""
     mailbox = "elise@example.com"
     messages = [
         _msg(
@@ -142,8 +143,54 @@ def test_role_mailbox_still_team_even_with_directory_entry() -> None:
         directory={"dev@sample-site.example.com": "Divyansh"},
     )
     assert addressee is not None
+    assert addressee.salute_name == "Divyansh"
+    assert addressee.directory_hit is True
+    assert addressee.source_kind == "directory"
+
+
+def test_role_mailbox_without_directory_uses_team() -> None:
+    mailbox = "elise@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="dev@sample-site.example.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Please advise.",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
     assert addressee.salute_name == "team"
     assert addressee.source_kind == "team"
+
+
+def test_priority_contacts_before_display_name() -> None:
+    """Contacts → display/signature → role/team → bare Hi,."""
+    mailbox = "elise@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender='"Someone Else" <samplecontact@sample-vendor.example.com>',
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Please advise.\n\nThanks,\nKel\n",
+        ),
+    ]
+    with_contact = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=messages,
+        directory={"samplecontact@sample-vendor.example.com": "Kelvin"},
+    )
+    without = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert with_contact is not None and without is not None
+    assert with_contact.salute_name == "Kelvin"
+    assert with_contact.source_kind == "directory"
+    # No contact → signature "Kel" beats display "Someone"
+    assert without.salute_name == "Kel"
+    assert without.source_kind == "signature"
 
 
 def test_mailbox_owner_not_saluted() -> None:

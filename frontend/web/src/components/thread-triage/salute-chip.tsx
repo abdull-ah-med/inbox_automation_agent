@@ -18,10 +18,10 @@ export const chipForAddressee = (addressee: ReplyAddresseeView): ChipPresentatio
   if (addressee.source_kind === "team") {
     return {
       label: "team",
-      title: "Role mailbox — no personal alias applied.",
+      title: "Role mailbox — click to teach a personal alias.",
       muted: false,
       showSavedDot: false,
-      disabled: true,
+      disabled: false,
       mode: "create",
     }
   }
@@ -121,7 +121,11 @@ export const SaluteChip = ({ mailboxKey, draftId, replyAddressee }: SaluteChipPr
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         initialEmail={replyAddressee.email}
-        initialFirstName={replyAddressee.salute_name}
+        initialFirstName={
+          replyAddressee.source_kind === "team" || replyAddressee.salute_name === ""
+            ? ""
+            : replyAddressee.salute_name
+        }
         emailLocked
       />
     </div>

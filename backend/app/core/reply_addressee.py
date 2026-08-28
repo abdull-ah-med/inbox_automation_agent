@@ -402,15 +402,13 @@ def resolve_reply_addressee(
     sender, else outbound To). First hit wins — so an outbound tip to Dev beats
     an earlier inbound from Smit.
 
-    Prefer a personal name from the tip body (signature / agent byline / job
-    title) over an email local-part. Role mailboxes (``Dev@``, ``helpdesk@``,
-    …) and Zendesk auto-acks without an agent fall back to ``team`` — never
-    salute the mailbox owner (that person signs the outbound reply).
+    Salute priority:
+    1. Contacts directory (taught alias) — including role mailboxes when taught
+    2. Display name / signature / byline / title closing
+    3. Role mailbox → ``team`` (reviewer can still teach a Contact to override)
+    4. Fallback: empty ``salute_name`` → bare ``Hi,`` / ``Hello,`` (never local-part)
 
-    When ``directory`` maps the addressee email to a first name, that alias wins
-    over scraped display/signature names (except role mailboxes). When the only
-    available salute would be a fabricated local-part, return an empty
-    ``salute_name`` so the draft opens with a bare ``Hi,``.
+    Never salute the mailbox owner (that person signs the outbound reply).
     """
     if not messages:
         return None
@@ -437,38 +435,45 @@ def resolve_reply_addressee(
             source = "last_outbound_to"
         else:
             source = "thread_counterpart"
-        salute = salute_name_from_party(raw)
-        source_kind = _party_source_kind(raw)
-        tip_body = getattr(msg, "body_text", None)
-        tip_signed, tip_kind = (
-            _tip_person_name(tip_body, reject_names=reject)
-            if direction == "inbound"
-            else (None, None)
-        )
-        if tip_signed:
-            salute = tip_signed
-            source_kind = tip_kind or "other"
-        elif is_role_mailbox_salute(salute_name=salute, email=email) or (
-            owner and salute.casefold() == owner.casefold()
-        ):
-            better, better_kind = _better_salute_for_email(
-                email=email,
-                messages=message_list,
-                reject_names=reject,
-            )
-            if better:
-                salute = better
-                source_kind = better_kind or "other"
 
-        directory_hit = False
         email_key = email.strip().lower()
         directory_name = directory_map.get(email_key)
-        if directory_name and not _is_role_token(_email_local(email)):
+        directory_hit = False
+        source_kind = "other"
+
+        if directory_name:
+            # 1. Contacts first (including role addresses when an alias is taught).
             salute = directory_name
             source_kind = "directory"
             directory_hit = True
-        elif suppress_local_part and source_kind == "local_part":
-            salute = ""
+        else:
+            # 2. Display name / signature / byline / title.
+            salute = salute_name_from_party(raw)
+            source_kind = _party_source_kind(raw)
+            tip_body = getattr(msg, "body_text", None)
+            tip_signed, tip_kind = (
+                _tip_person_name(tip_body, reject_names=reject)
+                if direction == "inbound"
+                else (None, None)
+            )
+            if tip_signed:
+                salute = tip_signed
+                source_kind = tip_kind or "other"
+            elif is_role_mailbox_salute(salute_name=salute, email=email) or (
+                owner and salute.casefold() == owner.casefold()
+            ):
+                better, better_kind = _better_salute_for_email(
+                    email=email,
+                    messages=message_list,
+                    reject_names=reject,
+                )
+                if better:
+                    salute = better
+                    source_kind = better_kind or "other"
+
+            # Local-part guesses are never used when suppression is on.
+            if suppress_local_part and source_kind == "local_part":
+                salute = ""
 
         allow_empty = suppress_local_part and source_kind == "local_part" and not directory_hit
         salute = _finalize_salute(
@@ -477,6 +482,7 @@ def resolve_reply_addressee(
             owner=owner,
             allow_empty=allow_empty,
         )
+        # 3. Role / owner finalize → team (only when no usable contact/person name).
         if salute == _TEAM_SALUTE:
             source_kind = "team"
             directory_hit = False
