@@ -1031,7 +1031,6 @@ async def test_lifecycle_validation_handshake_returns_plain_text() -> None:
     app = FastAPI()
     app.include_router(graph_router)
 
-    graph_webhooks_enabled=True,
     settings = Settings(environment="local", graph_webhook_client_state="secret")
     redis = AsyncMock()
     redis.get = AsyncMock(return_value="1")

@@ -216,7 +216,7 @@ def test_smtp_starttls_uses_default_ssl_context() -> None:
     import ssl
     from unittest.mock import MagicMock, patch
 
-    from app.models.schemas.ops_report import MailboxVolume, OpsMetricsResponse
+    from app.models.schemas.ops_report import OpsMetricsResponse
     from app.services.ops_report_job import _send_smtp
 
     settings = Settings(
@@ -251,7 +251,9 @@ def test_smtp_starttls_uses_default_ssl_context() -> None:
 
     with (
         patch("app.services.ops_report_job.smtplib.SMTP", return_value=smtp_cm) as smtp_ctor,
-        patch("app.services.ops_report_job.ssl.create_default_context", return_value=ctx) as create_ctx,
+        patch(
+            "app.services.ops_report_job.ssl.create_default_context", return_value=ctx
+        ) as create_ctx,
     ):
         _send_smtp(settings, metrics, b"%PDF", "ops-weekly.pdf")
 

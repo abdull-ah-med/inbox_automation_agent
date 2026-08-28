@@ -308,9 +308,7 @@ class Settings(BaseSettings):
             errors.append("TARGET_MAILBOXES must be set when ENVIRONMENT is not local")
         if self.graph_webhooks_enabled:
             if not self.graph_notification_url.strip():
-                errors.append(
-                    "GRAPH_NOTIFICATION_URL must be set when GRAPH_WEBHOOKS_ENABLED=true"
-                )
+                errors.append("GRAPH_NOTIFICATION_URL must be set when GRAPH_WEBHOOKS_ENABLED=true")
             if not self.graph_webhook_client_state.strip():
                 errors.append(
                     "GRAPH_WEBHOOK_CLIENT_STATE must be set when GRAPH_WEBHOOKS_ENABLED=true"

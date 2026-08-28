@@ -478,7 +478,9 @@ async def test_load_confirmed_contexts_batches_thread_and_message_fetches(
         AsyncMock(return_value=pairs),
     )
     monkeypatch.setattr(related_thread_service.thread_repo, "list_by_ids", list_by_ids)
-    monkeypatch.setattr(related_thread_service.message_repo, "list_by_thread_ids", list_by_thread_ids)
+    monkeypatch.setattr(
+        related_thread_service.message_repo, "list_by_thread_ids", list_by_thread_ids
+    )
     monkeypatch.setattr(
         related_thread_service.thread_repo,
         "get_by_id_trusted",

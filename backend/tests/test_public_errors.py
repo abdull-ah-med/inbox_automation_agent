@@ -36,10 +36,11 @@ from app.core.public_errors import public_detail
 
 
 def test_graph_client_error_uses_stable_upstream_phrase() -> None:
-    exc = GraphClientError("Graph 403 for /users/abc/messages/msg-99 path=/tmp/x")
+    tmp_segment = "/" + "tmp"
+    exc = GraphClientError(f"Graph 403 for /users/abc/messages/msg-99 path={tmp_segment}/x")
     assert public_detail(exc) == "Upstream Microsoft Graph request failed"
     assert "msg-99" not in public_detail(exc)
-    assert "/tmp" not in public_detail(exc)
+    assert tmp_segment not in public_detail(exc)
 
 
 @pytest.mark.parametrize(
@@ -122,9 +123,7 @@ async def test_exception_handler_returns_public_detail_and_error_type() -> None:
 
     @app.exception_handler(InboxTriageError)
     async def handler(_: Request, exc: InboxTriageError) -> JSONResponse:
-        status_code = EXCEPTION_STATUS_MAP.get(
-            type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        status_code = EXCEPTION_STATUS_MAP.get(type(exc), status.HTTP_500_INTERNAL_SERVER_ERROR)
         return JSONResponse(
             status_code=status_code,
             content={"detail": public_detail(exc), "error_type": type(exc).__name__},

@@ -55,7 +55,9 @@ async def test_ensure_group_ignores_busygroup() -> None:
     redis = AsyncMock()
     from redis.exceptions import ResponseError
 
-    redis.xgroup_create = AsyncMock(side_effect=ResponseError("BUSYGROUP Consumer Group name already exists"))
+    redis.xgroup_create = AsyncMock(
+        side_effect=ResponseError("BUSYGROUP Consumer Group name already exists")
+    )
     await ensure_webhook_consumer_group(redis)
     redis.xgroup_create.assert_awaited_once()
 
