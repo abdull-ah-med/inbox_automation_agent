@@ -71,6 +71,11 @@ def _build_user_content(
             f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
         )
 
+    meeting = (email.meeting_message_type or "").strip()
+    meeting_line = f"Graph meetingMessageType: {meeting}\n" if meeting else ""
+    automated_line = "Ingest flagged this message as automated (list/noreply headers).\n"
+    if not email.is_automated:
+        automated_line = ""
     email_block = (
         f"Mailbox: {email.mailbox}\n"
         f"{owner_line}"
@@ -81,6 +86,8 @@ def _build_user_content(
         f"To: {to_list}\n"
         f"CC: {cc_list}\n"
         f"{outlook_location}"
+        f"{meeting_line}"
+        f"{automated_line}"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
         f"Body:\n{body}\n\n"

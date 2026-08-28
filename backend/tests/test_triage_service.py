@@ -42,12 +42,13 @@ def test_decide_spam_discards_even_with_action_items() -> None:
     assert status == "SKIPPED"
 
 
-def test_decide_no_action_discarded() -> None:
+def test_decide_no_action_still_briefs() -> None:
+    """FYI / courtesy-close: no letter, but Sonnet still writes teaching notes."""
     outcome, status = decide_triage_outcome(
         _triage(has_action_items=False, action_items_summary=None),
     )
     assert outcome == "no_action_discarded"
-    assert status == "SKIPPED"
+    assert status == "PENDING"
 
 
 def test_decide_action_needed_preserves_needs_context() -> None:
@@ -71,7 +72,7 @@ def test_decide_clamps_draft_needed_when_no_action_items() -> None:
     triage = _triage(has_action_items=False, draft_needed=True)
     outcome, status = decide_triage_outcome(triage)
     assert outcome == "no_action_discarded"
-    assert status == "SKIPPED"
+    assert status == "PENDING"
     assert triage.draft_needed is False
 
 
@@ -91,6 +92,10 @@ def _state(
     *,
     mailbox: str = "elise@example.com",
     sender: str = "vendor@example.com",
+    is_automated: bool = False,
+    meeting_message_type: str | None = None,
+    body_text: str = "Please reply",
+    unique_body_text: str | None = None,
 ) -> EmailTriageState:
     email = EmailMessageSchema(
         message_id="m1",
@@ -98,9 +103,12 @@ def _state(
         mailbox=mailbox,
         sender=sender,
         subject="Hi",
-        body_text="Please reply",
+        body_text=body_text,
+        unique_body_text=unique_body_text,
         received_at=datetime(2026, 7, 10, tzinfo=UTC),
         direction=EmailDirectionEnum.INBOUND,
+        is_automated=is_automated,
+        meeting_message_type=meeting_message_type,
     )
     return EmailTriageState(
         original_email=email,
@@ -216,4 +224,93 @@ async def test_run_triage_never_discards_allowlisted_sender_as_spam() -> None:
     assert state.triage.is_spam is False
     assert state.triage.spam_reason is None
     assert state.draft_status == "PENDING"
+    assert state.triage.has_action_items is True
+
+
+@pytest.mark.asyncio
+async def test_run_triage_automated_mail_stays_pending_without_a_letter() -> None:
+    call = TriageCallResult(
+        triage=_triage(draft_needed=True),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(
+                sender="phmsa.subscriptions@info.dot.gov",
+                is_automated=True,
+            ),
+            client=AsyncMock(),
+            settings=Settings(),
+        )
+    assert state.draft_status == "PENDING"
+    assert state.triage is not None
+    assert state.triage.draft_needed is False
+
+
+@pytest.mark.asyncio
+async def test_run_triage_generic_invite_stays_pending_without_a_letter() -> None:
+    call = TriageCallResult(
+        triage=_triage(draft_needed=True),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(
+                meeting_message_type="meetingRequest",
+                body_text="Join with Google Meet",
+                unique_body_text="Join with Google Meet",
+            ),
+            client=AsyncMock(),
+            settings=Settings(),
+        )
+    assert state.draft_status == "PENDING"
+    assert state.triage is not None
+    assert state.triage.draft_needed is False
+
+
+@pytest.mark.asyncio
+async def test_run_triage_invite_with_ask_keeps_a_letter() -> None:
+    call = TriageCallResult(
+        triage=_triage(
+            has_action_items=False,
+            action_items_summary=None,
+            draft_needed=False,
+        ),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+    with patch(
+        "app.services.triage_service.triage_llm.triage_email",
+        new=AsyncMock(return_value=call),
+    ):
+        state = await run_triage(
+            _state(
+                meeting_message_type="meetingRequest",
+                unique_body_text=(
+                    "Hi Elise, can you walk through the IDME demo for ten minutes after we join?"
+                ),
+            ),
+            client=AsyncMock(),
+            settings=Settings(),
+        )
+    assert state.draft_status == "PENDING"
+    assert state.triage is not None
+    assert state.triage.draft_needed is True
     assert state.triage.has_action_items is True

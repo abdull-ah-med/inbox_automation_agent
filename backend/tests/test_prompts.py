@@ -168,12 +168,12 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.2"
+    assert PROMPT_VERSION == "2026-08-28.4"
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.2"
+    assert PROMPT_VERSION == "2026-08-28.4"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -220,6 +220,7 @@ def test_triage_prompt_splits_action_from_email_reply() -> None:
     assert "calendar" in lowered
     assert "listserv" in lowered or "newsletter" in lowered
     assert "rsvp" in lowered
+    assert "besides rsvp" in lowered or "besides RSVP" in TRIAGE_SYSTEM_PROMPT
 
 
 def test_briefing_prompt_has_no_letter_fields() -> None:
@@ -232,4 +233,4 @@ def test_briefing_prompt_has_no_letter_fields() -> None:
     assert "Hi {name}" not in BRIEFING_SYSTEM_PROMPT
     assert "reply_body" not in BriefingSchema.model_fields
     assert "suggested_recipients" not in BriefingSchema.model_fields
-    assert PROMPT_VERSION == "2026-08-28.2"
+    assert PROMPT_VERSION == "2026-08-28.4"

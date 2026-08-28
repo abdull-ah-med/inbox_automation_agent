@@ -8,6 +8,7 @@ import structlog
 from anthropic import AsyncAnthropic
 
 from app.core.config import Settings
+from app.core.draft_needed import resolve_draft_needed
 from app.core.exceptions import TriageError
 from app.core.internal_mail import apply_internal_mail_policy
 from app.core.spam_allowlist import apply_spam_allowlist_policy
@@ -31,8 +32,10 @@ def decide_triage_outcome(
         triage.draft_needed = False
     if triage.is_spam:
         return "spam_discarded", "SKIPPED"
+    # Teaching note + suggested_actions always run except spam. Only the letter
+    # is optional (``draft_needed``). FYI / courtesy-close still brief.
     if not triage.has_action_items:
-        return "no_action_discarded", "SKIPPED"
+        return "no_action_discarded", "PENDING"
     return "action_needed", "PENDING"
 
 
@@ -72,6 +75,14 @@ async def run_triage(
         sender=state.original_email.sender,
         allowlisted_addresses=allowlisted_senders or frozenset(),
     )
+    triage.draft_needed = resolve_draft_needed(
+        email=state.original_email,
+        triage=triage,
+    )
+    # Letter implies an action (reply). Lift so decide() cannot clamp a
+    # personal invite down when Haiku missed has_action_items.
+    if triage.draft_needed:
+        triage.has_action_items = True
     state.triage = triage
     outcome, draft_status = decide_triage_outcome(triage)
     state.draft_status = draft_status

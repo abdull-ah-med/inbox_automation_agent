@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-28.2"
+PROMPT_VERSION = "2026-08-28.4"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -147,16 +147,19 @@ Determine has_action_items and draft_needed from the sender, recipients, and CC 
 - If the PoI mailbox is in To or CC, consider whether the email asks something of them.
 - If the PoI mailbox is the sender, this is outbound — has_action_items is false
   and draft_needed is false.
-- Listserv / newsletter / receipts / "registration is open" FYI → typically both
-  false (no action, skip a draft).
-- Calendar invite → has_action_items true, draft_needed false (RSVP in Calendar,
-  do not write "Hi {{name}} I will join").
+- Listserv / newsletter / receipts / "registration is open" FYI → typically
+  has_action_items false and draft_needed false (briefing still runs; no letter).
+- Automated / noreply / list-unsubscribe mail → draft_needed false.
+- Calendar invite that is only an RSVP (time, place, join link, "invited you")
+  → has_action_items true, draft_needed false. Do not write "Hi I will join".
+- Calendar invite whose body also asks the PoI to do something besides RSVP
+  (send a file, present, confirm a number, answer a question) → both true.
 - Client question → both true.
 - Automated confirmations, newsletters, and FYI forwards typically have no action items.
 - Acknowledgment or courtesy close is not an action item: "sounds good", "thanks",
   or "let me know if you're unable" with no new ask. Conditional courtesy
   ("if you can't, tell me") is not a task for the PoI unless they were asked to
-  do something now.
+  do something now. draft_needed is false; a briefing still records the close.
 - If the ball is already in the other party's court, has_action_items is false
   and draft_needed is false.
 
@@ -221,9 +224,10 @@ already returned in this turn.
 """
 
 BRIEFING_SYSTEM_PROMPT = f"""\
-You brief a human reviewer on an email that needs action but does not need an
-outbound reply from this mailbox. You never send email yourself. You never
-write a letter, greeting, or salutation.
+You brief a human reviewer on an email that does not need an outbound reply
+from this mailbox (FYI / listserv, automated notice, RSVP-only invite, or an
+action that happens in Calendar or another tool). You never send email yourself.
+You never write a letter, greeting, or salutation.
 
 Produce JSON only (no preamble, no markdown fences) with these fields:
   subject_line (echo the thread subject; do not add Re:),
