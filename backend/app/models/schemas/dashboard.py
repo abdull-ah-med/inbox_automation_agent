@@ -225,6 +225,14 @@ class ThreadHeader(BaseModel):
     mailbox: str
 
 
+class ReplyAddresseeView(BaseModel):
+    email: str
+    salute_name: str
+    source: str
+    source_kind: str
+    directory_hit: bool = False
+
+
 class ThreadDetail(BaseModel):
     thread: ThreadSummary
     messages: list[MessageDetail]
@@ -236,3 +244,4 @@ class ThreadDetail(BaseModel):
     sent_reply: SentReplyView | None = None
     draft_vs_sent_diff: DraftVsSentDiff | None = None
     associated_threads: list[RelatedThreadItem] = Field(default_factory=list)
+    reply_addressee: ReplyAddresseeView | None = None

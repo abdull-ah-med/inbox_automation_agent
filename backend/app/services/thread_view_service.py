@@ -13,6 +13,7 @@ from app.core.closing_mail import looks_like_closing_mail
 from app.core.config import Settings
 from app.core.email_quotes import split_quoted_history
 from app.core.outlook_links import outlook_web_link
+from app.core.reply_addressee import resolve_reply_addressee
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     ActivityEntryView,
@@ -22,12 +23,14 @@ from app.models.schemas.dashboard import (
     DraftView,
     DraftVsSentDiff,
     MessageDetail,
+    ReplyAddresseeView,
     SentReplyView,
     SuggestedActionView,
     ThreadDetail,
     ThreadHeader,
 )
 from app.models.schemas.draft import DraftResponseSchema
+from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
 from app.repositories import (
     audit_repo,
     classification_repo,
@@ -316,6 +319,15 @@ async def get_thread_detail(
         resolution_reason_corrected=reason_corrected,
     )
 
+    reply_addressee = await _resolve_reply_addressee_view(
+        session,
+        settings,
+        mailbox=thread.mailbox,
+        conversation_id=thread.conversation_id,
+        subject=thread.subject,
+        messages=messages,
+    )
+
     return ThreadDetail(
         thread=summary,
         messages=message_details,
@@ -327,6 +339,76 @@ async def get_thread_detail(
         sent_reply=sent_reply,
         draft_vs_sent_diff=draft_vs_sent_diff,
         associated_threads=associated_threads,
+        reply_addressee=reply_addressee,
+    )
+
+
+async def _resolve_reply_addressee_view(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    mailbox: str,
+    conversation_id: str,
+    subject: str,
+    messages: list,
+) -> ReplyAddresseeView | None:
+    if not messages:
+        return None
+    schema_messages: list[EmailMessageSchema] = []
+    for message in messages:
+        direction = (
+            EmailDirectionEnum.OUTBOUND
+            if str(message.direction).lower() == "outbound"
+            else EmailDirectionEnum.INBOUND
+        )
+        schema_messages.append(
+            EmailMessageSchema(
+                message_id=message.graph_message_id,
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+                sender=message.sender,
+                subject=subject,
+                body_text=message.body_text,
+                body_preview=message.body_preview,
+                received_at=message.received_at,
+                direction=direction,
+                to_recipients=list(message.to_recipients or []),
+                cc_recipients=list(message.cc_recipients or []),
+                bcc_recipients=list(message.bcc_recipients or []),
+                has_attachments=bool(message.has_attachments),
+            )
+        )
+    thread_context = ThreadContextSchema(
+        conversation_id=conversation_id,
+        mailbox=mailbox,
+        subject=subject,
+        messages=schema_messages,
+    )
+    directory: dict[str, str] = {}
+    salute_on = settings.salute_directory_enabled
+    if salute_on:
+        from app.services import directory_lookup_service
+
+        directory = await directory_lookup_service.build_directory(
+            session,
+            mailbox,
+            thread_context,
+        )
+    addressee = resolve_reply_addressee(
+        mailbox=mailbox,
+        messages=schema_messages,
+        mailbox_owner=settings.owner_for_mailbox(mailbox),
+        directory=directory if salute_on else None,
+        suppress_local_part=salute_on,
+    )
+    if addressee is None:
+        return None
+    return ReplyAddresseeView(
+        email=addressee.email,
+        salute_name=addressee.salute_name,
+        source=addressee.source,
+        source_kind=addressee.source_kind,
+        directory_hit=addressee.directory_hit,
     )
 
 
