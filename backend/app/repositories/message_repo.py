@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,6 +120,22 @@ async def list_by_thread_ids(
         schema = MessageSchema.model_validate(row)
         grouped.setdefault(schema.thread_id, []).append(schema)
     return grouped
+
+
+async def inbound_automated_by_threads(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, bool]:
+    """True when any inbound row on the thread was stamped automated at ingest."""
+    if not thread_ids:
+        return {}
+    stmt = (
+        select(Message.thread_id, func.bool_or(Message.is_automated))
+        .where(Message.thread_id.in_(thread_ids), Message.direction == "inbound")
+        .group_by(Message.thread_id)
+    )
+    result = await session.execute(stmt)
+    return {thread_id: bool(flag) for thread_id, flag in result.all()}
 
 
 async def create_message(

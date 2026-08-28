@@ -36,7 +36,7 @@ from app.models.schemas.dashboard import (
     TriageHistoryView,
 )
 from app.models.schemas.email import ThreadStateEnum
-from app.repositories import audit_repo, draft_repo
+from app.repositories import audit_repo, draft_repo, message_repo
 
 #: Real actionable states — a message reached the pipeline and either has a
 #: draft awaiting review or needs a human because generation failed. ``NEW``
@@ -74,8 +74,15 @@ def _enriched_triage(
     mailbox: str,
     last_sender: str | None,
     subject: str | None = None,
+    is_automated: bool | None = None,
 ) -> TriageFlags | None:
-    return enrich_triage_flags(flags, sender=last_sender, mailbox=mailbox, subject=subject)
+    return enrich_triage_flags(
+        flags,
+        sender=last_sender,
+        mailbox=mailbox,
+        subject=subject,
+        is_automated=is_automated,
+    )
 
 
 def _display_state(state: str, *, mailbox: str, last_sender: str | None) -> str:
@@ -718,6 +725,7 @@ async def list_by_mailbox(
         )
 
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
+    automated_map = await message_repo.inbound_automated_by_threads(session, thread_ids)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
     finished = await draft_repo.review_finished_by_threads(session, thread_ids)
@@ -731,6 +739,7 @@ async def list_by_mailbox(
                         mailbox=thread.mailbox,
                         last_sender=items[i].last_sender,
                         subject=items[i].subject,
+                        is_automated=automated_map.get(thread.id),
                     ),
                     "has_draft": thread.id in draft_ids,
                     "teaching_note": teaching_notes.get(thread.id),
@@ -848,6 +857,7 @@ async def list_recent_for_mailboxes(
         pending.append((thread.mailbox, thread.id, thread.conversation_id))
 
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
+    automated_map = await message_repo.inbound_automated_by_threads(session, thread_ids)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
     finished = await draft_repo.review_finished_by_threads(session, thread_ids)
@@ -864,6 +874,7 @@ async def list_recent_for_mailboxes(
                             mailbox=mailbox,
                             last_sender=item.last_sender,
                             subject=item.subject,
+                            is_automated=automated_map.get(thread_id),
                         ),
                         "has_draft": thread_id in draft_ids,
                         "teaching_note": teaching_notes.get(thread_id),
@@ -1030,6 +1041,7 @@ async def list_needs_attention(
             )
         )
     triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
+    automated_map = await message_repo.inbound_automated_by_threads(session, thread_ids)
     draft_ids = await _thread_ids_with_drafts(session, thread_ids)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
     finished = await draft_repo.review_finished_by_threads(session, thread_ids)
@@ -1043,6 +1055,7 @@ async def list_needs_attention(
                         mailbox=thread.mailbox,
                         last_sender=summaries[i].last_sender,
                         subject=summaries[i].subject,
+                        is_automated=automated_map.get(thread.id),
                     ),
                     "has_draft": thread.id in draft_ids,
                     "teaching_note": teaching_notes.get(thread.id),
@@ -1168,6 +1181,9 @@ async def build_thread_summary(
             mailbox=thread.mailbox,
             last_sender=party,
             subject=thread.subject,
+            is_automated=(
+                await message_repo.inbound_automated_by_threads(session, [thread.id])
+            ).get(thread.id),
         ),
         outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
     )
