@@ -214,6 +214,21 @@ async def _seed(session) -> dict[str, uuid.UUID]:
 
 
 @pytest.mark.asyncio
+async def test_needs_attention_sorts_by_most_recent(db_session) -> None:
+    ids = await _seed(db_session)
+
+    rows = await thread_repo.list_needs_attention(
+        db_session,
+        [SALES],
+        limit=20,
+        sort="recent",
+    )
+    got = [row.id for row in rows]
+
+    assert got == [ids["reopen"], ids["tone"], ids["open"], ids["human"]]
+
+
+@pytest.mark.asyncio
 async def test_needs_attention_is_the_four_threads_elise_must_act_on(db_session) -> None:
     ids = await _seed(db_session)
 

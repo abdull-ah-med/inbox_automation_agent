@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,10 +52,20 @@ async def _build_mailbox_overviews(
     return mailboxes
 
 
-async def get_overview(session: AsyncSession, settings: Settings) -> DashboardOverview:
+async def get_overview(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    needs_attention_sort: Literal["urgency", "recent"] = "urgency",
+) -> DashboardOverview:
     mailboxes = await _build_mailbox_overviews(session, settings)
     emails = settings.mailbox_list
-    needs_attention = await thread_repo.list_needs_attention(session, emails, limit=15)
+    needs_attention = await thread_repo.list_needs_attention(
+        session,
+        emails,
+        limit=15,
+        sort=needs_attention_sort,
+    )
     recent_activity = await audit_repo.list_recent(
         session,
         mailboxes=emails,

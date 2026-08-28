@@ -99,6 +99,8 @@ export interface AuditEntry {
   source: string
 }
 
+export type NeedsAttentionSort = "urgency" | "recent"
+
 export interface DashboardOverview {
   mailboxes: MailboxOverview[]
   total_threads: number

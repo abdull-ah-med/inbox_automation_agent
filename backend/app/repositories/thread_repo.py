@@ -8,7 +8,7 @@ import json
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Select, and_, case, exists, func, or_, select, tuple_, update
@@ -947,8 +947,9 @@ async def list_needs_attention(
     mailbox_emails: list[str],
     *,
     limit: int = 20,
+    sort: Literal["urgency", "recent"] = "urgency",
 ) -> list[ThreadSummary]:
-    """Newest awaiting-action threads across configured mailboxes."""
+    """Awaiting-action threads across configured mailboxes."""
     if not mailbox_emails:
         return []
     now = datetime.now(UTC)
@@ -995,9 +996,12 @@ async def list_needs_attention(
             latest_msg.c.preview,
             latest_msg.c.graph_message_id,
         )
-        .order_by(urgency_rank.asc(), Thread.last_message_at.desc().nullslast())
-        .limit(limit)
     )
+    if sort == "recent":
+        stmt = stmt.order_by(Thread.last_message_at.desc().nullslast())
+    else:
+        stmt = stmt.order_by(urgency_rank.asc(), Thread.last_message_at.desc().nullslast())
+    stmt = stmt.limit(limit)
     result = await session.execute(stmt)
     rows = result.all()
     summaries: list[ThreadSummary] = []

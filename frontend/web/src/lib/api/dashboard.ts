@@ -3,6 +3,7 @@ import type {
   DashboardOverview,
   DraftView,
   MailboxContactView,
+  NeedsAttentionSort,
   RejectionMemoryResponse,
   ReplyAddresseeView,
   ReplyMemoryResponse,
@@ -11,8 +12,11 @@ import type {
 } from "@/lib/types"
 
 export const dashboardApi = {
-  overview() {
-    return apiFetch<DashboardOverview>("/api/dashboard/overview")
+  overview(sort: NeedsAttentionSort = "urgency") {
+    const qs = new URLSearchParams()
+    if (sort !== "urgency") qs.set("needs_attention_sort", sort)
+    const query = qs.toString()
+    return apiFetch<DashboardOverview>(`/api/dashboard/overview${query ? `?${query}` : ""}`)
   },
 }
 

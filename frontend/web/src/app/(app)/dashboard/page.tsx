@@ -1,6 +1,8 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { useCallback } from "react"
 
 import { AttentionQueue } from "@/components/attention-queue"
 import { ErrorPage } from "@/components/error-page"
@@ -8,13 +10,46 @@ import { MailboxSummaryCard } from "@/components/mailbox-summary-card"
 import { OpsReportDownload } from "@/components/ops-report-download"
 import { UrgencyDistribution } from "@/components/urgency-distribution"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
+import type { NeedsAttentionSort } from "@/lib/types"
+
+const ATTENTION_SORT_ITEMS = [
+  { label: "Highest urgency", value: "urgency" as const },
+  { label: "Most recent", value: "recent" as const },
+]
+
+const parseAttentionSort = (value: string | null): NeedsAttentionSort =>
+  value === "recent" ? "recent" : "urgency"
 
 export default function DashboardPage() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const attentionSort = parseAttentionSort(searchParams.get("attention_sort"))
+
+  const handleAttentionSortChange = useCallback(
+    (value: NeedsAttentionSort | null) => {
+      const next = new URLSearchParams(searchParams.toString())
+      if (!value || value === "urgency") next.delete("attention_sort")
+      else next.set("attention_sort", value)
+      const query = next.toString()
+      router.replace(query ? `${pathname}?${query}` : pathname)
+    },
+    [pathname, router, searchParams],
+  )
+
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ["dashboard", "overview"],
-    queryFn: () => api.dashboard.overview(),
+    queryKey: ["dashboard", "overview", attentionSort],
+    queryFn: () => api.dashboard.overview(attentionSort),
   })
 
   if (isLoading) {
@@ -66,11 +101,31 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
         <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle className="text-sm">Needs attention</CardTitle>
-            <CardDescription>
-              Awaiting-action threads with urgency, spam, and context signals.
-            </CardDescription>
+          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
+            <div className="min-w-0 space-y-1">
+              <CardTitle className="text-sm">Needs attention</CardTitle>
+              <CardDescription>
+                Awaiting-action threads with urgency, spam, and context signals.
+              </CardDescription>
+            </div>
+            <Select value={attentionSort} onValueChange={handleAttentionSortChange}>
+              <SelectTrigger
+                size="sm"
+                className="w-[11.5rem] shrink-0"
+                aria-label="Sort needs attention queue"
+              >
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectGroup>
+                  {ATTENTION_SORT_ITEMS.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </CardHeader>
           <CardContent>
             <AttentionQueue threads={data.needs_attention ?? []} />
