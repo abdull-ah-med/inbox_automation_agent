@@ -114,6 +114,7 @@ const ThreadDetailLoaded = ({
     sent_reply,
     draft_vs_sent_diff,
     associated_threads,
+    reply_addressee,
   } = data
   const associatedItems = associated_threads ?? []
   const label = inboxLabel(thread.mailbox_key)
@@ -162,6 +163,7 @@ const ThreadDetailLoaded = ({
             triage={triage}
             auditLog={audit_log}
             activity={activity ?? []}
+            replyAddressee={reply_addressee ?? null}
           />
         </aside>
         <div className="lg:col-span-3">

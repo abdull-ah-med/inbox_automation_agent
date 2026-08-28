@@ -17,6 +17,7 @@ import type {
   ActivityEntry,
   AuditEntry,
   DraftView,
+  ReplyAddresseeView,
   SuggestedAction,
   ThreadSummary,
   TriageFlags,
@@ -40,6 +41,7 @@ type ThreadTriageSidebarViewProps = {
   busy: boolean
   suggestedActions: SuggestedAction[]
   draftId: string | undefined
+  replyAddressee: ReplyAddresseeView | null
   actionError: string | null
   approveOpen: boolean
   rejectOpen: boolean
@@ -154,6 +156,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             actionError={actionError}
             feedbackDone={feedbackDone}
             busy={busy}
+            mailboxKey={thread.mailbox_key}
+            replyAddressee={props.replyAddressee}
             onApprove={onOpenApprove}
             onApproveKeyDown={onApproveKeyDown}
             onReject={() => onRejectOpenChange(true)}

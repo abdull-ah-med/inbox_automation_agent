@@ -19,6 +19,7 @@ import type {
   AuditEntry,
   ClassificationView,
   DraftView,
+  ReplyAddresseeView,
   ThreadSummary,
   TriageFlags,
 } from "@/lib/types"
@@ -31,6 +32,7 @@ export const ThreadTriageSidebar = ({
   triage,
   auditLog,
   activity = [],
+  replyAddressee = null,
 }: {
   threadId: string
   thread: ThreadSummary
@@ -39,6 +41,7 @@ export const ThreadTriageSidebar = ({
   triage: TriageFlags | null
   auditLog: AuditEntry[]
   activity?: ActivityEntry[]
+  replyAddressee?: ReplyAddresseeView | null
 }) => {
   const queryClient = useQueryClient()
   const [approveOpen, setApproveOpen] = useState(false)
@@ -121,6 +124,7 @@ export const ThreadTriageSidebar = ({
       busy={approveMutation.isPending || rejectMutation.isPending}
       suggestedActions={draft?.suggested_actions ?? []}
       draftId={draft?.id}
+      replyAddressee={replyAddressee}
       actionError={actionError}
       approveOpen={approveOpen}
       rejectOpen={rejectOpen}

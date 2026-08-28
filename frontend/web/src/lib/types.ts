@@ -255,11 +255,38 @@ export interface SkillUpdate {
 export interface ReplyMemoryResponse {
   id: string
   draft_id: string
+  thread_id?: string | null
   mailbox: string
   reply_text: string
+  preview_line?: string | null
+  draft_subject?: string | null
+  sender_email?: string | null
+  receiver_email?: string | null
+  reason_code?: string | null
+  reason_text?: string | null
   original_email_preview: string | null
+  learning_note?: string | null
   is_excluded: boolean
   created_at: string
+}
+
+export interface RejectionMemoryResponse {
+  id: string
+  draft_id: string
+  thread_id?: string | null
+  mailbox: string
+  routing_category: string
+  reason_code: string
+  note: string
+  reason_text?: string | null
+  is_excluded: boolean
+  created_at: string | null
+  draft_subject: string | null
+  draft_body?: string | null
+  draft_body_preview: string | null
+  preview_line?: string | null
+  sender_email?: string | null
+  receiver_email?: string | null
 }
 
 export interface ToneProfileData {
@@ -310,6 +337,42 @@ export interface RelatedThreadList {
   items: RelatedThreadItem[]
 }
 
+export interface ReplyAddresseeView {
+  email: string
+  salute_name: string
+  source: string
+  source_kind: string
+  directory_hit: boolean
+}
+
+export interface MailboxContactView {
+  email: string
+  full_name: string
+  first_name: string
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MailboxContactListResponse {
+  items: MailboxContactView[]
+  total: number
+}
+
+export interface MailboxContactUpsert {
+  email: string
+  full_name?: string
+  first_name: string
+  notes?: string | null
+}
+
+export interface MailboxContactPatch {
+  email: string
+  first_name?: string | null
+  full_name?: string | null
+  notes?: string | null
+}
+
 export interface ThreadDetail {
   thread: ThreadSummary
   messages: MessageDetail[]
@@ -321,6 +384,7 @@ export interface ThreadDetail {
   sent_reply?: SentReplyView | null
   draft_vs_sent_diff?: DraftVsSentDiff | null
   associated_threads?: RelatedThreadItem[]
+  reply_addressee?: ReplyAddresseeView | null
 }
 
 export interface MarkNotSpamResponse {

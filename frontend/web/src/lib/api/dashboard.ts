@@ -2,6 +2,9 @@ import { apiFetch, apiFetchBytes } from "@/lib/api/client"
 import type {
   DashboardOverview,
   DraftView,
+  MailboxContactView,
+  RejectionMemoryResponse,
+  ReplyAddresseeView,
   ReplyMemoryResponse,
   SearchResponse,
   ToneProfileResponse,
@@ -79,6 +82,24 @@ export const draftsApi = {
       body: JSON.stringify(body),
     })
   },
+  applySalutation(
+    id: string,
+    body: {
+      email: string
+      first_name: string
+      full_name?: string
+      notes?: string | null
+    },
+  ) {
+    return apiFetch<{
+      draft: DraftView
+      reply_addressee: ReplyAddresseeView
+      contact: MailboxContactView
+    }>(`/api/drafts/${id}/salutation`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  },
 }
 
 export const replyMemoryApi = {
@@ -90,6 +111,21 @@ export const replyMemoryApi = {
   },
   setExcluded(id: string, is_excluded: boolean) {
     return apiFetch<ReplyMemoryResponse>(`/api/reply-memory/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_excluded }),
+    })
+  },
+}
+
+export const rejectionMemoryApi = {
+  list(mailbox?: string) {
+    const qs = new URLSearchParams()
+    if (mailbox) qs.set("mailbox", mailbox)
+    const query = qs.toString()
+    return apiFetch<RejectionMemoryResponse[]>(`/api/rejection-memory${query ? `?${query}` : ""}`)
+  },
+  setExcluded(id: string, is_excluded: boolean) {
+    return apiFetch<RejectionMemoryResponse>(`/api/rejection-memory/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ is_excluded }),
     })

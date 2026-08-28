@@ -15,11 +15,13 @@ import { chatApi } from "@/lib/api/chat"
 import {
   dashboardApi,
   draftsApi,
+  rejectionMemoryApi,
   replyMemoryApi,
   reportsApi,
   searchApi,
   toneProfilesApi,
 } from "@/lib/api/dashboard"
+import { mailboxContactsApi } from "@/lib/api/mailbox-contacts"
 import { mailboxesApi } from "@/lib/api/mailboxes"
 import { skillCandidatesApi, skillsApi } from "@/lib/api/skills"
 import { threadsApi } from "@/lib/api/threads"
@@ -31,10 +33,12 @@ export const api = {
   search: searchApi,
   chat: chatApi,
   mailboxes: mailboxesApi,
+  mailboxContacts: mailboxContactsApi,
   threads: threadsApi,
   drafts: draftsApi,
   skills: skillsApi,
   replyMemory: replyMemoryApi,
+  rejectionMemory: rejectionMemoryApi,
   toneProfiles: toneProfilesApi,
   skillCandidates: skillCandidatesApi,
 }

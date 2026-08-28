@@ -4,7 +4,13 @@ import { AuditSection } from "@/components/thread-triage/audit-section"
 import { ClassificationSection } from "@/components/thread-triage/classification-section"
 import { DraftSection } from "@/components/thread-triage/draft-section"
 import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import type { AuditEntry, DraftView, ThreadSummary, TriageFlags } from "@/lib/types"
+import type {
+  AuditEntry,
+  DraftView,
+  ReplyAddresseeView,
+  ThreadSummary,
+  TriageFlags,
+} from "@/lib/types"
 
 type ThreadTriageTabsProps = {
   threadId: string
@@ -17,6 +23,7 @@ type ThreadTriageTabsProps = {
   actionError: string | null
   feedbackDone: boolean
   busy: boolean
+  replyAddressee?: ReplyAddresseeView | null
   onApprove: () => void
   onApproveKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onReject: () => void
@@ -34,6 +41,7 @@ export const ThreadTriageTabs = ({
   actionError,
   feedbackDone,
   busy,
+  replyAddressee = null,
   onApprove,
   onApproveKeyDown,
   onReject,
@@ -63,6 +71,8 @@ export const ThreadTriageTabs = ({
         actionError={actionError}
         feedbackDone={feedbackDone}
         busy={busy}
+        mailboxKey={thread.mailbox_key}
+        replyAddressee={replyAddressee}
         onApprove={onApprove}
         onApproveKeyDown={onApproveKeyDown}
         onReject={onReject}
