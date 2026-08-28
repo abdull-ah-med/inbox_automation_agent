@@ -8,13 +8,8 @@ Does not send or modify Outlook mail.
 
 Usage (from backend/ or docker exec):
 
-  python -m scripts.backfill_graph_identity \\
-    --thread-id 63c254b0-e387-4342-99d6-749bfe62c861 \\
-    --thread-id 5d9e291f-a1c8-4eff-a4c5-5c4f490f2139
-
-  python -m scripts.backfill_graph_identity --apply --retry-triage \\
-    --thread-id 63c254b0-e387-4342-99d6-749bfe62c861 \\
-    --thread-id 5d9e291f-a1c8-4eff-a4c5-5c4f490f2139
+  python -m scripts.backfill_graph_identity --days 7
+  python -m scripts.backfill_graph_identity --apply --retry-triage --days 7
 """
 
 from __future__ import annotations
@@ -23,9 +18,11 @@ import argparse
 import asyncio
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import structlog
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.dependencies import close_redis, get_graph_auth, get_graph_client, get_redis
@@ -34,6 +31,7 @@ from app.db.session import dispose_engine, get_session_factory
 from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.email import EmailDirectionEnum, ThreadStateEnum
+from app.models.schemas.graph import IngestResultSchema
 from app.repositories import message_repo
 from app.services.ingestion_service import (
     _graph_headers_map,
@@ -53,6 +51,21 @@ _OPEN_STATES = frozenset(
         ThreadStateEnum.REQUIRES_HUMAN.value,
     }
 )
+
+
+async def load_threads_for_window(
+    session: AsyncSession,
+    *,
+    days: int,
+    now: datetime,
+) -> list[Thread]:
+    lookback = now - timedelta(days=days)
+    result = await session.execute(
+        select(Thread)
+        .where(Thread.last_message_at >= lookback)
+        .order_by(Thread.last_message_at.asc())
+    )
+    return list(result.scalars().all())
 
 
 def _header_names(graph_msg) -> list[str]:
@@ -111,28 +124,39 @@ async def _stamp_thread(*, thread: Thread, graph, apply: bool) -> tuple[int, int
 
 
 async def _retry_open_inbound(*, thread: Thread) -> str:
-    """Re-run Haiku/draft from Postgres. Skip outbound-tip (already resolved)."""
+    """Re-run Haiku/draft from the latest inbound. Does not write Outlook mail."""
     from app.services import pipeline_service
+
+    if thread.state not in _OPEN_STATES:
+        return f"skipped:state={thread.state}"
 
     factory = get_session_factory()
     async with factory() as session:
         messages = await message_repo.list_by_thread(session, thread.id)
         if not messages:
             return "skipped:no_messages"
-        tip = max(messages, key=lambda row: row.received_at)
-        if tip.direction == EmailDirectionEnum.OUTBOUND.value:
-            return "skipped:outbound_tip"
-        if thread.state not in _OPEN_STATES:
-            return f"skipped:state={thread.state}"
-        ingest = await build_thread_context_from_db(
+        inbound = max(
+            (row for row in messages if row.direction == EmailDirectionEnum.INBOUND.value),
+            key=lambda row: row.received_at,
+            default=None,
+        )
+        if inbound is None:
+            return "skipped:no_inbound"
+        rebuilt = await build_thread_context_from_db(
             session,
             mailbox=thread.mailbox,
-            message_id=tip.graph_message_id,
+            message_id=inbound.graph_message_id,
+            resolve_outbound_tip=False,
         )
-        if ingest is None:
+        if rebuilt is None or rebuilt.thread_context is None:
             return "skipped:rebuild_failed"
-        if ingest.status != "retry_triage":
-            return f"skipped:status={ingest.status}"
+        ingest = IngestResultSchema(
+            message_id=inbound.graph_message_id,
+            status="retry_triage",
+            thread_id=str(thread.id),
+            conversation_id=thread.conversation_id,
+            thread_context=rebuilt.thread_context,
+        )
 
     settings = get_settings()
     redis = await get_redis()
@@ -144,19 +168,24 @@ async def _retry_open_inbound(*, thread: Thread) -> str:
     )
     if state is None:
         return "failed:see_logs"
-    automated = bool(getattr(state.triage, "is_automated", False)) if state.triage else False
-    return f"done:{state.draft_status} automated={automated}"
+    needed = None if state.triage is None else state.triage.draft_needed
+    return f"done:{state.draft_status} draft_needed={needed}"
 
 
-async def _run(*, thread_ids: list[uuid.UUID], apply: bool, retry_triage: bool) -> int:
-    settings = get_settings()
-    redis = await get_redis()
-    auth = await get_graph_auth(settings, redis)
-    graph = get_graph_client(auth)
+async def _load_targets(
+    *,
+    thread_ids: list[uuid.UUID],
+    days: int | None,
+) -> list[Thread]:
     factory = get_session_factory()
-
-    for thread_id in thread_ids:
-        async with factory() as session:
+    async with factory() as session:
+        if days is not None:
+            rows = await load_threads_for_window(session, days=days, now=datetime.now(UTC))
+            for row in rows:
+                session.expunge(row)
+            return rows
+        found: list[Thread] = []
+        for thread_id in thread_ids:
             thread = (
                 await session.execute(select(Thread).where(Thread.id == thread_id))
             ).scalar_one_or_none()
@@ -164,7 +193,25 @@ async def _run(*, thread_ids: list[uuid.UUID], apply: bool, retry_triage: bool) 
                 print(f"thread {thread_id}: NOT FOUND")
                 continue
             session.expunge(thread)
+            found.append(thread)
+        return found
 
+
+async def _run(
+    *,
+    thread_ids: list[uuid.UUID],
+    days: int | None,
+    apply: bool,
+    retry_triage: bool,
+) -> int:
+    redis = await get_redis()
+    settings = get_settings()
+    auth = await get_graph_auth(settings, redis)
+    graph = get_graph_client(auth)
+    threads = await _load_targets(thread_ids=thread_ids, days=days)
+    print(f"threads={len(threads)} apply={apply} retry_triage={retry_triage}")
+
+    for thread in threads:
         print(f"thread {thread.id} [{thread.mailbox}] {thread.subject!r} state={thread.state}")
         examined, updated = await _stamp_thread(thread=thread, graph=graph, apply=apply)
         print(f"  identity examined={examined} updated={updated} apply={apply}")
@@ -177,30 +224,43 @@ async def _run(*, thread_ids: list[uuid.UUID], apply: bool, retry_triage: bool) 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument(
         "--thread-id",
         action="append",
-        required=True,
         help="Thread UUID (repeat for multiple)",
+    )
+    target.add_argument(
+        "--days",
+        type=int,
+        help="Heal threads whose last_message_at is within this many days",
     )
     parser.add_argument("--apply", action="store_true", help="Write columns (default dry-run)")
     parser.add_argument(
         "--retry-triage",
         action="store_true",
-        help="Re-run Haiku/draft for open inbound-tip threads after --apply",
+        help="Re-run Haiku/draft for open threads after --apply",
     )
     args = parser.parse_args(argv)
     ids: list[uuid.UUID] = []
-    for raw in args.thread_id:
+    for raw in args.thread_id or []:
         try:
             ids.append(uuid.UUID(raw))
         except ValueError:
             print(f"Invalid --thread-id {raw!r}", file=sys.stderr)
             return 1
+    if args.days is not None and args.days < 1:
+        print("--days must be >= 1", file=sys.stderr)
+        return 1
 
     async def _main() -> int:
         try:
-            return await _run(thread_ids=ids, apply=args.apply, retry_triage=args.retry_triage)
+            return await _run(
+                thread_ids=ids,
+                days=args.days,
+                apply=args.apply,
+                retry_triage=args.retry_triage,
+            )
         finally:
             await close_redis()
             await dispose_engine()

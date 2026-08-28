@@ -370,6 +370,7 @@ async def build_thread_context_from_db(
     *,
     mailbox: str,
     message_id: str,
+    resolve_outbound_tip: bool = True,
 ) -> IngestResultSchema | None:
     """Rebuild triage inputs from Postgres when Redis says processing but rows exist."""
     existing = await message_repo.get_by_graph_id(session, message_id)
@@ -432,7 +433,11 @@ async def build_thread_context_from_db(
         subject=thread.subject,
         messages=context_messages,
     )
-    if tip_row is not None and tip_row.direction == EmailDirectionEnum.OUTBOUND.value:
+    if (
+        resolve_outbound_tip
+        and tip_row is not None
+        and tip_row.direction == EmailDirectionEnum.OUTBOUND.value
+    ):
         from app.services import sent_reply_service
 
         await sent_reply_service.resolve_thread_from_outbound(
