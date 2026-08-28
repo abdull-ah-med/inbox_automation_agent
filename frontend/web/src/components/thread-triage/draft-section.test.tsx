@@ -21,7 +21,7 @@ const draft: DraftView = {
   subject: "Re: Quote",
   body: "Hi Samplecontact,\n\nThanks for reaching out.",
   forward_to: null,
-  teaching_note: null,
+  teaching_note: "",
   urgency: "NORMAL",
   urgency_reason: null,
   created_at: new Date().toISOString(),
