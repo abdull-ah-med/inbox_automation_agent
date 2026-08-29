@@ -77,30 +77,25 @@ function MailboxPageContent() {
   // Filters live in the URL so they're shareable and survive back/forward nav.
   const state = searchParams.get("state") ?? ""
   const urgency = searchParams.get("urgency") ?? ""
-  const staleOnly = searchParams.get("stale") === "1"
-  const showFiltered = searchParams.get("filtered") === "1"
 
   const updateFilters = useCallback(
-    (patch: { state?: string; urgency?: string; staleOnly?: boolean; showFiltered?: boolean }) => {
+    (patch: { state?: string; urgency?: string }) => {
       const next = new URLSearchParams(searchParams.toString())
       const nextState = patch.state ?? state
       const nextUrgency = patch.urgency ?? urgency
-      const nextStale = patch.staleOnly ?? staleOnly
-      const nextFiltered = patch.showFiltered ?? showFiltered
 
       if (nextState) next.set("state", nextState)
       else next.delete("state")
       if (nextUrgency) next.set("urgency", nextUrgency)
       else next.delete("urgency")
-      if (nextStale) next.set("stale", "1")
-      else next.delete("stale")
-      if (nextFiltered) next.set("filtered", "1")
-      else next.delete("filtered")
+      // Drop legacy toggle params if present in a shared URL.
+      next.delete("stale")
+      next.delete("filtered")
 
       const query = next.toString()
       router.replace(query ? `${pathname}?${query}` : pathname)
     },
-    [pathname, router, searchParams, state, urgency, staleOnly, showFiltered],
+    [pathname, router, searchParams, state, urgency],
   )
 
   const {
@@ -113,13 +108,11 @@ function MailboxPageContent() {
     error,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["mailbox", mailbox, "threads", state, urgency, staleOnly, showFiltered],
+    queryKey: ["mailbox", mailbox, "threads", state, urgency],
     queryFn: ({ pageParam }) =>
       api.mailboxes.threads(mailbox, {
         state: state || undefined,
         urgency: urgency || undefined,
-        stale_only: staleOnly || undefined,
-        include_filtered: showFiltered || undefined,
         cursor: pageParam,
         limit: 25,
       }),
@@ -145,15 +138,7 @@ function MailboxPageContent() {
   }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
   const label = inboxLabel(mailbox)
-  const filtersActive = Boolean(state || urgency || staleOnly || showFiltered)
-
-  const handleToggleStale = () => {
-    updateFilters({ staleOnly: !staleOnly })
-  }
-
-  const handleToggleFiltered = () => {
-    updateFilters({ showFiltered: !showFiltered })
-  }
+  const filtersActive = Boolean(state || urgency)
 
   const handleResetFilters = () => {
     router.replace(pathname)
@@ -206,26 +191,6 @@ function MailboxPageContent() {
             </SelectGroup>
           </SelectContent>
         </Select>
-        <Button
-          type="button"
-          variant={staleOnly ? "default" : "outline"}
-          size="sm"
-          className="min-h-10"
-          aria-pressed={staleOnly}
-          onClick={handleToggleStale}
-        >
-          Stale only
-        </Button>
-        <Button
-          type="button"
-          variant={showFiltered ? "default" : "outline"}
-          size="sm"
-          className="min-h-10"
-          aria-pressed={showFiltered}
-          onClick={handleToggleFiltered}
-        >
-          {showFiltered ? "Showing spam/no-action" : "Show spam/no-action"}
-        </Button>
         <Button
           type="button"
           variant="ghost"

@@ -59,14 +59,23 @@ describe("Mailbox page filters", () => {
     const urgencyFilter = screen.getByRole("combobox", {
       name: "Filter by urgency",
     })
-    const stale = screen.getByRole("button", { name: "Stale only" })
     expect(stateFilter.tagName).toBe("BUTTON")
     expect(urgencyFilter.tagName).toBe("BUTTON")
     expect(stateFilter.className).toContain("border-border")
     expect(urgencyFilter.className).toContain("border-border")
-    expect(stale.className).toContain("border-border")
     expect(stateFilter.className).toContain("bg-background")
-    expect(stale.className).toContain("bg-background")
+    expect(screen.queryByRole("button", { name: "Stale only" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /spam\/no-action/i })).toBeNull()
+  })
+
+  it("keeps Spam in the state filter and drops stale / show-filtered toggles", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    expect(await screen.findByRole("option", { name: "Spam" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Stale only" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Show spam/no-action" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Showing spam/no-action" })).toBeNull()
   })
 
   it("writes the chosen state onto the mailbox URL", async () => {
@@ -75,6 +84,14 @@ describe("Mailbox page filters", () => {
     await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
     await user.click(await screen.findByRole("option", { name: "Needs human review" }))
     expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=REQUIRES_HUMAN")
+  })
+
+  it("does not send stale_only or include_filtered on the list call", async () => {
+    renderPage()
+    await screen.findByRole("combobox", { name: "Filter by state" })
+    const [, params] = listThreads.mock.calls[0] as [string, Record<string, unknown>]
+    expect(params).not.toHaveProperty("stale_only")
+    expect(params).not.toHaveProperty("include_filtered")
   })
 })
 
