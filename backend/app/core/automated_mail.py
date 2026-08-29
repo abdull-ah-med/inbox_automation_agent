@@ -1,8 +1,9 @@
 """Detect automated mail from RFC Auto-Submitted, noreply/list locals, and OOO subjects.
 
-Automated is a per-message property. A named person is never a robot from
-List-* or Graph/Outlook headers. Thread-level Automated is decided separately
-and stays off once a human discussion or Elise reply exists.
+Automated is a per-message property. Noreply locals always win. A named
+person is never a robot from List-* or Graph/Outlook headers alone.
+Thread-level Automated is decided separately and stays off once a human
+discussion or Elise reply exists.
 """
 
 from __future__ import annotations
@@ -150,8 +151,9 @@ def is_automated_mail(
 ) -> bool:
     """True for RFC auto-replies, noreply/list mailboxes, and OOO subjects.
 
-    A named person is never tagged from List-* / Graph headers. Outlook
-    X-Auto-Response-Suppress and List-Unsubscribe-Post are ignored.
+    A named person is never tagged from List-* / Graph headers. Noreply
+    locals still win when Teams (or similar) puts a chat name in From.
+    Outlook X-Auto-Response-Suppress and List-Unsubscribe-Post are ignored.
     """
     normalized = _normalize_headers(headers)
     auto_submitted = normalized.get("auto-submitted", "").lower()
@@ -164,9 +166,6 @@ def is_automated_mail(
     if any(text.startswith(prefix) for prefix in _AUTOMATED_SUBJECT_PREFIXES):
         return True
 
-    if _person_shaped_from(sender_display_name, sender):
-        return False
-
     local = _local_part(sender)
     if local is not None and local in _NOREPLY_LOCALS:
         return True
@@ -174,6 +173,12 @@ def is_automated_mail(
         compact = local.replace(".", "").replace("-", "").replace("_", "")
         if compact in _NOREPLY_COMPACT:
             return True
+
+    # Person-shaped From only vetoes list/List-Id signals (Zendesk agents),
+    # not noreply — Teams uses no-reply@ with the participant as display name.
+    if _person_shaped_from(sender_display_name, sender):
+        return False
+
     if _is_list_mailbox(local):
         return True
     return "list-id" in normalized

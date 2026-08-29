@@ -25,6 +25,19 @@ def test_no_reply_and_mailer_daemon_are_automated() -> None:
     assert is_automated_mail(sender="mailer-daemon@acme.example", subject="bounce")
 
 
+def test_teams_noreply_with_person_shaped_display_is_automated() -> None:
+    """Teams uses no-reply@ with the chat participant as display name.
+
+    'Sample Developer' looks like a person, but the From local is still a robot.
+    Person-shaped must not veto noreply — only List-* / list-mailbox signals.
+    """
+    assert is_automated_mail(
+        sender="no-reply@teams.mail.microsoft",
+        sender_display_name="Sample Developer",
+        subject="Sample Developer sent a message",
+    )
+
+
 def test_notifications_local_alone_is_not_automated() -> None:
     """Stripe/Zendesk-style notifications@ is transactional, not a robot local."""
     assert not is_automated_mail(
