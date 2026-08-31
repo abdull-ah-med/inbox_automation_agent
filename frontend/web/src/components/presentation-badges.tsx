@@ -1,6 +1,9 @@
 import { StatusBadge, urgencyTone, stateToneFromLabel } from "@/components/status-badge"
 
-const KIND_TONE: Record<string, "neutral" | "blue" | "green" | "amber" | "red" | "purple" | "orange"> = {
+const KIND_TONE: Record<
+  string,
+  "neutral" | "blue" | "green" | "amber" | "red" | "purple" | "orange"
+> = {
   internal: "blue",
   automated: "neutral",
   automated_action: "amber",
