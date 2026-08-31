@@ -245,6 +245,7 @@ function MailboxPageContent() {
           ariaLabel="From date"
           value={dateFrom}
           invalid={inverted}
+          compact
           disabled={futureDisabled}
           todayDate={todayDate}
           open={fromOpen}
@@ -257,6 +258,7 @@ function MailboxPageContent() {
           ariaLabel="To date"
           value={dateTo}
           invalid={inverted}
+          compact
           disabled={futureDisabled}
           todayDate={todayDate}
           open={toOpen}

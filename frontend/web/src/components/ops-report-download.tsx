@@ -54,6 +54,8 @@ type ReportDatePickerProps = {
   ariaLabel: string
   value: string
   invalid?: boolean
+  /** Inline filter-row mode: no floating label; empty state uses ``label``. */
+  compact?: boolean
   disabled: Matcher[]
   todayDate: Date
   open: boolean
@@ -67,6 +69,7 @@ export const ReportDatePicker = ({
   ariaLabel,
   value,
   invalid = false,
+  compact = false,
   disabled,
   todayDate,
   open,
@@ -80,40 +83,51 @@ export const ReportDatePicker = ({
     onOpenChange(false)
   }
 
+  const trigger = (
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger
+        render={
+          <Button
+            id={id}
+            type="button"
+            variant="outline"
+            size="sm"
+            tabIndex={0}
+            data-empty={!selected}
+            data-invalid={invalid || undefined}
+            aria-label={ariaLabel}
+            className={
+              compact
+                ? "data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive min-h-10 w-fit justify-start text-left font-normal"
+                : "data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive min-h-10 w-full justify-start text-left font-normal"
+            }
+          />
+        }
+      >
+        <CalendarIcon aria-hidden="true" />
+        {selected ? format(selected, "PPP") : <span>{compact ? label : "Pick a date"}</span>}
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto p-0">
+        <Calendar
+          mode="single"
+          selected={selected}
+          defaultMonth={selected ?? todayDate}
+          startMonth={addLocalDays(todayDate, -365)}
+          endMonth={todayDate}
+          disabled={disabled}
+          captionLayout="dropdown"
+          onSelect={handleSelect}
+        />
+      </PopoverContent>
+    </Popover>
+  )
+
+  if (compact) return trigger
+
   return (
     <div className="grid gap-1.5">
       <Label htmlFor={id}>{label}</Label>
-      <Popover open={open} onOpenChange={onOpenChange}>
-        <PopoverTrigger
-          render={
-            <Button
-              id={id}
-              type="button"
-              variant="outline"
-              tabIndex={0}
-              data-empty={!selected}
-              data-invalid={invalid || undefined}
-              aria-label={ariaLabel}
-              className="data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive min-h-10 w-full justify-start text-left font-normal"
-            />
-          }
-        >
-          <CalendarIcon aria-hidden="true" />
-          {selected ? format(selected, "PPP") : <span>Pick a date</span>}
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-auto p-0">
-          <Calendar
-            mode="single"
-            selected={selected}
-            defaultMonth={selected ?? todayDate}
-            startMonth={addLocalDays(todayDate, -365)}
-            endMonth={todayDate}
-            disabled={disabled}
-            captionLayout="dropdown"
-            onSelect={handleSelect}
-          />
-        </PopoverContent>
-      </Popover>
+      {trigger}
     </div>
   )
 }

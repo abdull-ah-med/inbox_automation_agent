@@ -94,12 +94,17 @@ describe("Mailbox page filters", () => {
     expect(params).not.toHaveProperty("include_filtered")
   })
 
-  it("renders ReportDatePicker controls for from and to", async () => {
+  it("renders inline from and to date filters aligned with other controls", async () => {
+    // Spec: filter row stays single-height — no floating From/To labels above
+    // the triggers (those misalign against the state/urgency selects). Empty
+    // triggers show From/To as placeholder copy; aria-labels stay for a11y.
     renderPage()
-    expect(await screen.findByRole("button", { name: "From date" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "To date" })).toBeInTheDocument()
-    expect(screen.getByText("From", { selector: "label" })).toBeInTheDocument()
-    expect(screen.getByText("To", { selector: "label" })).toBeInTheDocument()
+    const from = await screen.findByRole("button", { name: "From date" })
+    const to = screen.getByRole("button", { name: "To date" })
+    expect(from).toHaveTextContent(/^From$/)
+    expect(to).toHaveTextContent(/^To$/)
+    expect(screen.queryByText("From", { selector: "label" })).not.toBeInTheDocument()
+    expect(screen.queryByText("To", { selector: "label" })).not.toBeInTheDocument()
   })
 
   it("opens the from date calendar popover", async () => {
