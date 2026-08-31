@@ -1,14 +1,13 @@
-"""Unit tests for actionable-only filtering in ``thread_repo``.
+"""Unit tests for mailbox thread listing in ``thread_repo``.
 
-Verifies the SPAM/NO_ACTION exclusion clause that keeps default mailbox and
-dashboard views limited to threads that actually need Elise's attention,
-plus the ``set_thread_outcome`` write path used by the pipeline.
+Verifies SPAM/NO_ACTION are included by default, optional date bounds on
+``last_message_at``, and the ``set_thread_outcome`` write path.
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -45,30 +44,16 @@ def _compiled(stmt: object) -> str:
 
 
 @pytest.mark.asyncio
-async def test_list_by_mailbox_excludes_filtered_states_by_default() -> None:
+async def test_list_by_mailbox_includes_filtered_states_by_default() -> None:
     session = _CapturingSession()
     await thread_repo.list_by_mailbox(session, "elise@example.com")  # type: ignore[arg-type]
-
-    sql = _compiled(session.statements[0])
-    assert "threads.state NOT IN" in sql
-    assert ThreadStateEnum.SPAM.value in sql
-    assert ThreadStateEnum.NO_ACTION.value in sql
-
-
-@pytest.mark.asyncio
-async def test_list_by_mailbox_include_filtered_skips_exclusion() -> None:
-    session = _CapturingSession()
-    await thread_repo.list_by_mailbox(  # type: ignore[arg-type]
-        session, "elise@example.com", include_filtered=True
-    )
 
     sql = _compiled(session.statements[0])
     assert "threads.state NOT IN" not in sql
 
 
 @pytest.mark.asyncio
-async def test_list_by_mailbox_explicit_state_skips_exclusion_clause() -> None:
-    """An explicit ?state= filter takes precedence over the default exclusion."""
+async def test_list_by_mailbox_explicit_state_filters_single_state() -> None:
     session = _CapturingSession()
     await thread_repo.list_by_mailbox(  # type: ignore[arg-type]
         session, "elise@example.com", state=ThreadStateEnum.SPAM.value
@@ -77,6 +62,32 @@ async def test_list_by_mailbox_explicit_state_skips_exclusion_clause() -> None:
     sql = _compiled(session.statements[0])
     assert "threads.state NOT IN" not in sql
     assert "threads.state = 'SPAM'" in sql
+
+
+@pytest.mark.asyncio
+async def test_list_by_mailbox_date_from_bounds_last_message_at() -> None:
+    session = _CapturingSession()
+    await thread_repo.list_by_mailbox(  # type: ignore[arg-type]
+        session,
+        "elise@example.com",
+        date_from=date(2026, 8, 1),
+    )
+
+    sql = _compiled(session.statements[0])
+    assert "threads.last_message_at >= '2026-08-01" in sql
+
+
+@pytest.mark.asyncio
+async def test_list_by_mailbox_date_to_is_exclusive_end_of_day() -> None:
+    session = _CapturingSession()
+    await thread_repo.list_by_mailbox(  # type: ignore[arg-type]
+        session,
+        "elise@example.com",
+        date_to=date(2026, 8, 28),
+    )
+
+    sql = _compiled(session.statements[0])
+    assert "threads.last_message_at < '2026-08-29" in sql
 
 
 def _fake_thread_row(thread_id: uuid.UUID, *, state: str, urgency: str | None) -> SimpleNamespace:

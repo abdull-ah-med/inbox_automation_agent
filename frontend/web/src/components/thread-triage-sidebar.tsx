@@ -1,6 +1,6 @@
 "use client"
 
-import { useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import {
@@ -13,6 +13,7 @@ import {
 import { ThreadTriageSidebarView } from "@/components/thread-triage/sidebar-view"
 import { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
 import { useThreadReviewMutations } from "@/hooks/use-thread-review-mutations"
+import { api } from "@/lib/api-client"
 import type { RejectReasonCode } from "@/lib/routing"
 import type {
   ActivityEntry,
@@ -84,6 +85,29 @@ export const ThreadTriageSidebar = ({
       siblings,
     })
 
+  const generateDraftMutation = useMutation({
+    mutationFn: () => api.threads.generateDraft(threadId),
+    onSuccess: async () => {
+      setActionError(null)
+      await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
+      await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
+      await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
+    },
+    onError: (error: Error) => {
+      setActionError(error.message)
+    },
+  })
+
+  const handleGenerateDraft = () => {
+    generateDraftMutation.mutate()
+  }
+
+  const handleGenerateDraftKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!isActivationKey(event.key)) return
+    event.preventDefault()
+    handleGenerateDraft()
+  }
+
   const handleOpenApprove = () => {
     setApproveBody(draft?.body ?? "")
     setApprovalNote("")
@@ -121,7 +145,10 @@ export const ThreadTriageSidebar = ({
       urgencyReason={draft?.urgency_reason ?? null}
       badge={draft ? feedbackBadge(draft) : null}
       feedbackDone={isFeedbackDone(draft)}
-      busy={approveMutation.isPending || rejectMutation.isPending}
+      busy={
+        approveMutation.isPending || rejectMutation.isPending || generateDraftMutation.isPending
+      }
+      generatePending={generateDraftMutation.isPending}
       suggestedActions={draft?.suggested_actions ?? []}
       draftId={draft?.id}
       replyAddressee={replyAddressee}
@@ -152,6 +179,8 @@ export const ThreadTriageSidebar = ({
       onConfirmApprove={handleConfirmApprove}
       onConfirmReject={handleReject}
       onConfirmResolve={() => resolveMutation.mutate()}
+      onGenerateDraft={handleGenerateDraft}
+      onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
     />
   )
 }

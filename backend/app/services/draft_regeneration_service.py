@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 import structlog
 from anthropic import AsyncAnthropic
@@ -15,6 +16,7 @@ from app.core.exceptions import DraftGenerationError, ThreadNotFoundError
 from app.core.tenant_scope import TenantScope
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.classification import TriageResultSchema
+from app.models.schemas.dashboard import TriageFlags
 from app.models.schemas.draft import DraftResponseSchema
 from app.models.schemas.email import (
     EmailDirectionEnum,
@@ -36,6 +38,8 @@ from app.services import (
 )
 
 logger = structlog.get_logger(__name__)
+
+DraftAuditEvent = Literal["draft.regenerated", "draft.generated"]
 
 
 def _message_to_email(
@@ -66,7 +70,57 @@ def _message_to_email(
         cc_recipients=list(message.cc_recipients),
         bcc_recipients=list(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
+        meeting_message_type=message.meeting_message_type,
     )
+
+
+def _build_triage_from_flags(
+    triage_flags: TriageFlags | None,
+    *,
+    draft_routing: str | None,
+    force_letter: bool,
+) -> TriageResultSchema:
+    if triage_flags is None:
+        triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary=None,
+            needs_context=False,
+            routing_category=draft_routing or "general",
+            draft_needed=True,
+            is_automated=False,
+        )
+    else:
+        routing = triage_flags.routing_category or draft_routing or "general"
+        triage = TriageResultSchema(
+            is_spam=bool(triage_flags.is_spam) if triage_flags.is_spam is not None else False,
+            spam_reason=triage_flags.spam_reason,
+            has_action_items=(
+                bool(triage_flags.has_action_items)
+                if triage_flags.has_action_items is not None
+                else True
+            ),
+            action_items_summary=triage_flags.action_items_summary,
+            needs_context=(
+                bool(triage_flags.needs_context)
+                if triage_flags.needs_context is not None
+                else False
+            ),
+            context_reason=triage_flags.context_reason,
+            routing_category=routing,
+            draft_needed=(
+                bool(triage_flags.draft_needed) if triage_flags.draft_needed is not None else False
+            ),
+            is_automated=(
+                bool(triage_flags.is_automated) if triage_flags.is_automated is not None else False
+            ),
+        )
+    if force_letter:
+        if triage.is_spam:
+            raise DraftGenerationError("Cannot generate draft for spam thread")
+        triage.draft_needed = True
+        triage.has_action_items = True
+    return triage
 
 
 async def regenerate_draft(
@@ -75,17 +129,18 @@ async def regenerate_draft(
     client: AsyncAnthropic,
     settings: Settings,
     thread_id: uuid.UUID,
-    instruction: str,
+    instruction: str | None = None,
     actor: str = "user",
     openai_client: AsyncOpenAI | None = None,
+    force_letter: bool = False,
+    audit_event: DraftAuditEvent = "draft.regenerated",
 ) -> DraftResponseSchema:
-    """Create a NEW draft for a thread using a reviewer instruction override.
+    """Create a NEW draft for a thread using optional reviewer instruction.
 
     Does not update or delete prior drafts. Does not send email.
 
-    Reads + tone-ref lookup run first; the session transaction is committed
-    before the Sonnet call so Postgres is not held for LLM latency. Persist
-    + audit run in a short write transaction afterward.
+    When ``force_letter`` is true, Sonnet always uses the letter path even if
+    triage stored ``draft_needed=false`` (briefing threads).
     """
     thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
@@ -128,33 +183,11 @@ async def regenerate_draft(
         if latest_draft is not None and latest_draft.routing_category
         else None
     )
-    if triage_flags is None:
-        triage = TriageResultSchema(
-            is_spam=False,
-            has_action_items=True,
-            action_items_summary=None,
-            needs_context=False,
-            routing_category=draft_routing or "general",
-        )
-    else:
-        routing = triage_flags.routing_category or draft_routing or "general"
-        triage = TriageResultSchema(
-            is_spam=bool(triage_flags.is_spam) if triage_flags.is_spam is not None else False,
-            spam_reason=triage_flags.spam_reason,
-            has_action_items=(
-                bool(triage_flags.has_action_items)
-                if triage_flags.has_action_items is not None
-                else True
-            ),
-            action_items_summary=triage_flags.action_items_summary,
-            needs_context=(
-                bool(triage_flags.needs_context)
-                if triage_flags.needs_context is not None
-                else False
-            ),
-            context_reason=triage_flags.context_reason,
-            routing_category=routing,
-        )
+    triage = _build_triage_from_flags(
+        triage_flags,
+        draft_routing=draft_routing,
+        force_letter=force_letter,
+    )
 
     active_skills_contents: list[str] = []
     skill_ids: list[uuid.UUID] = []
@@ -181,7 +214,6 @@ async def regenerate_draft(
         skill_ids = []
         applied_skills = []
 
-    # Snapshot values needed after we release the DB transaction.
     mailbox = thread.mailbox
     conversation_id = thread.conversation_id
     subject = thread.subject
@@ -235,7 +267,6 @@ async def regenerate_draft(
             current=email,
         )
 
-    # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
         await session.commit()
 
@@ -245,6 +276,7 @@ async def regenerate_draft(
 
         reference_loader, _ = make_reference_loader(active_skill_ids=set(skill_ids))
 
+    instruction_text = (instruction or "").strip() or None
     result = await draft_llm.generate_draft(
         email,
         thread_context,
@@ -256,7 +288,7 @@ async def regenerate_draft(
         tone_profile=tone_profile_block,
         negative_constraints=negative_constraints,
         urgency_hints=urgency_hints,
-        instruction=instruction,
+        instruction=instruction_text,
         reference_loader=reference_loader,
         confirmed_associations=confirmed_associations,
         directory=directory,
@@ -273,19 +305,23 @@ async def regenerate_draft(
             applied_skills=applied_skills or None,
         )
 
+        audit_payload: dict[str, object] = {
+            "draft_id": str(persisted.id),
+            "thread_id": str(thread_id),
+            "prompt_version": result.prompt_version,
+            "tool_calls": result.tool_calls,
+            "force_letter": force_letter,
+        }
+        if instruction_text:
+            audit_payload["instruction_preview"] = instruction_text[:120]
+
         try:
             await audit_service.log_event(
                 session,
-                event_type="draft.regenerated",
+                event_type=audit_event,
                 conversation_id=conversation_id,
                 mailbox=mailbox,
-                payload={
-                    "draft_id": str(persisted.id),
-                    "thread_id": str(thread_id),
-                    "instruction_preview": instruction[:120],
-                    "prompt_version": result.prompt_version,
-                    "tool_calls": result.tool_calls,
-                },
+                payload=audit_payload,
                 actor=actor,
             )
         except Exception:
@@ -293,13 +329,38 @@ async def regenerate_draft(
                 "draft_regenerated_audit_failed",
                 thread_id=str(thread_id),
                 draft_id=str(persisted.id),
+                audit_event=audit_event,
             )
 
     logger.info(
-        "draft_regenerated",
+        audit_event.replace(".", "_"),
         thread_id=str(thread_id),
         draft_id=str(persisted.id),
         prompt_version=result.prompt_version,
         actor=actor,
+        force_letter=force_letter,
     )
     return persisted
+
+
+async def generate_draft(
+    session: AsyncSession,
+    *,
+    client: AsyncAnthropic,
+    settings: Settings,
+    thread_id: uuid.UUID,
+    actor: str = "user",
+    openai_client: AsyncOpenAI | None = None,
+) -> DraftResponseSchema:
+    """Force a letter draft on a briefing thread (reviewer-initiated)."""
+    return await regenerate_draft(
+        session,
+        client=client,
+        settings=settings,
+        thread_id=thread_id,
+        instruction=None,
+        actor=actor,
+        openai_client=openai_client,
+        force_letter=True,
+        audit_event="draft.generated",
+    )

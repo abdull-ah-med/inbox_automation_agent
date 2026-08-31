@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen } from "@testing-library/react"
+import { render, screen, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -93,6 +93,19 @@ describe("Mailbox page filters", () => {
     expect(params).not.toHaveProperty("stale_only")
     expect(params).not.toHaveProperty("include_filtered")
   })
+
+  it("writes from date onto the mailbox URL", async () => {
+    renderPage()
+    const fromInput = await screen.findByLabelText("From date (UTC)")
+    fireEvent.change(fromInput, { target: { value: "2026-08-01" } })
+    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?from=2026-08-01")
+  })
+
+  it("labels date filters with UTC semantics", async () => {
+    renderPage()
+    expect(await screen.findByText("From (UTC)")).toBeInTheDocument()
+    expect(screen.getByText("To (UTC)")).toBeInTheDocument()
+  })
 })
 
 describe("Mailbox page — useSearchParams Suspense boundary", () => {
@@ -122,6 +135,17 @@ describe("Mailbox page — useSearchParams Suspense boundary", () => {
     expect(listThreads).toHaveBeenCalledWith(
       "sales",
       expect.objectContaining({ state: "REQUIRES_HUMAN" }),
+    )
+  })
+
+  it("applies date range from the URL", async () => {
+    searchParamsString.mockReturnValue("from=2026-08-01&to=2026-08-28")
+    renderPage()
+    expect(await screen.findByLabelText("From date (UTC)")).toHaveValue("2026-08-01")
+    expect(screen.getByLabelText("To date (UTC)")).toHaveValue("2026-08-28")
+    expect(listThreads).toHaveBeenCalledWith(
+      "sales",
+      expect.objectContaining({ from: "2026-08-01", to: "2026-08-28" }),
     )
   })
 })

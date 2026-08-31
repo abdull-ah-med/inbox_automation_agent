@@ -22,6 +22,7 @@ def _settings() -> Settings:
         draft_model="claude-sonnet-4-6",
         anthropic_api_key="test-key",
         target_mailboxes="elise@example.com",
+        salute_directory_enabled=False,
     )
 
 
@@ -103,6 +104,7 @@ async def test_regenerate_creates_new_draft() -> None:
                 return_value=TriageFlags(
                     is_spam=False,
                     has_action_items=True,
+                    draft_needed=True,
                     needs_context=False,
                     action_items_summary="Send docs",
                     routing_category="billing",
@@ -125,6 +127,10 @@ async def test_regenerate_creates_new_draft() -> None:
         ),
         patch(
             "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.urgency_feedback_service.find_urgency_hints",
             AsyncMock(return_value=[]),
         ),
         patch(
@@ -167,6 +173,148 @@ async def test_regenerate_creates_new_draft() -> None:
     assert gen_mock.await_args.kwargs["tone_references"] == ["Thanks — sending the packet now."]
     create_mock.assert_awaited_once()
     assert audit_mock.await_args.kwargs["event_type"] == "draft.regenerated"
+
+
+@pytest.mark.asyncio
+async def test_force_letter_overrides_briefing_triage() -> None:
+    thread = _thread()
+    message = _message(thread.id)
+    persisted = DraftResponseSchema(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        created_at=datetime.now(UTC),
+        subject_line="Re: Update",
+        reply_body="Thanks for the update.",
+        teaching_note="Ack",
+        urgency="NORMAL",
+        urgency_reason="Routine",
+        suggested_actions=[],
+    )
+    session = AsyncMock()
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
+    session.in_transaction = MagicMock(return_value=False)
+
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(
+                return_value=TriageFlags(
+                    is_spam=False,
+                    has_action_items=False,
+                    draft_needed=False,
+                    needs_context=False,
+                    routing_category="general",
+                )
+            ),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.skill_selection_service.select_skills",
+            AsyncMock(return_value=MagicMock(blocks=[], skill_ids=[], applied=[])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",
+            AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.urgency_feedback_service.find_urgency_hints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_llm.generate_draft",
+            AsyncMock(
+                return_value=DraftCallResult(
+                    draft=_draft_schema(),
+                    prompt_version="2026-08-31.1",
+                    model="claude-sonnet-4-6",
+                    input_tokens=10,
+                    output_tokens=20,
+                    latency_ms=50,
+                )
+            ),
+        ) as gen_mock,
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.create_regenerated_draft",
+            AsyncMock(return_value=persisted),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+    ):
+        await draft_regeneration_service.generate_draft(
+            session,
+            client=AsyncMock(),
+            settings=_settings(),
+            thread_id=thread.id,
+            actor="elise@example.com",
+        )
+
+    triage_passed = gen_mock.await_args.args[2]
+    assert triage_passed.draft_needed is True
+    assert triage_passed.has_action_items is True
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_rejects_spam_thread() -> None:
+    thread = _thread()
+    message = _message(thread.id)
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(
+                return_value=TriageFlags(
+                    is_spam=True,
+                    has_action_items=False,
+                    draft_needed=False,
+                    needs_context=False,
+                    routing_category="general",
+                )
+            ),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        pytest.raises(DraftGenerationError, match="spam"),
+    ):
+        await draft_regeneration_service.generate_draft(
+            session,
+            client=AsyncMock(),
+            settings=_settings(),
+            thread_id=thread.id,
+        )
 
 
 @pytest.mark.asyncio

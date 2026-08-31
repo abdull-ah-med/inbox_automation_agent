@@ -162,6 +162,59 @@ def test_person_local_part_with_signature_uses_first_name() -> None:
     assert addressee.source_kind == "signature"
 
 
+def test_best_closing_signature_uses_first_name() -> None:
+    mailbox = "sales@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="jane@vendor.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Please advise.\n\nBest,\nJane\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == "Jane"
+    assert addressee.source_kind == "signature"
+
+
+def test_talon_dash_signature_uses_first_name() -> None:
+    mailbox = "sales@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="jane@vendor.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Please advise.\n\n--\nJane Smith\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == "Jane"
+    assert addressee.source_kind == "talon_signature"
+
+
+def test_mobile_stub_alone_does_not_salute() -> None:
+    mailbox = "sales@example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="jane@vendor.com",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Thanks.\n\nSent from my iPhone\n",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == ""
+
+
 def test_surname_local_part_prefers_signature_first_name() -> None:
     """Worked example: cblumenthal@… signs as Cydney Blumenthal / Director.
 

@@ -7,12 +7,20 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.core.automated_mail import AUTOMATED_LOCAL_COMPACTS
 from app.core.email_quotes import split_quoted_history
 from app.core.internal_mail import extract_email_address, thread_counterpart
+from app.core.person_name import (
+    display_name_first_name,
+    line_looks_like_company_signoff,
+    looks_like_person_first_name,
+    looks_like_surname,
+)
+from app.llm._vendor.talon.signature import bruteforce as talon_bruteforce
 
 # Closing / sign-off then a single personal-name line.
 _SIGNATURE_NAME = re.compile(
-    r"(?is)(?:thanks|thank you|regards|best regards|best|sincerely|cheers|warm regards)"
+    r"(?is)(?:thanks|thank you|regards|best regards|best wishes|best|sincerely|cheers|warm regards)"
     r"[,!]?\s*\n+\s*([A-Z][a-zA-Z'" + "\u2019" + r"\-]{1,40})\s*(?:\n|$)"
 )
 # Zendesk / helpdesk agent byline: "Alex Taylor (SampleHelpdesk)" then a date.
@@ -47,6 +55,9 @@ _ZENDESK_TICKET_CHROME = re.compile(
     r"(?is)(?:##-\s*please type your reply above this line\s*-##|"
     r"your request\s*\(\d+\)\s*has been (?:received|updated))"
 )
+_MOBILE_SIGNATURE_STUB = re.compile(
+    r"(?i)^sent\s+from\s+(?:my\s+)?(?:iphone|ipad|android|mobile|blackberry|mailbox)",
+)
 
 
 class _MessageLike(Protocol):
@@ -54,6 +65,8 @@ class _MessageLike(Protocol):
     direction: object
     to_recipients: list[str] | None
     body_text: str | None
+    sender_display_name: str | None
+    meeting_message_type: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +78,7 @@ class ReplyAddressee:
     salute_name: str
     source: str  # latest_inbound | last_outbound_to | thread_counterpart
     directory_hit: bool = False
-    # signature | byline | title_close | directory | none
+    # signature | byline | title_close | talon_signature | display | directory | none
     source_kind: str = "none"
 
 
@@ -83,19 +96,6 @@ def _owner_first_name(mailbox_owner: str | None) -> str | None:
     return token or None
 
 
-def _looks_like_person_first_name(token: str) -> bool:
-    """True for 'Alex' / 'Cydney'. False for brands ('SampleHelpdesk') and locals."""
-    cleaned = (token or "").strip()
-    if len(cleaned) < 2 or len(cleaned) > 40:
-        return False
-    if not cleaned[0].isalpha() or not cleaned[0].isupper():
-        return False
-    if any(ch.isupper() for ch in cleaned[1:]):
-        return False
-    letters = cleaned.replace("-", "").replace("'", "").replace("\u2019", "")
-    return letters.isalpha()
-
-
 def _usable_person_name(
     name: str | None,
     *,
@@ -104,7 +104,7 @@ def _usable_person_name(
     if not name:
         return None
     cleaned = name.strip()
-    if not _looks_like_person_first_name(cleaned):
+    if not looks_like_person_first_name(cleaned):
         return None
     if reject_names and cleaned.casefold() in {n.casefold() for n in reject_names}:
         return None
@@ -124,7 +124,12 @@ def signature_first_name(
     matches = list(_SIGNATURE_NAME.finditer(tail))
     if not matches:
         return None
-    return _usable_person_name(matches[-1].group(1), reject_names=reject_names)
+    match = matches[-1]
+    line_start = tail.rfind("\n", 0, match.start(1))
+    line = tail[line_start + 1 :] if line_start >= 0 else tail[match.start(1) :]
+    if line_looks_like_company_signoff(line):
+        return None
+    return _usable_person_name(match.group(1), reject_names=reject_names)
 
 
 def agent_byline_first_name(
@@ -157,6 +162,44 @@ def title_closing_first_name(
     return _usable_person_name(matches[-1].group(1), reject_names=reject_names)
 
 
+def talon_signature_first_name(
+    body: str | None,
+    *,
+    reject_names: frozenset[str] | set[str] | None = None,
+) -> str | None:
+    """First validated name from Talon-isolated signature block."""
+    text = _unique_reply_text(body)
+    if not text:
+        return None
+    _stripped, signature = talon_bruteforce.extract_signature(text)
+    if not signature:
+        return None
+    for line in signature.splitlines():
+        stripped = line.strip()
+        if not stripped or _MOBILE_SIGNATURE_STUB.match(stripped):
+            continue
+        if stripped.startswith("--"):
+            continue
+        if re.match(r"(?i)^(thanks|thank you|regards|best|sincerely|cheers)", stripped):
+            continue
+        if line_looks_like_company_signoff(stripped):
+            continue
+        tokens = stripped.split()
+        if (
+            len(tokens) >= 2
+            and looks_like_person_first_name(tokens[0])
+            and looks_like_surname(tokens[1])
+        ):
+            usable = _usable_person_name(tokens[0], reject_names=reject_names)
+            if usable:
+                return usable
+        token = tokens[0] if tokens else None
+        usable = _usable_person_name(token, reject_names=reject_names)
+        if usable:
+            return usable
+    return None
+
+
 def addressee_first_name_from_body(
     body: str | None,
     *,
@@ -178,6 +221,10 @@ def addressee_first_name_from_body(
     titled = title_closing_first_name(body, reject_names=reject_names)
     if titled:
         return titled, "title_close"
+    if allow_signature:
+        talon_signed = talon_signature_first_name(body, reject_names=reject_names)
+        if talon_signed:
+            return talon_signed, "talon_signature"
     return None, None
 
 
@@ -223,6 +270,26 @@ def _direction_value(direction: object) -> str:
     return str(value).strip().lower()
 
 
+def _sender_local_compact(sender: str | None) -> str | None:
+    address = extract_email_address(sender)
+    if address is None or "@" not in address:
+        return None
+    local = address.partition("@")[0].strip().lower()
+    return local.replace(".", "").replace("-", "").replace("_", "") or None
+
+
+def _display_salute_from_message(msg: _MessageLike) -> str | None:
+    """Gated Graph From display name — last resort after body extraction."""
+    meeting = getattr(msg, "meeting_message_type", None)
+    if meeting and str(meeting).strip():
+        return None
+    compact = _sender_local_compact(getattr(msg, "sender", None))
+    if compact and compact in AUTOMATED_LOCAL_COMPACTS:
+        return None
+    display = getattr(msg, "sender_display_name", None)
+    return display_name_first_name(display if isinstance(display, str) else None)
+
+
 def _better_salute_for_email(
     *,
     email: str,
@@ -263,10 +330,11 @@ def resolve_reply_addressee(
     Salute priority:
     1. Contacts directory (taught alias)
     2. Confident person name from the letter's sign / agent byline / title close
-    3. Empty ``salute_name`` → bare ``Hi,`` / ``Hello,``
+    3. Gated Graph From display (person-shaped, not calendar/noreply)
+    4. Empty ``salute_name`` → bare ``Hi,`` / ``Hello,``
 
-    Never the email local-part, a role mailbox label, a company brand, Graph
-    From display, or the mailbox owner (that person signs the outbound reply).
+    Never the email local-part, a role mailbox label, a company brand, or the
+    mailbox owner (that person signs the outbound reply).
     """
     _ = suppress_local_part
     if not messages:
@@ -334,10 +402,15 @@ def resolve_reply_addressee(
             if better:
                 salute = better
                 source_kind = better_kind or "signature"
+        if not salute and direction == "inbound":
+            display_salute = _display_salute_from_message(msg)
+            if display_salute:
+                salute = display_salute
+                source_kind = "display"
         if owner and salute and salute.casefold() == owner.casefold():
             salute = ""
             source_kind = "none"
-        if salute and not _looks_like_person_first_name(salute):
+        if salute and not looks_like_person_first_name(salute):
             salute = ""
             source_kind = "none"
         if not salute:

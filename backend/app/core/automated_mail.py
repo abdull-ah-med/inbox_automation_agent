@@ -12,6 +12,7 @@ import re
 from collections.abc import Mapping
 
 from app.core.internal_mail import extract_email_address
+from app.core.person_name import person_shaped_from
 
 _NOREPLY_LOCALS = frozenset(
     {
@@ -56,34 +57,6 @@ AUTOMATED_LOCAL_COMPACTS = _NOREPLY_COMPACT | frozenset(
 )
 _PLUS_TAG = re.compile(r"\+.*$")
 _AUTO_SUBMITTED_VALUES = frozenset({"auto-generated", "auto-replied", "auto-notified"})
-_ORG_SECOND_TOKENS = frozenset(
-    {
-        "newsletter",
-        "newsletters",
-        "subscriptions",
-        "subscription",
-        "notifications",
-        "notification",
-        "support",
-        "team",
-        "office",
-        "department",
-        "helpdesk",
-        "noreply",
-        "bounce",
-        "mailer",
-        "services",
-        "safety",
-        "of",
-        "for",
-        "the",
-        "and",
-    }
-)
-_LAST_FIRST = re.compile(r"^[A-Za-z][A-Za-z'\-]+,\s+[A-Z][A-Za-z]")
-_NAME_WITH_BRAND = re.compile(
-    r"^([A-Za-z][A-Za-z'\-]+(?:\s+[A-Za-z][A-Za-z'\-.]+){1,3})\s*\([^)]+\)\s*$"
-)
 
 
 def _local_part(sender: str | None) -> str | None:
@@ -114,32 +87,6 @@ def _is_list_mailbox(local: str | None) -> bool:
         last = local.rsplit(".", 1)[-1]
         return last in _LIST_MAILBOX_LOCALS
     return False
-
-
-def _tokens_look_like_person(name: str) -> bool:
-    tokens = [part for part in name.split() if part]
-    if len(tokens) < 2:
-        return False
-    first, second = tokens[0], tokens[1]
-    if first.isupper() and len(first) > 1:
-        return False
-    if first.lower() in _ORG_SECOND_TOKENS or second.lower() in _ORG_SECOND_TOKENS:
-        return False
-    return first[0].isalpha() and first[0].isupper() and second[0].isalpha() and second[0].isupper()
-
-
-def _person_shaped_from(display_name: str | None, sender: str | None) -> bool:
-    """True for 'Alex Taylor (SampleHelpdesk)' or Exchange 'Hooker, Ruth E'."""
-    _ = sender
-    name = (display_name or "").strip().strip("\"'")
-    if not name:
-        return False
-    if _LAST_FIRST.match(name):
-        return True
-    branded = _NAME_WITH_BRAND.match(name)
-    if branded is not None:
-        return _tokens_look_like_person(branded.group(1))
-    return _tokens_look_like_person(name)
 
 
 def is_automated_mail(
@@ -176,7 +123,7 @@ def is_automated_mail(
 
     # Person-shaped From only vetoes list/List-Id signals (Zendesk agents),
     # not noreply — Teams uses no-reply@ with the participant as display name.
-    if _person_shaped_from(sender_display_name, sender):
+    if person_shaped_from(sender_display_name, sender):
         return False
 
     if _is_list_mailbox(local):

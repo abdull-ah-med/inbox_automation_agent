@@ -1,4 +1,4 @@
-"""Deploy script must work under SSM RunShellScript (root, no HOME)."""
+"""Deploy script must work under SSM RunShellScript and use extended polling."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SCRIPT = REPO_ROOT / "deploy" / "ssm-deploy.sh"
+GITHUB_ACTIONS_DEPLOY = REPO_ROOT / "deploy" / "github-actions-ssm-deploy.sh"
 
 
 def test_git_global_config_fails_when_home_unset() -> None:
@@ -55,3 +56,10 @@ def test_ssm_deploy_preserves_database_and_only_restarts_app_services() -> None:
     assert any("up --build -d backend frontend" in line for line in executable_lines)
     assert any("postgres_data volume not found" in line for line in executable_lines)
     assert any("x-access-token:${GITHUB_TOKEN}@github.com/" in line for line in executable_lines)
+
+
+def test_github_actions_ssm_deploy_uses_extended_poll() -> None:
+    text = GITHUB_ACTIONS_DEPLOY.read_text()
+    assert "SSM_POLL_ITERATIONS" in text
+    assert "180" in text
+    assert "GITHUB_TOKEN" in text

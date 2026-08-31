@@ -39,6 +39,7 @@ type ThreadTriageSidebarViewProps = {
   badge: FeedbackBadge
   feedbackDone: boolean
   busy: boolean
+  generatePending: boolean
   suggestedActions: SuggestedAction[]
   draftId: string | undefined
   replyAddressee: ReplyAddresseeView | null
@@ -69,6 +70,8 @@ type ThreadTriageSidebarViewProps = {
   onConfirmApprove: () => void
   onConfirmReject: () => void
   onConfirmResolve: () => void
+  onGenerateDraft: () => void
+  onGenerateDraftKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }
 
 export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => {
@@ -85,6 +88,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     badge,
     feedbackDone,
     busy,
+    generatePending,
     suggestedActions,
     draftId,
     actionError,
@@ -114,6 +118,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onConfirmApprove,
     onConfirmReject,
     onConfirmResolve,
+    onGenerateDraft,
+    onGenerateDraftKeyDown,
   } = props
 
   return (
@@ -156,12 +162,15 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             actionError={actionError}
             feedbackDone={feedbackDone}
             busy={busy}
+            generatePending={generatePending}
             mailboxKey={thread.mailbox_key}
             replyAddressee={props.replyAddressee}
             onApprove={onOpenApprove}
             onApproveKeyDown={onApproveKeyDown}
             onReject={() => onRejectOpenChange(true)}
             onRejectKeyDown={onRejectKeyDown}
+            onGenerateDraft={onGenerateDraft}
+            onGenerateDraftKeyDown={onGenerateDraftKeyDown}
           />
         </TabsContent>
 

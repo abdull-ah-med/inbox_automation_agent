@@ -179,12 +179,18 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.6"
+    assert PROMPT_VERSION == "2026-08-31.1"
+
+
+def test_triage_prompt_allows_operational_fyi_ack() -> None:
+    assert "drug screens completed" in TRIAGE_SYSTEM_PROMPT
+    assert "packet sent" in TRIAGE_SYSTEM_PROMPT
+    assert "courtesy close from the sender" in TRIAGE_SYSTEM_PROMPT.lower()
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-08-28.6"
+    assert PROMPT_VERSION == "2026-08-31.1"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -244,4 +250,4 @@ def test_briefing_prompt_has_no_letter_fields() -> None:
     assert "Hi {name}" not in BRIEFING_SYSTEM_PROMPT
     assert "reply_body" not in BriefingSchema.model_fields
     assert "suggested_recipients" not in BriefingSchema.model_fields
-    assert PROMPT_VERSION == "2026-08-28.6"
+    assert PROMPT_VERSION == "2026-08-31.1"

@@ -100,6 +100,24 @@ async def test_mailbox_threads_ok(app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mailbox_threads_rejects_inverted_date_range(app) -> None:
+    mock_session = AsyncMock()
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/api/mailboxes/sales/threads",
+            params={"from": "2026-08-29", "to": "2026-08-01"},
+        )
+    assert resp.status_code == 400
+    assert "from must be on or before to" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_access_token_works_without_override(local_settings: Settings) -> None:
     """Real JWT dependency accepts a valid access token."""
     from app.repositories.user_repo import UserRead

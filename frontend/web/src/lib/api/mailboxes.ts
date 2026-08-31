@@ -10,8 +10,8 @@ export const mailboxesApi = {
     params: {
       state?: string
       urgency?: string
-      stale_only?: boolean
-      include_filtered?: boolean
+      from?: string
+      to?: string
       cursor?: string
       limit?: number
     } = {},
@@ -19,8 +19,8 @@ export const mailboxesApi = {
     const qs = new URLSearchParams()
     if (params.state) qs.set("state", params.state)
     if (params.urgency) qs.set("urgency", params.urgency)
-    if (params.stale_only) qs.set("stale_only", "true")
-    if (params.include_filtered) qs.set("include_filtered", "true")
+    if (params.from) qs.set("from", params.from)
+    if (params.to) qs.set("to", params.to)
     if (params.cursor) qs.set("cursor", params.cursor)
     if (params.limit) qs.set("limit", String(params.limit))
     const query = qs.toString()

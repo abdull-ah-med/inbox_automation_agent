@@ -196,6 +196,35 @@ async def regenerate_draft(
     return thread_view_service.draft_response_to_view(persisted)
 
 
+@router.post(
+    "/{thread_id}/generate-draft",
+    response_model=DraftView,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit("20/minute")
+async def generate_draft(
+    thread_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    client: AnthropicClientDep,
+    openai_client: OpenAIClientDep,
+    user: CurrentUser,
+) -> DraftView:
+    """Generate a letter draft on a briefing thread. Creates a new draft row."""
+    _ = request, response
+    persisted = await draft_regeneration_service.generate_draft(
+        session,
+        client=client,
+        settings=settings,
+        thread_id=thread_id,
+        actor=user.email,
+        openai_client=openai_client,
+    )
+    return thread_view_service.draft_response_to_view(persisted)
+
+
 @router.get(
     "/{thread_id}/related",
     response_model=RelatedThreadList,

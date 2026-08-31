@@ -7,7 +7,7 @@ import inspect
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
@@ -59,9 +59,8 @@ _NEEDS_ATTENTION_STATES = (
     ThreadStateEnum.REQUIRES_HUMAN.value,
 )
 
-#: Terminal triage outcomes that carry no action for Elise — filtered out of
-#: the default mailbox/dashboard views (still queryable via
-#: ``include_filtered=True`` for transparency/audit).
+#: Terminal triage outcomes that carry no action for Elise — counted on the
+#: dashboard as ``filtered_count``; mailbox list shows them by default.
 _FILTERED_STATES = (
     ThreadStateEnum.SPAM.value,
     ThreadStateEnum.NO_ACTION.value,
@@ -624,6 +623,21 @@ def _staleness_hours(last_message_at: datetime | None, now: datetime) -> float:
     return max(0.0, (now - aware).total_seconds() / 3600.0)
 
 
+def _utc_inclusive_day_bounds(
+    day_from: date | None,
+    day_to: date | None,
+) -> tuple[datetime | None, datetime | None]:
+    """Inclusive calendar days in UTC: ``>= from 00:00Z``, ``< to+1 day 00:00Z``."""
+    start: datetime | None = None
+    end_exclusive: datetime | None = None
+    if day_from is not None:
+        start = datetime(day_from.year, day_from.month, day_from.day, tzinfo=UTC)
+    if day_to is not None:
+        next_day = day_to + timedelta(days=1)
+        end_exclusive = datetime(next_day.year, next_day.month, next_day.day, tzinfo=UTC)
+    return start, end_exclusive
+
+
 async def list_by_mailbox(
     session: AsyncSession,
     mailbox_email: str,
@@ -632,7 +646,8 @@ async def list_by_mailbox(
     urgency: str | None = None,
     stale_only: bool = False,
     stale_after_hours: int = 24,
-    include_filtered: bool = False,
+    date_from: date | None = None,
+    date_to: date | None = None,
     cursor: str | None = None,
     limit: int = 25,
 ) -> tuple[list[ThreadSummary], str | None]:
@@ -672,10 +687,15 @@ async def list_by_mailbox(
     )
     if state:
         stmt = stmt.where(Thread.state == state)
-    elif not include_filtered:
-        stmt = stmt.where(Thread.state.notin_(_FILTERED_STATES))
     if urgency:
         stmt = stmt.where(Thread.urgency == urgency)
+    range_start, range_end = _utc_inclusive_day_bounds(date_from, date_to)
+    if range_start is not None:
+        stmt = stmt.where(
+            Thread.last_message_at.is_not(None), Thread.last_message_at >= range_start
+        )
+    if range_end is not None:
+        stmt = stmt.where(Thread.last_message_at.is_not(None), Thread.last_message_at < range_end)
     if stale_only:
         cutoff = now - timedelta(hours=stale_after_hours)
         stmt = stmt.where(
