@@ -20,10 +20,11 @@ Delivery contract (Microsoft Learn):
 from __future__ import annotations
 
 import json
+from typing import Annotated
 from urllib.parse import unquote
 
 import structlog
-from fastapi import APIRouter, BackgroundTasks, Query, Request, Response, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import PlainTextResponse
 from pydantic import ValidationError
 from redis.asyncio import Redis
@@ -36,6 +37,7 @@ from app.core.dependencies import (
     get_graph_client,
     get_redis,
 )
+from app.core.rate_limit import resolve_client_ip
 from app.core.redis_keys import webhook_rate_limit_key
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
@@ -44,8 +46,13 @@ from app.models.schemas.graph import (
     GraphNotificationSchema,
     IngestResultSchema,
 )
-from app.services import ingestion_service, pipeline_service, subscription_service
-from app.workers.enqueue import enqueue
+from app.services import (
+    ingestion_service,
+    pipeline_service,
+    sent_reply_learning_service,
+    subscription_service,
+)
+from app.workers.enqueue import enqueue_webhook_job
 
 logger = structlog.get_logger(__name__)
 
@@ -87,17 +94,17 @@ def _notification_ids(
     return mailbox, message_id
 
 
-def _client_ip(request: Request) -> str:
-    """Peer address only — do not trust client-supplied X-Forwarded-For.
+def _client_ip(request: Request, settings: Settings) -> str:
+    """Rate-limit identity: peer, or trusted X-Real-IP behind our reverse proxy.
 
-    Spoofable XFF lets attackers rotate rate-limit buckets. Terminate TLS at a
-    reverse proxy and key limits on the TCP peer (the proxy), or set a global
-    limit. See Redis security network guidance: untrusted clients must not
-    choose their own quota identity.
+    Matches SlowAPI ``resolve_client_ip`` so nginx ``X-Real-IP $remote_addr``
+    buckets by the real Graph edge / client, not a single Docker peer.
+    Do not trust spoofable leftmost X-Forwarded-For.
+    Refs:
+    - https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_set_header
+    - https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks
     """
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    return resolve_client_ip(request, settings)
 
 
 _RATE_LIMIT_INCR_EXPIRE = """
@@ -114,10 +121,17 @@ async def _enforce_webhook_guards(
     settings: Settings,
     redis: Redis,
 ) -> Response | None:
-    """Return an error Response if body size or rate limit is exceeded; else None.
+    """Buffer body and apply size / rate guards.
 
-    Oversized / abusive traffic is rejected with 413/429 (not from Graph under
-    normal operation). Graph notifications stay well under the body cap.
+    Oversized bodies return 413 (not legitimate Graph traffic under normal
+    operation). Rate-limit excess never returns 429: Microsoft Graph retries
+    non-2xx for hours and may mark the endpoint unhealthy
+    (https://learn.microsoft.com/en-us/graph/change-notifications-delivery-webhooks).
+
+    Over-limit sets ``request.state.webhook_over_rate_limit``. Handlers still
+    process payloads with a matching ``clientState`` so real Graph mail is not
+    silently dropped behind a shared proxy peer. Abuse (parse fail / bad
+    clientState) is ACK'd without enqueue whether or not over limit.
 
     Body size is enforced by reading at most ``webhook_max_body_bytes + 1`` bytes
     (Content-Length alone is insufficient for chunked / missing-length requests).
@@ -135,7 +149,7 @@ async def _enforce_webhook_guards(
             return Response(status_code=status.HTTP_413_CONTENT_TOO_LARGE)
     request.state.webhook_body = bytes(body)
 
-    ip = _client_ip(request)
+    ip = _client_ip(request, settings)
     key = webhook_rate_limit_key(ip)
     count = int(await redis.eval(_RATE_LIMIT_INCR_EXPIRE, 1, key, "60"))
     if count > settings.webhook_rate_limit_per_minute:
@@ -145,7 +159,7 @@ async def _enforce_webhook_guards(
             count=count,
             limit=settings.webhook_rate_limit_per_minute,
         )
-        return Response(status_code=status.HTTP_429_TOO_MANY_REQUESTS)
+        request.state.webhook_over_rate_limit = True
     return None
 
 
@@ -172,6 +186,27 @@ async def _run_triage_after_ingest(
     mailbox: str | None,
     message_id: str | None,
 ) -> None:
+    if result.status == "outbound" and result.thread_id and result.conversation_id and message_id:
+        try:
+            import uuid
+
+            await sent_reply_learning_service.run_catchup_after_outbound(
+                redis=redis,
+                settings=settings,
+                thread_id=uuid.UUID(result.thread_id),
+                mailbox=mailbox or "",
+                conversation_id=result.conversation_id,
+                outbound_graph_message_id=message_id,
+                session_factory=get_session_factory(),
+            )
+        except Exception:
+            logger.exception(
+                "webhook_sent_reply_catchup_failed",
+                mailbox=mailbox,
+                message_id=message_id,
+            )
+        return
+
     if result.status not in _TRIAGE_ELIGIBLE or not mailbox or not message_id:
         return
 
@@ -328,10 +363,9 @@ def _any_client_state_match(
 )
 async def receive_graph_notifications(
     request: Request,
-    background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
-    validation_token: str | None = Query(default=None, alias="validationToken"),
+    validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
 ) -> Response:
     """Receive Graph subscription validation or change notifications."""
     if validation_token is not None:
@@ -363,15 +397,25 @@ async def receive_graph_notifications(
 
     # Cheap sync filter: skip enqueue when every item fails clientState.
     if not _any_client_state_match(payload, expected):
-        logger.warning("graph_notification_batch_all_client_state_mismatch")
+        logger.warning(
+            "graph_notification_batch_all_client_state_mismatch",
+            over_rate_limit=bool(getattr(request.state, "webhook_over_rate_limit", False)),
+        )
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
-    enqueue(
-        background_tasks,
-        _process_notifications,
-        payload,
-        settings,
-    )
+    # Matching clientState always enqueues, even when over the rate budget, so
+    # legitimate Graph traffic is not dropped behind a shared proxy peer.
+    if getattr(request.state, "webhook_over_rate_limit", False):
+        logger.warning("graph_webhook_over_limit_valid_client_state_enqueued")
+
+    if settings.graph_webhooks_enabled:
+        await enqueue_webhook_job(
+            redis,
+            kind="notifications",
+            payload=payload.model_dump(mode="json"),
+        )
+    else:
+        logger.info("graph_notification_ignored_webhooks_disabled")
     return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
@@ -382,10 +426,9 @@ async def receive_graph_notifications(
 )
 async def receive_graph_lifecycle(
     request: Request,
-    background_tasks: BackgroundTasks,
     settings: SettingsDep,
     redis: RedisDep,
-    validation_token: str | None = Query(default=None, alias="validationToken"),
+    validation_token: Annotated[str | None, Query(alias="validationToken")] = None,
 ) -> Response:
     """Receive Graph lifecycle validation or lifecycle notifications."""
     if validation_token is not None:
@@ -415,13 +458,21 @@ async def receive_graph_lifecycle(
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
     if not _any_client_state_match(payload, expected):
-        logger.warning("graph_lifecycle_batch_all_client_state_mismatch")
+        logger.warning(
+            "graph_lifecycle_batch_all_client_state_mismatch",
+            over_rate_limit=bool(getattr(request.state, "webhook_over_rate_limit", False)),
+        )
         return Response(status_code=status.HTTP_202_ACCEPTED)
 
-    enqueue(
-        background_tasks,
-        _process_lifecycle_notifications,
-        payload,
-        settings,
-    )
+    if getattr(request.state, "webhook_over_rate_limit", False):
+        logger.warning("graph_lifecycle_over_limit_valid_client_state_enqueued")
+
+    if settings.graph_webhooks_enabled:
+        await enqueue_webhook_job(
+            redis,
+            kind="lifecycle",
+            payload=payload.model_dump(mode="json"),
+        )
+    else:
+        logger.info("graph_lifecycle_ignored_webhooks_disabled")
     return Response(status_code=status.HTTP_202_ACCEPTED)

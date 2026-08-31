@@ -96,10 +96,7 @@ async def test_long_body_skill_stays_in_haiku_candidate_pool() -> None:
         embedding=[1.0, 0.0, 0.0],
         refs=["references/client_rules.md"],
     )
-    fillers = [
-        _row(name=f"filler-{i}", embedding=[0.0, 1.0, 0.0])
-        for i in range(9)
-    ]
+    fillers = [_row(name=f"filler-{i}", embedding=[0.0, 1.0, 0.0]) for i in range(9)]
     pool = [target, *fillers]
     assert len(pool) > 8
 
@@ -109,10 +106,6 @@ async def test_long_body_skill_stays_in_haiku_candidate_pool() -> None:
             "app.services.skill_selection_service.embedding_service.embed_text",
             AsyncMock(return_value=[1.0, 0.0, 0.0]),
         ),
-        patch(
-            "app.services.skill_selection_service.skill_repo.rank_by_cosine",
-            AsyncMock(return_value=[target]),
-        ) as rank_mock,
         patch(
             "app.services.skill_selection_service.skill_selector.select_skills",
             AsyncMock(return_value=[target.id]),
@@ -144,4 +137,3 @@ async def test_long_body_skill_stays_in_haiku_candidate_pool() -> None:
     assert target.id in selected.skill_ids
     assert any("samplelab-rebilling" in block for block in selected.blocks)
     assert any("Available reference files" in block for block in selected.blocks)
-    rank_mock.assert_awaited()

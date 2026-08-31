@@ -9,16 +9,51 @@ from app.main import create_app
 
 
 def test_embedding_settings_defaults() -> None:
-    settings = Settings(environment="local")
+    settings = Settings(environment="local", _env_file=None)
     assert settings.embedding_model == "text-embedding-3-small"
     assert settings.embedding_dimension == 1536
     assert settings.embedding_min_similarity == 0.78
-    assert settings.embedding_candidate_k == 15
+    assert settings.embedding_candidate_k == 50
     assert settings.embedding_final_conversations == 1
     assert settings.embedding_max_input_tokens == 8000
     assert settings.thread_verbatim_tail == 2
     assert settings.thread_full_if_at_most == 5
     assert settings.rrf_k == 60
+    assert settings.hnsw_ef_search == 100
+    assert settings.hnsw_iterative_scan_enabled is True
+    assert settings.chat_groundedness_enabled is False
+    assert settings.chat_semantic_cache_enabled is True
+    assert settings.chat_semantic_cache_threshold == 0.92
+    assert settings.chat_semantic_cache_ttl_overview_sec == 300
+    assert settings.chat_semantic_cache_ttl_search_sec == 300
+    assert settings.chat_max_input_tokens == 160_000
+    assert settings.chat_rate_limit_per_minute == 60
+
+
+def test_overlapping_target_and_reviewer_mailboxes() -> None:
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com,cr@example.com",
+        reviewer_mailboxes="elise@example.com,sales@example.com",
+        _env_file=None,
+    )
+    assert settings.overlapping_target_and_reviewer_mailboxes() == ["sales@example.com"]
+    disjoint = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        reviewer_mailboxes="elise@example.com",
+        _env_file=None,
+    )
+    assert disjoint.overlapping_target_and_reviewer_mailboxes() == []
+
+
+def test_ops_report_settings_defaults() -> None:
+    settings = Settings(environment="local")
+    assert settings.ops_report_email_enabled is False
+    assert settings.ops_report_dir == ""
+    assert settings.ops_report_timezone == "America/New_York"
+    assert settings.ops_report_cron_day_of_week == "mon"
+    assert settings.ops_report_cron_hour == 8
 
 
 def test_create_app_production_omits_local_routers_and_docs() -> None:
@@ -33,6 +68,8 @@ def test_create_app_production_omits_local_routers_and_docs() -> None:
     paths = set(app.openapi()["paths"])
     assert "/simulate/ingest" not in paths
     assert "/debug/graph-check" not in paths
+    assert "/api/reports/ops-metrics" in paths
+    assert "/api/reports/ops-weekly" in paths
     assert app.docs_url is None
     assert app.redoc_url is None
     assert app.openapi_url is None
@@ -123,6 +160,8 @@ def test_validate_production_security_requires_hardening() -> None:
         graph_client_secret="",
         graph_tenant_id="",
         target_mailboxes="",
+        graph_webhooks_enabled=True,
+        graph_notification_url="",
         graph_webhook_client_state="short",
         redis_url="redis://localhost:6379/0",
         redis_ssl_ca_certs="",
@@ -141,6 +180,7 @@ def test_validate_production_security_requires_hardening() -> None:
     assert any("GRAPH_TENANT_ID" in e for e in errors)
     assert any("TARGET_MAILBOXES" in e for e in errors)
     assert any("GRAPH_WEBHOOK_CLIENT_STATE" in e for e in errors)
+    assert any("GRAPH_NOTIFICATION_URL" in e for e in errors)
     assert any("REDIS_URL" in e for e in errors)
     assert any("MSAL_CACHE_ENCRYPTION_KEY" in e for e in errors)
     assert any("DATABASE_URL" in e for e in errors)
@@ -169,6 +209,7 @@ def test_validate_production_security_rejects_ssl_cert_reqs_none() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     errors = settings.validate_production_security()
     assert any("ssl_cert_reqs" in e for e in errors)
@@ -196,10 +237,36 @@ def test_validate_production_security_skips_slack_when_disabled() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     errors = settings.validate_production_security()
     assert not any("SLACK_" in e for e in errors)
     assert errors == []
+
+
+def test_validate_production_security_requires_trust_x_forwarded_for() -> None:
+    settings = Settings(
+        environment="production",
+        anthropic_api_key="sk-ant-prod-key",
+        graph_client_id="00000000-0000-0000-0000-000000000000",
+        graph_client_secret="graph-secret-prod",
+        graph_tenant_id="11111111-1111-1111-1111-111111111111",
+        target_mailboxes="user@example.com",
+        graph_webhook_client_state="x" * 32,
+        redis_url="rediss://:secret@redis.example:6380/0",
+        redis_ssl_ca_certs="/tls/ca.crt",
+        msal_cache_encryption_key="e0xmjKk-RnBXRjYz-Tsvjar3_Glouxk2n5tNImpxYLc=",
+        database_url="postgresql+asyncpg://app:secret@db.example:5432/inbox_triage",
+        enable_dev_routes=False,
+        slack_enabled=False,
+        jwt_secret="x" * 64,
+        cookie_secure=True,
+        frontend_origin="https://app.example.com",
+        api_host="app.example.com",
+        trust_x_forwarded_for=False,
+    )
+    errors = settings.validate_production_security()
+    assert any("TRUST_X_FORWARDED_FOR" in e for e in errors)
 
 
 def test_validate_production_security_passes_when_hardened() -> None:
@@ -223,5 +290,6 @@ def test_validate_production_security_passes_when_hardened() -> None:
         cookie_secure=True,
         frontend_origin="https://app.example.com",
         api_host="app.example.com",
+        trust_x_forwarded_for=True,
     )
     assert settings.validate_production_security() == []

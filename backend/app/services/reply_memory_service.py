@@ -25,10 +25,13 @@ async def store_approved_reply(
     mailbox: str,
     final_body: str,
     email_preview: str | None = None,
+    learning_note: str | None = None,
 ) -> None:
     """Embed and store an approved reply. Best-effort — never raises to callers.
 
     Embedding runs before any DB write so callers can keep the write txn short.
+    When ``learning_note`` is present it is appended to the embed text and stored
+    separately for auditability.
     """
     if openai_client is None or not settings.openai_api_key.strip():
         logger.info(
@@ -42,9 +45,13 @@ async def store_approved_reply(
         scrubbed = scrub_text(final_body)
         if not scrubbed.strip():
             return
+        scrubbed_note = scrub_text(learning_note) if learning_note else None
+        embed_text = scrubbed
+        if scrubbed_note and scrubbed_note.strip():
+            embed_text = f"{scrubbed}\n\nLearning note: {scrubbed_note.strip()}"
         # Network call first — do not hold a Postgres transaction open.
         vector = await embedding_service.embed_text(
-            scrubbed,
+            embed_text,
             client=openai_client,
             settings=settings,
         )
@@ -64,11 +71,13 @@ async def store_approved_reply(
             embedding=vector,
             reply_text=scrubbed,
             email_preview=email_preview,
+            learning_note=scrubbed_note.strip() if scrubbed_note else None,
         )
         logger.info(
             "reply_memory_stored",
             draft_id=str(draft_id),
             mailbox=mailbox,
+            has_learning_note=bool(scrubbed_note and scrubbed_note.strip()),
         )
     except Exception:
         # Flush/DB errors leave the session inactive until rollback
@@ -127,3 +136,38 @@ async def find_similar_replies(
             mailbox=mailbox,
         )
         return []
+
+
+async def list_memories(
+    session: AsyncSession,
+    *,
+    mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
+    limit: int = 100,
+) -> list:
+    """List stored reply memories for the settings UI."""
+    if mailbox:
+        return await reply_embedding_repo.list_reply_embeddings(
+            session,
+            mailbox=mailbox,
+            limit=limit,
+        )
+    return await reply_embedding_repo.list_all_reply_embeddings_admin(
+        session,
+        mailboxes=list(mailboxes or []),
+        limit=limit,
+    )
+
+
+async def set_excluded(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+    *,
+    is_excluded: bool,
+) -> reply_embedding_repo.ReplyMemoryListItem | None:
+    """Toggle exclusion for a reply memory row."""
+    return await reply_embedding_repo.set_excluded(
+        session,
+        reply_id,
+        is_excluded=is_excluded,
+    )

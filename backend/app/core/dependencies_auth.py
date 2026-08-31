@@ -21,6 +21,7 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
 
 
 async def get_current_user(
+    request: Request,
     session: DbSession,
     settings: AppSettings,
     authorization: Annotated[str | None, Header()] = None,
@@ -59,6 +60,14 @@ async def get_current_user(
     # their own explicit `session.begin()` without hitting "already begun".
     if session.in_transaction():
         await session.commit()
+    # H4: SlowAPI's chat key_func prefers this over a second JWT decode.
+    # Middleware still runs first on a cold request; chat_rate_limit_key
+    # then validates token_version itself. This cache is for the rest of
+    # the request and subsequent asks within the TTL.
+    request.state.user_id = user.id
+    from app.core.rate_limit import remember_user_auth
+
+    remember_user_auth(user.id, is_active=user.is_active, token_version=user.token_version)
     return UserMe.model_validate(user)
 
 

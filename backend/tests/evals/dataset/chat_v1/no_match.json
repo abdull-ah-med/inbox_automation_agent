@@ -1,0 +1,9 @@
+{
+  "id": "chat-no-match",
+  "dataset_version": "chat_evals_v1",
+  "suite_tags": ["C"],
+  "question": "zzzxxyyq no such thread",
+  "mailbox": null,
+  "hits": [],
+  "geval_criteria": "The answer must say no matching threads were found and must not invent thread ids or email facts."
+}

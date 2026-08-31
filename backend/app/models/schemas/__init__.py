@@ -32,7 +32,6 @@ __all__ = [
     "EmailDirectionEnum",
     "EmailMessageSchema",
     "EntitiesSchema",
-    "TriageResultSchema",
     "GraphCheckResponseSchema",
     "GraphMessageListSchema",
     "GraphMessageSchema",
@@ -46,4 +45,5 @@ __all__ = [
     "SuggestedRecipientSchema",
     "ThreadContextSchema",
     "ThreadStateEnum",
+    "TriageResultSchema",
 ]

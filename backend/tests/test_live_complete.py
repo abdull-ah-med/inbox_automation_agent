@@ -192,9 +192,7 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
     get_settings.cache_clear()
 
     engine = create_async_engine(live_settings.database_url, pool_pre_ping=True)
-    session_factory = async_sessionmaker(
-        bind=engine, class_=AsyncSession, expire_on_commit=False
-    )
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     redis = Redis.from_url(
         live_settings.redis_url,
         decode_responses=True,
@@ -378,8 +376,8 @@ async def test_live_complete_end_to_end(live_settings: Settings, artifacts: _Liv
                                         },
                                         actor="live-complete",
                                     )
-                            except Exception:  # noqa: BLE001 — best-effort audit
-                                pass
+                            except Exception as exc:
+                                record["audit_log_error"] = str(exc)
                         else:
                             record["slack_skip_reason"] = f"status={post.status}"
                 elif _should_post_slack(state):

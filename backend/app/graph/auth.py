@@ -34,6 +34,7 @@ from app.core.redis_keys import (
     MSAL_TOKEN_CACHE_KEY,
     MSAL_TOKEN_CACHE_LOCK_KEY,
     MSAL_TOKEN_CACHE_LOCK_TTL_SECONDS,
+    MSAL_TOKEN_CACHE_TTL_SECONDS,
 )
 from app.core.redis_lock import acquire_lock_with_retry, release_lock
 from app.core.security import (
@@ -125,7 +126,11 @@ class GraphAuth:
             return
         serialized = self._cache.serialize()
         payload = self._encode_cache_payload(serialized)
-        await self._redis.set(MSAL_TOKEN_CACHE_KEY, payload)
+        await self._redis.set(
+            MSAL_TOKEN_CACHE_KEY,
+            payload,
+            ex=MSAL_TOKEN_CACHE_TTL_SECONDS,
+        )
         logger.debug("graph_token_cache_persisted_to_redis", encrypted=bool(self._encryption_key()))
 
     async def _acquire_cache_lock(self) -> str | None:

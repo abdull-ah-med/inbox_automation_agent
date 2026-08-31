@@ -27,6 +27,8 @@ services:
     ports: !reset []
     volumes:
       - /opt/inbox-triage-redis-tls:/tls:ro
+    # Hardening: disable dangerous admin commands. ACL (users.acl) keeps default
+    # user with +@all -@dangerous so Lua locks, streams, hashes, and strings work.
     command: >
       redis-server
       --port 0
@@ -36,6 +38,11 @@ services:
       --tls-ca-cert-file /tls/ca.crt
       --tls-auth-clients no
       --requirepass ${REDIS_PASSWORD}
+      --rename-command FLUSHALL ""
+      --rename-command FLUSHDB ""
+      --rename-command DEBUG ""
+      --rename-command KEYS ""
+      --aclfile /tls/users.acl
     healthcheck:
       test:
         [

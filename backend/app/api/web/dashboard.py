@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -32,5 +32,14 @@ async def overview(
     session: DbSession,
     settings: AppSettings,
     _user: CurrentUser,
+    needs_attention_sort: Annotated[
+        Literal["urgency", "recent"],
+        Query(description="Needs Attention queue sort: urgency or recent"),
+    ] = "urgency",
 ) -> DashboardOverview:
-    return await dashboard_service.get_overview(session, settings)
+    _ = request, response
+    return await dashboard_service.get_overview(
+        session,
+        settings,
+        needs_attention_sort=needs_attention_sort,
+    )

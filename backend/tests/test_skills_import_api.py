@@ -16,6 +16,7 @@ from app.core.dependencies import get_db
 from app.core.dependencies_auth import get_current_user
 from app.core.exceptions import (
     SkillAlreadyImportedError,
+    SkillDuplicateCandidatesError,
     SkillPackagingError,
     SkillPathTraversalError,
 )
@@ -24,7 +25,6 @@ from app.models.schemas.auth import UserMe
 from app.models.schemas.skill import (
     ImportSkillResultSchema,
     SkillFileMetaSchema,
-    SkillResponseSchema,
 )
 from app.repositories.skill_files_repo import SkillFileRow
 from tests.fixtures.samplelab_rebilling_archive import load_samplelab_rebilling_zip_bytes
@@ -178,7 +178,7 @@ async def test_import_duplicate_hash_409(app_factory) -> None:
             "app.api.web.skills.skill_archive_service.import_skill_archive",
             AsyncMock(
                 side_effect=SkillAlreadyImportedError(
-                    "already imported",
+                    "Skill archive already imported as 'demo-skill'",
                     skill_id=existing_id,
                 )
             ),
@@ -197,7 +197,112 @@ async def test_import_duplicate_hash_409(app_factory) -> None:
                 )
         assert resp.status_code == 409
         detail = resp.json()["detail"]
-        assert detail["skill_id"] == str(existing_id)
+        assert detail["code"] == "duplicate_candidates"
+        assert detail["candidates"] == [
+            {
+                "id": str(existing_id),
+                "name": "demo-skill",
+                "similarity": 1.0,
+            }
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_import_duplicate_candidates_409_body(app_factory) -> None:
+    app = app_factory(role="admin")
+    candidate_id = uuid.uuid4()
+    try:
+        with patch(
+            "app.api.web.skills.skill_archive_service.import_skill_archive",
+            AsyncMock(
+                side_effect=SkillDuplicateCandidatesError(
+                    candidates=[
+                        {
+                            "id": candidate_id,
+                            "name": "samplelab-rebilling",
+                            "similarity": 0.91,
+                        }
+                    ]
+                )
+            ),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/skills/import",
+                    files={
+                        "file": (
+                            "demo.zip",
+                            _zip_bytes(
+                                {
+                                    "demo-skill/SKILL.md": (
+                                        "---\nname: demo-skill\n"
+                                        "description: Rebill invoices\n---\nbody\n"
+                                    )
+                                }
+                            ),
+                            "application/zip",
+                        )
+                    },
+                )
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert detail["code"] == "duplicate_candidates"
+        assert detail["candidates"] == [
+            {
+                "id": str(candidate_id),
+                "name": "samplelab-rebilling",
+                "similarity": 0.91,
+            }
+        ]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_import_passes_overwrite_skill_id_and_name_override(app_factory) -> None:
+    app = app_factory(role="admin")
+    skill_id = uuid.uuid4()
+    target_id = uuid.uuid4()
+    result = ImportSkillResultSchema(
+        skill_id=skill_id,
+        name="demo-skill-v2",
+        description="d",
+        reference_files=[],
+        asset_files=[],
+        warnings=[],
+        overwritten=False,
+    )
+    try:
+        with patch(
+            "app.api.web.skills.skill_archive_service.import_skill_archive",
+            AsyncMock(return_value=result),
+        ) as import_mock:
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                resp = await client.post(
+                    "/api/skills/import",
+                    data={
+                        "overwrite": "true",
+                        "overwrite_skill_id": str(target_id),
+                        "name_override": "demo-skill-v2",
+                        "category": "billing",
+                    },
+                    files={
+                        "file": (
+                            "demo.zip",
+                            load_samplelab_rebilling_zip_bytes(),
+                            "application/zip",
+                        )
+                    },
+                )
+        assert resp.status_code == 201
+        kwargs = import_mock.await_args.kwargs
+        assert kwargs["overwrite"] is True
+        assert kwargs["overwrite_skill_id"] == target_id
+        assert kwargs["name_override"] == "demo-skill-v2"
     finally:
         app.dependency_overrides.clear()
 
@@ -247,19 +352,6 @@ async def test_import_packaging_error_422(app_factory) -> None:
 async def test_list_and_stream_skill_files(app_factory) -> None:
     app = app_factory(role="admin")
     skill_id = uuid.uuid4()
-    skill = SkillResponseSchema.model_validate(
-        {
-            "id": skill_id,
-            "name": "demo-skill",
-            "description": "d",
-            "content": "body",
-            "category": "billing",
-            "is_active": True,
-            "source_kind": "imported",
-            "created_at": datetime.now(UTC),
-            "updated_at": datetime.now(UTC),
-        }
-    )
     meta = SkillFileMetaSchema.model_validate(
         {
             "id": uuid.uuid4(),
@@ -282,15 +374,11 @@ async def test_list_and_stream_skill_files(app_factory) -> None:
     try:
         with (
             patch(
-                "app.api.web.skills.skill_repo.get_by_id",
-                AsyncMock(return_value=skill),
-            ),
-            patch(
-                "app.api.web.skills.skill_files_repo.list_by_skill",
+                "app.api.web.skills.skill_service.list_skill_files",
                 AsyncMock(return_value=[meta]),
             ),
             patch(
-                "app.api.web.skills.skill_files_repo.get_by_path",
+                "app.api.web.skills.skill_service.get_skill_file",
                 AsyncMock(return_value=file_row),
             ),
         ):

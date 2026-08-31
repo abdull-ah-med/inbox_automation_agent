@@ -15,8 +15,9 @@ Official docs:
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -25,6 +26,8 @@ import structlog
 from app.core.exceptions import GraphClientError
 from app.graph.auth import GraphAuth
 from app.models.schemas.graph import (
+    GraphAttachmentListSchema,
+    GraphFileAttachmentSchema,
     GraphMessageListSchema,
     GraphMessageSchema,
     GraphSubscriptionSchema,
@@ -35,11 +38,21 @@ logger = structlog.get_logger(__name__)
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
 _GRAPH_HOSTS = frozenset({"graph.microsoft.com"})
 DEFAULT_MESSAGE_SELECT = (
-    "id,subject,bodyPreview,body,sender,from,toRecipients,ccRecipients,"
-    "receivedDateTime,conversationId,isRead,hasAttachments,importance"
+    "id,subject,bodyPreview,body,uniqueBody,sender,from,toRecipients,ccRecipients,"
+    "bccRecipients,receivedDateTime,conversationId,isRead,hasAttachments,importance,"
+    "microsoft.graph.eventMessage/meetingMessageType,"
+    "microsoft.graph.eventMessageResponse/responseType,internetMessageHeaders"
 )
-MAX_SUBSCRIPTION_MINUTES = 4230
+# Outlook View: body only, Prefer html (filtered — never outlook.allow-unsafe-html).
+HTML_BODY_SELECT = "id,body,uniqueBody"
+# Outlook message / event / contact subscriptions: 10,080 minutes (under 7 days).
+# https://learn.microsoft.com/en-us/graph/api/resources/subscription
+MAX_SUBSCRIPTION_MINUTES = 10_080
 _ERROR_BODY_MAX_CHARS = 500
+_AAD_UPN_PREFIX = "AAD-UPN:"
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
 # https://learn.microsoft.com/en-us/graph/throttling
 MAX_THROTTLE_RETRIES = 3
@@ -57,13 +70,32 @@ def _retry_after_seconds(response: httpx.Response, attempt: int) -> float:
             logger.warning("graph_retry_after_unparseable", retry_after=raw)
         else:
             return parsed if parsed > 0.0 else 0.0
-    backoff = DEFAULT_RETRY_AFTER_SECONDS * float(2**attempt)
-    return backoff
+    return DEFAULT_RETRY_AFTER_SECONDS * float(2**attempt)
 
 
 def _path_segment(value: str) -> str:
     """Percent-encode a single URL path segment (IDs may contain ``/``, ``@``, ``#``)."""
     return quote(value, safe="")
+
+
+def outlook_subscription_user(mailbox: str) -> str:
+    """User segment for Outlook change-notification ``resource`` values.
+
+    Directory object IDs are used as-is. UPNs whose local-part is a GUID must
+    be prefixed with ``AAD-UPN:`` so Exchange does not treat them as a mailbox
+    GUID. Other UPNs are unchanged.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    value = mailbox.strip()
+    if value.upper().startswith(_AAD_UPN_PREFIX):
+        return f"{_AAD_UPN_PREFIX}{value[len(_AAD_UPN_PREFIX) :]}"
+    if _UUID_RE.fullmatch(value):
+        return value
+    local, sep, _domain = value.partition("@")
+    if sep and _UUID_RE.fullmatch(local):
+        return f"{_AAD_UPN_PREFIX}{value}"
+    return value
 
 
 def _truncate_error_body(text: str) -> str:
@@ -150,7 +182,10 @@ class GraphClient:
             )
             await asyncio.sleep(delay)
 
-        assert response is not None
+        if response is None:
+            raise GraphClientError(
+                f"Graph API {method} {path or absolute_url} produced no response"
+            )
 
         if response.status_code >= 400:
             truncated = _truncate_error_body(response.text)
@@ -190,6 +225,45 @@ class GraphClient:
         if not data:
             raise GraphClientError(f"Empty response fetching message {message_id}")
         return GraphMessageSchema.model_validate(data)
+
+    async def get_message_html(self, mailbox: str, message_id: str) -> GraphMessageSchema:
+        """Fetch a message body in Graph-filtered HTML for Outlook View.
+
+        GET /users/{mailbox}/messages/{message_id}
+        Prefer: outlook.body-content-type="html"
+        Does not request outlook.allow-unsafe-html.
+        """
+        path = f"/users/{_path_segment(mailbox)}/messages/{_path_segment(message_id)}"
+        data = await self._request(
+            "GET",
+            path,
+            params={"$select": HTML_BODY_SELECT},
+            headers={"Prefer": 'outlook.body-content-type="html"'},
+        )
+        if not data:
+            raise GraphClientError(f"Empty response fetching HTML for message {message_id}")
+        return GraphMessageSchema.model_validate(data)
+
+    async def list_message_attachments(
+        self,
+        mailbox: str,
+        message_id: str,
+    ) -> list[GraphFileAttachmentSchema]:
+        """List attachments for a message (including inline cid images).
+
+        GET /users/{mailbox}/messages/{message_id}/attachments
+        """
+        path = f"/users/{_path_segment(mailbox)}/messages/{_path_segment(message_id)}/attachments"
+        data = await self._request("GET", path)
+        page = GraphAttachmentListSchema.model_validate(data or {"value": []})
+        attachments = list(page.value)
+
+        while page.odata_next_link:
+            data = await self._request("GET", "", absolute_url=page.odata_next_link)
+            page = GraphAttachmentListSchema.model_validate(data or {"value": []})
+            attachments.extend(page.value)
+
+        return attachments
 
     async def list_messages(
         self,
@@ -311,15 +385,18 @@ class GraphClient:
         client_state: str,
         *,
         lifecycle_notification_url: str,
+        folder: Literal["inbox", "sentitems"] = "inbox",
         expiration_minutes: int = MAX_SUBSCRIPTION_MINUTES,
     ) -> GraphSubscriptionSchema:
-        """Create a change notification subscription for a mailbox inbox.
+        """Create a change notification subscription for a mailbox folder.
 
         POST /subscriptions
-        Resource: users/{mailbox}/mailFolders('inbox')/messages
-        Max lifetime for Outlook messages: 4,230 minutes.
+        Resource: users/{user}/mailFolders('{folder}')/messages
+        Well-known folder names: ``inbox``, ``sentitems`` (lowercase, no slash).
+        Max lifetime for Outlook messages: 10,080 minutes (under seven days).
 
         lifecycleNotificationUrl cannot be added later via PATCH — must be set at create.
+        https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
         """
         if expiration_minutes > MAX_SUBSCRIPTION_MINUTES:
             raise GraphClientError(
@@ -331,12 +408,14 @@ class GraphClient:
         if not lifecycle_notification_url.strip():
             raise GraphClientError("lifecycle_notification_url is required")
 
+        safe_folder = folder.replace("'", "''")
         expiration = datetime.now(UTC) + timedelta(minutes=expiration_minutes)
+        user = outlook_subscription_user(mailbox)
         body = {
             "changeType": "created",
             "notificationUrl": notification_url,
             "lifecycleNotificationUrl": lifecycle_notification_url,
-            "resource": f"users/{mailbox}/mailFolders('inbox')/messages",
+            "resource": f"users/{user}/mailFolders('{safe_folder}')/messages",
             "expirationDateTime": expiration.isoformat().replace("+00:00", "Z"),
             "clientState": client_state,
         }

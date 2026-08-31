@@ -42,11 +42,20 @@ class EmailMessageSchema(BaseModel):
     body_preview: str | None = None
     body_content_type: str = "text"
     body_clean: str | None = None
+    unique_body_text: str | None = None
     received_at: datetime
     direction: EmailDirectionEnum = EmailDirectionEnum.INBOUND
     to_recipients: list[str] = Field(default_factory=list)
     cc_recipients: list[str] = Field(default_factory=list)
+    bcc_recipients: list[str] = Field(default_factory=list)
     has_attachments: bool = False
+    # Well-known Graph folder (inbox / junkemail / sentitems). Hint only.
+    graph_folder: str | None = None
+    # Graph eventMessage / eventMessageResponse fields (null for normal mail).
+    meeting_message_type: str | None = None
+    meeting_response_type: str | None = None
+    sender_display_name: str | None = None
+    is_automated: bool = False
     # Optional packed-prompt fields (populated when summaries exist).
     summary_one_line: str | None = None
     summary_json: dict[str, object] | None = None

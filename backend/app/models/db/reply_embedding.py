@@ -23,6 +23,7 @@ class ReplyEmbedding(Base):
     embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
     reply_text: Mapped[str] = mapped_column(Text, nullable=False)
     original_email_preview: Mapped[str | None] = mapped_column(Text, nullable=True)
+    learning_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_excluded: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

@@ -292,6 +292,7 @@ async def _messages_from_db(
                         ),
                         to_recipients=list(row.to_recipients or []),
                         cc_recipients=list(row.cc_recipients or []),
+                        bcc_recipients=list(row.bcc_recipients or []),
                         has_attachments=bool(row.has_attachments),
                         summary_one_line=row.summary_one_line,
                         summary_json=row.summary_json,

@@ -34,10 +34,11 @@ class MessageHit:
 def rrf_fuse(
     vector_hits: list[tuple[UUID, str, UUID | None]],
     fts_hits: list[tuple[UUID, str, UUID | None]],
+    keyword_hits: list[tuple[UUID, str, UUID | None]] | None = None,
     *,
     k: int = 60,
 ) -> list[MessageHit]:
-    """Fuse two ranked lists with classic RRF (Cormack et al. 2009).
+    """Fuse ranked lists with classic RRF (Cormack et al. 2009).
 
     Each input list is ordered best-first. Tuple = (embedding_id, conversation_id, message_id).
     """
@@ -48,11 +49,15 @@ def rrf_fuse(
         scores[emb_id] = scores.get(emb_id, 0.0) + 1.0 / (k + rank)
         meta[emb_id] = (conv_id, msg_id)
 
-    for rank, (emb_id, conv_id, msg_id) in enumerate(fts_hits, start=1):
-        scores[emb_id] = scores.get(emb_id, 0.0) + 1.0 / (k + rank)
-        meta.setdefault(emb_id, (conv_id, msg_id))
+    later_legs = [fts_hits]
+    if keyword_hits:
+        later_legs.append(keyword_hits)
+    for hits in later_legs:
+        for rank, (emb_id, conv_id, msg_id) in enumerate(hits, start=1):
+            scores[emb_id] = scores.get(emb_id, 0.0) + 1.0 / (k + rank)
+            meta.setdefault(emb_id, (conv_id, msg_id))
 
-    hits = [
+    fused = [
         MessageHit(
             embedding_id=emb_id,
             conversation_id=meta[emb_id][0],
@@ -61,8 +66,8 @@ def rrf_fuse(
         )
         for emb_id, score in scores.items()
     ]
-    hits.sort(key=lambda h: h.rrf_score, reverse=True)
-    return hits
+    fused.sort(key=lambda h: h.rrf_score, reverse=True)
+    return fused
 
 
 def aggregate_conversation_scores(

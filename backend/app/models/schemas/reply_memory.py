@@ -13,11 +13,19 @@ class ReplyMemoryResponseSchema(BaseModel):
 
     id: uuid.UUID
     draft_id: uuid.UUID
+    thread_id: uuid.UUID | None = None
     mailbox: str
     reply_text: str
+    preview_line: str | None = None
+    draft_subject: str | None = None
+    sender_email: str | None = None
+    receiver_email: str | None = None
+    reason_code: str | None = None
+    reason_text: str | None = None
     original_email_preview: str | None = None
+    learning_note: str | None = None
     is_excluded: bool = False
-    created_at: datetime
+    created_at: datetime | None = None
 
 
 class ReplyMemoryUpdateSchema(BaseModel):

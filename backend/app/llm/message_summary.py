@@ -153,6 +153,5 @@ async def summarize_message(
             )
 
     raise TriageError(
-        f"Haiku message summary failed after retry: "
-        f"{type(last_error).__name__}: {last_error}"
+        f"Haiku message summary failed after retry: {type(last_error).__name__}: {last_error}"
     ) from last_error

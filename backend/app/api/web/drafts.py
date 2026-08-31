@@ -1,4 +1,4 @@
-"""Draft feedback API — approve / reject / mark-wrong (never sends email)."""
+"""Draft feedback API — approve / reject / mark-wrong / urgency (never sends email)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,21 @@ from app.core.dependencies import AnthropicClientDep, OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.dashboard import DraftView
+from app.models.schemas.draft_salutation import (
+    DraftSalutationApplyResponse,
+    DraftSalutationApplySchema,
+)
 from app.models.schemas.feedback import DraftApproveSchema, DraftRejectSchema, DraftWrongSchema
-from app.services import draft_feedback_service, thread_view_service
+from app.models.schemas.urgency_feedback import (
+    UrgencyEditRequestSchema,
+    UrgencyEditResponseSchema,
+)
+from app.services import (
+    draft_feedback_service,
+    draft_salutation_service,
+    thread_view_service,
+    urgency_feedback_service,
+)
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -46,6 +59,8 @@ async def approve_draft(
         session,
         draft_id,
         edited_body=body.edited_body,
+        approval_note=body.approval_note,
+        approval_scope=body.approval_scope,
         actor=user.email,
         settings=settings,
     )
@@ -98,6 +113,84 @@ async def reject_draft(
         anthropic_client=anthropic_client,
     )
     return thread_view_service.draft_response_to_view(updated)
+
+
+@router.post(
+    "/{draft_id}/urgency",
+    response_model=UrgencyEditResponseSchema,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def edit_draft_urgency(
+    draft_id: uuid.UUID,
+    body: UrgencyEditRequestSchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    openai_client: OpenAIClientDep,
+    user: CurrentUser,
+) -> UrgencyEditResponseSchema:
+    """Manually edit draft urgency with a required reason. Does not send email."""
+    _ = request, response
+    result = await urgency_feedback_service.apply_manual_urgency_edit(
+        session,
+        draft_id,
+        body,
+        actor=user.email,
+        user_id=user.id,
+        settings=settings,
+    )
+    await session.commit()
+
+    await urgency_feedback_service.store_urgency_feedback_memory(
+        draft_id=draft_id,
+        thread_id=result.response.thread_id,
+        mailbox=result.mailbox,
+        routing_category=result.routing_category,
+        previous_urgency=result.previous_urgency,
+        new_urgency=body.new_urgency,
+        reason=body.reason,
+        edited_by_user_id=user.id,
+        settings=settings,
+        openai_client=openai_client,
+    )
+    return result.response
+
+
+@router.post(
+    "/{draft_id}/salutation",
+    response_model=DraftSalutationApplyResponse,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def apply_draft_salutation(
+    draft_id: uuid.UUID,
+    body: DraftSalutationApplySchema,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    user: CurrentUser,
+) -> DraftSalutationApplyResponse:
+    """Teach an alias and rewrite the draft greeting in place (no LLM)."""
+    _ = request, response
+    draft_view, addressee, contact = await draft_salutation_service.apply_draft_salutation(
+        session,
+        settings,
+        draft_id,
+        email=body.email,
+        first_name=body.first_name,
+        full_name=body.full_name,
+        notes=body.notes,
+        actor_user_id=user.id,
+    )
+    await session.commit()
+    return DraftSalutationApplyResponse(
+        draft=draft_view,
+        reply_addressee=addressee,
+        contact=contact,
+    )
 
 
 @router.post(

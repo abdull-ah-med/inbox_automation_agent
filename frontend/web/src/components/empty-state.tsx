@@ -1,26 +1,26 @@
+import type { ReactNode } from "react"
+
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { cn } from "@/lib/utils"
 
 export const EmptyState = ({
   title,
   description,
+  action,
   className,
 }: {
   title: string
   description: string
+  action?: ReactNode
   className?: string
 }) => {
   return (
-    <div
-      role="status"
-      className={cn(
-        "rounded-lg border border-dashed border-gray-300 bg-white px-6 py-12 text-center dark:border-gray-700 dark:bg-gray-900",
-        className,
-      )}
-    >
-      <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</p>
-      <p className="mx-auto mt-2 max-w-md text-sm text-gray-500 dark:text-gray-400">
-        {description}
-      </p>
-    </div>
+    <Card role="status" className={cn("py-12 text-center", className)}>
+      <CardHeader className="px-6">
+        <CardTitle className="text-sm font-semibold">{title}</CardTitle>
+        <CardDescription className="mx-auto max-w-md">{description}</CardDescription>
+      </CardHeader>
+      {action ? <div className="px-6">{action}</div> : null}
+    </Card>
   )
 }

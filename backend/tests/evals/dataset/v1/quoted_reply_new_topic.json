@@ -1,0 +1,24 @@
+{
+  "id": "quoted-reply-new-topic",
+  "dataset_version": "evals_dataset_v1",
+    "suite_tags": ["B"],
+  "question": "invoice 42",
+  "mailbox": "sales@example.com",
+  "hits": [
+    {
+      "thread_id": "42424242-4242-4242-4242-424242424242",
+      "mailbox": "sales@example.com",
+      "conversation_id": "conv-invoice-42",
+      "subject": "Re: packet",
+      "state": "REQUIRES_HUMAN",
+      "urgency": "HIGH",
+      "snippet": "Please send invoice 42 today.",
+      "score": 0.01,
+      "last_message_at": "2026-08-20T12:00:00Z"
+    }
+  ],
+  "expected_output": "The newest reply asks to send invoice 42 today.",
+  "expected_facts": ["invoice 42"],
+  "forbidden_facts": ["invoice 1"],
+  "geval_criteria": "Top hit must be the newest invoice 42 reply, not quoted invoice 1 history."
+}

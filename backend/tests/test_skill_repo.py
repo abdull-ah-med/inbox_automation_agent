@@ -224,9 +224,7 @@ async def test_delete_ok() -> None:
     delete_result = MagicMock()
     delete_result.rowcount = 1
     session = AsyncMock()
-    session.execute = AsyncMock(
-        side_effect=[get_result, delete_files_result, delete_result]
-    )
+    session.execute = AsyncMock(side_effect=[get_result, delete_files_result, delete_result])
     session.flush = AsyncMock()
 
     assert await skill_repo.delete_skill(session, skill_id) is True

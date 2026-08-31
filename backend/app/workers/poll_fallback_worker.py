@@ -1,9 +1,15 @@
-"""Poll fallback worker — catch messages missed by Graph webhooks."""
+"""Graph poller — primary ingestion for Inbox, Junk, and Sent Items.
+
+Webhook subscriptions are optional. When notification URLs are blank, this
+worker is the sole source of new mail. Sent Items are polled on the same
+interval via ``outbound_only`` so replies resolve threads without webhooks.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import structlog
 from redis.asyncio import Redis
@@ -16,17 +22,23 @@ from app.core.redis_keys import (
     SCHEDULER_POLL_LOCK_KEY,
     poll_cursor_key,
 )
-from app.core.redis_lock import acquire_lock
+from app.core.redis_lock import acquire_lock, extend_lock, release_lock
 from app.db.session import get_session_factory
 from app.graph.client import GraphClient
 from app.models.schemas.graph import GraphMessageSchema
-from app.services import ingestion_service, pipeline_service
+from app.services import ingestion_service, pipeline_service, sent_reply_learning_service
 
 logger = structlog.get_logger(__name__)
 
 _TRIAGE_ELIGIBLE = frozenset({"ingested", "retry_triage"})
-# Well-known Graph folder names. Poller covers Inbox + Junk (spam often lands here).
-_POLL_FOLDERS: tuple[str, ...] = ("inbox", "junkemail")
+# Well-known Graph folder names. Inbound poll covers Inbox + Junk (spam often lands here).
+_POLL_INBOUND_FOLDERS: tuple[str, ...] = ("inbox", "junkemail")
+_POLL_OUTBOUND_FOLDERS: tuple[str, ...] = ("sentitems",)
+PollCursorFolder = Literal["inbox", "sentitems"]
+# Heartbeat interval while polling so the leader lock cannot expire mid-run.
+_POLL_LOCK_HEARTBEAT_SECONDS = 30
+# Per-mailbox budget used when sizing the leader lock TTL (inbound + outbound).
+_POLL_LOCK_SECONDS_PER_MAILBOX = 180
 
 
 def _to_graph_datetime(value: datetime) -> str:
@@ -35,8 +47,17 @@ def _to_graph_datetime(value: datetime) -> str:
     return value.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-async def _read_cursor(redis: Redis, mailbox: str) -> datetime | None:
-    raw = await redis.get(poll_cursor_key(mailbox))
+def _cursor_folder(*, outbound_only: bool) -> PollCursorFolder:
+    return "sentitems" if outbound_only else "inbox"
+
+
+async def _read_cursor(
+    redis: Redis,
+    mailbox: str,
+    *,
+    folder: PollCursorFolder = "inbox",
+) -> datetime | None:
+    raw = await redis.get(poll_cursor_key(mailbox, folder))
     if not isinstance(raw, str) or not raw:
         return None
     try:
@@ -48,8 +69,14 @@ async def _read_cursor(redis: Redis, mailbox: str) -> datetime | None:
     return parsed
 
 
-async def _write_cursor(redis: Redis, mailbox: str, value: datetime) -> None:
-    await redis.set(poll_cursor_key(mailbox), _to_graph_datetime(value))
+async def _write_cursor(
+    redis: Redis,
+    mailbox: str,
+    value: datetime,
+    *,
+    folder: PollCursorFolder = "inbox",
+) -> None:
+    await redis.set(poll_cursor_key(mailbox, folder), _to_graph_datetime(value))
 
 
 def _normalize_received(value: datetime | None) -> datetime | None:
@@ -70,17 +97,19 @@ async def _collect_poll_messages(
     *,
     graph_client: GraphClient,
     filter_query: str,
+    folders: tuple[str, ...] | None = None,
 ) -> list[GraphMessageSchema]:
-    """List messages from all poll folders, dedupe by id, sort by received time.
+    """List messages from poll folders, dedupe by id, sort by received time.
 
     Per-folder Graph failures are logged and skipped so one denied folder does
     not abort the mailbox. If every folder fails, raises ``GraphClientError``
     so the caller can skip cursor updates.
     """
+    poll_folders = folders if folders is not None else _POLL_INBOUND_FOLDERS
     messages: list[GraphMessageSchema] = []
     seen_ids: set[str] = set()
     folder_errors = 0
-    for folder in _POLL_FOLDERS:
+    for folder in poll_folders:
         try:
             folder_messages = await graph_client.list_messages(
                 mailbox,
@@ -109,13 +138,168 @@ async def _collect_poll_messages(
             if message.id in seen_ids:
                 continue
             seen_ids.add(message.id)
-            messages.append(message)
-    if folder_errors == len(_POLL_FOLDERS):
-        raise GraphClientError(
-            f"Graph list failed for all poll folders on mailbox {mailbox}"
-        )
+            messages.append(message.model_copy(update={"source_folder": folder}))
+    if folder_errors == len(poll_folders):
+        raise GraphClientError(f"Graph list failed for all poll folders on mailbox {mailbox}")
     messages.sort(key=_message_sort_key)
     return messages
+
+
+async def _ingest_poll_message(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    graph_client: GraphClient,
+    session_factory: object,
+    outbound_only: bool,
+) -> object:
+    async with session_factory() as session, session.begin():  # type: ignore[operator]
+        if outbound_only:
+            return await ingestion_service.handle_outbound_notification(
+                session=session,
+                redis=redis,
+                graph_client=graph_client,
+                mailbox=mailbox,
+                message_id=message.id,
+            )
+        return await ingestion_service.ingest_graph_message(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message.id,
+            source_folder=message.source_folder,
+        )
+
+
+async def _run_poll_triage_if_needed(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    settings: object,
+    result: object,
+    outbound_only: bool,
+) -> bool:
+    """Return True when the poll cursor may advance past this message."""
+    status = getattr(result, "status", None)
+    if status == "outbound":
+        thread_id = getattr(result, "thread_id", None)
+        conversation_id = getattr(result, "conversation_id", None)
+        if thread_id and conversation_id:
+            try:
+                import uuid
+
+                from app.db.session import get_session_factory
+
+                await sent_reply_learning_service.run_catchup_after_outbound(
+                    redis=redis,
+                    settings=settings,  # type: ignore[arg-type]
+                    thread_id=uuid.UUID(thread_id),
+                    mailbox=mailbox,
+                    conversation_id=conversation_id,
+                    outbound_graph_message_id=message.id,
+                    session_factory=get_session_factory(),
+                )
+            except Exception:
+                logger.exception(
+                    "poll_sent_reply_catchup_failed",
+                    mailbox=mailbox,
+                    message_id=message.id,
+                )
+        return True
+    if not outbound_only and status in _TRIAGE_ELIGIBLE:
+        claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
+        if not claimed:
+            logger.info(
+                "poll_triage_skipped_lock_held",
+                mailbox=mailbox,
+                message_id=message.id,
+            )
+            return False
+        try:
+            triage_state = await pipeline_service.run_post_ingest_triage(
+                redis=redis,
+                settings=settings,
+                ingest_result=result,
+            )
+            if triage_state is not None:
+                await ingestion_service.complete_ingest_dedup(redis, mailbox, message.id)
+                return True
+            await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
+            return False
+        finally:
+            await ingestion_service.release_triage_lock(redis, mailbox, message.id, claimed)
+    return status not in {"in_flight", "skipped"}
+
+
+async def _process_one_poll_message(
+    *,
+    mailbox: str,
+    message: GraphMessageSchema,
+    redis: Redis,
+    graph_client: GraphClient,
+    settings: object,
+    session_factory: object,
+    outbound_only: bool,
+    advance_cursor: bool,
+    cursor_candidate: datetime | None,
+) -> tuple[bool, datetime | None]:
+    try:
+        result = await _ingest_poll_message(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            graph_client=graph_client,
+            session_factory=session_factory,
+            outbound_only=outbound_only,
+        )
+        may_advance = await _run_poll_triage_if_needed(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            settings=settings,
+            result=result,
+            outbound_only=outbound_only,
+        )
+        if not may_advance:
+            return False, cursor_candidate
+    except Exception:
+        # Triage lock (if claimed) is released in the inner ``finally`` with
+        # the owner token — do not unconditional DEL here.
+        await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
+        logger.exception(
+            "poll_ingest_failed",
+            mailbox=mailbox,
+            message_id=message.id,
+            outbound_only=outbound_only,
+        )
+        return False, cursor_candidate
+
+    if advance_cursor:
+        received = _normalize_received(message.received_date_time)
+        if received is not None and (cursor_candidate is None or received > cursor_candidate):
+            cursor_candidate = received
+    return advance_cursor, cursor_candidate
+
+
+def _resolve_poll_cursor(
+    *,
+    messages: list[GraphMessageSchema],
+    existing_cursor: datetime | None,
+    advance_cursor: bool,
+    cursor_candidate: datetime | None,
+    since: datetime,
+    now: datetime,
+) -> datetime:
+    if not messages:
+        return existing_cursor if existing_cursor is not None else now
+    if advance_cursor and cursor_candidate is not None:
+        return cursor_candidate + timedelta(seconds=1)
+    if cursor_candidate is not None:
+        return cursor_candidate
+    return existing_cursor if existing_cursor is not None else since
 
 
 async def poll_mailbox(
@@ -124,8 +308,10 @@ async def poll_mailbox(
     redis: Redis,
     graph_client: GraphClient,
     lookback_override: datetime | None = None,
+    folders: tuple[str, ...] | None = None,
+    outbound_only: bool = False,
 ) -> None:
-    """Poll inbox + junk messages since last_checked (or lookback) and ingest each.
+    """Poll mailbox folders since last_checked (or lookback) and ingest each.
 
     Cursor advances only through contiguous successes from the start of the
     ordered batch. A failed / in-flight message stops cursor advancement so it
@@ -140,10 +326,15 @@ async def poll_mailbox(
     watermark by 1 second past the last processed message so the next poll does
     not re-fetch that message. On partial failure, keep the exact success
     timestamp so same-second retries remain possible.
+
+    When ``outbound_only=True`` (Sent Items), messages are routed through
+    ``handle_outbound_notification`` (no triage) and use a separate Redis
+    cursor so inbound watermarks stay isolated.
     """
     settings = get_settings()
     now = datetime.now(UTC)
-    existing_cursor = await _read_cursor(redis, mailbox)
+    cursor_folder = _cursor_folder(outbound_only=outbound_only)
+    existing_cursor = await _read_cursor(redis, mailbox, folder=cursor_folder)
 
     if lookback_override is not None:
         since = lookback_override
@@ -153,11 +344,17 @@ async def poll_mailbox(
         since = now - timedelta(seconds=DEFAULT_POLL_LOOKBACK_SECONDS)
 
     filter_query = f"receivedDateTime ge {_to_graph_datetime(since)}"
+    if outbound_only:
+        poll_folders = folders if folders is not None else _POLL_OUTBOUND_FOLDERS
+    else:
+        poll_folders = folders if folders is not None else _POLL_INBOUND_FOLDERS
     logger.info(
         "poll_mailbox_start",
         mailbox=mailbox,
         since=_to_graph_datetime(since),
-        folders=_POLL_FOLDERS,
+        folders=poll_folders,
+        outbound_only=outbound_only,
+        cursor_folder=cursor_folder,
     )
 
     try:
@@ -165,6 +362,7 @@ async def poll_mailbox(
             mailbox,
             graph_client=graph_client,
             filter_query=filter_query,
+            folders=poll_folders,
         )
     except GraphClientError as exc:
         # Access denied / missing mailbox / transient Graph errors must not
@@ -173,6 +371,7 @@ async def poll_mailbox(
             "poll_mailbox_skipped_graph_error",
             mailbox=mailbox,
             error=str(exc),
+            outbound_only=outbound_only,
         )
         return
 
@@ -181,70 +380,29 @@ async def poll_mailbox(
     session_factory = get_session_factory()
 
     for message in messages:
-        try:
-            async with session_factory() as session, session.begin():
-                result = await ingestion_service.ingest_graph_message(
-                    session=session,
-                    redis=redis,
-                    graph_client=graph_client,
-                    mailbox=mailbox,
-                    message_id=message.id,
-                )
-            if result.status in _TRIAGE_ELIGIBLE:
-                claimed = await ingestion_service.claim_triage_lock(redis, mailbox, message.id)
-                if not claimed:
-                    logger.info(
-                        "poll_triage_skipped_lock_held",
-                        mailbox=mailbox,
-                        message_id=message.id,
-                    )
-                    advance_cursor = False
-                    continue
-                try:
-                    triage_state = await pipeline_service.run_post_ingest_triage(
-                        redis=redis,
-                        settings=settings,
-                        ingest_result=result,
-                    )
-                    if triage_state is not None:
-                        await ingestion_service.complete_ingest_dedup(redis, mailbox, message.id)
-                    else:
-                        await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
-                        advance_cursor = False
-                        continue
-                finally:
-                    await ingestion_service.release_triage_lock(redis, mailbox, message.id, claimed)
-            elif result.status == "in_flight" or result.status == "skipped":
-                advance_cursor = False
-                continue
-        except Exception:
-            # Triage lock (if claimed) is released in the inner ``finally`` with
-            # the owner token — do not unconditional DEL here.
-            await ingestion_service.release_ingest_dedup(redis, mailbox, message.id)
-            logger.exception(
-                "poll_ingest_failed",
-                mailbox=mailbox,
-                message_id=message.id,
-            )
-            advance_cursor = False
-            continue
+        advance_cursor, cursor_candidate = await _process_one_poll_message(
+            mailbox=mailbox,
+            message=message,
+            redis=redis,
+            graph_client=graph_client,
+            settings=settings,
+            session_factory=session_factory,
+            outbound_only=outbound_only,
+            advance_cursor=advance_cursor,
+            cursor_candidate=cursor_candidate,
+        )
 
-        if advance_cursor:
-            received = _normalize_received(message.received_date_time)
-            if received is not None and (cursor_candidate is None or received > cursor_candidate):
-                cursor_candidate = received
-
-    if not messages:
-        new_cursor = existing_cursor if existing_cursor is not None else now
-    elif advance_cursor and cursor_candidate is not None:
-        new_cursor = cursor_candidate + timedelta(seconds=1)
-    elif cursor_candidate is not None:
-        new_cursor = cursor_candidate
-    else:
-        new_cursor = existing_cursor if existing_cursor is not None else since
+    new_cursor = _resolve_poll_cursor(
+        messages=messages,
+        existing_cursor=existing_cursor,
+        advance_cursor=advance_cursor,
+        cursor_candidate=cursor_candidate,
+        since=since,
+        now=now,
+    )
 
     if existing_cursor is None or new_cursor >= existing_cursor:
-        await _write_cursor(redis, mailbox, new_cursor)
+        await _write_cursor(redis, mailbox, new_cursor, folder=cursor_folder)
 
     logger.info(
         "poll_mailbox_complete",
@@ -252,15 +410,22 @@ async def poll_mailbox(
         message_count=len(messages),
         cursor=_to_graph_datetime(new_cursor),
         cursor_advanced_fully=advance_cursor,
+        outbound_only=outbound_only,
+        cursor_folder=cursor_folder,
     )
 
 
 async def run_poll_all_mailboxes() -> None:
-    """Poll every configured mailbox concurrently (bounded by a semaphore).
+    """Poll every configured mailbox for inbound and Sent Items.
 
-    Uses a Redis NX lock so only one Uvicorn worker runs the poll interval.
-    Uses the process-scoped GraphClient singleton — do not aclose it here; the
-    FastAPI lifespan closes the shared pool on shutdown.
+    Uses a Redis owner-token lock so only one Uvicorn worker runs the poll
+    interval. TTL is sized for worst-case work and refreshed with a heartbeat;
+    the lock is released in ``finally`` so a finished leader does not block the
+    next interval. Uses the process-scoped GraphClient singleton — do not
+    aclose it here; the FastAPI lifespan closes the shared pool on shutdown.
+
+    Each mailbox is polled twice: inbox+junk (triage path), then sentitems
+    (outbound resolve path). Failures on one path do not skip the other.
     """
     settings = get_settings()
     if not settings.mailbox_list:
@@ -268,14 +433,46 @@ async def run_poll_all_mailboxes() -> None:
         return
 
     redis = await get_redis()
-    lock_ttl = max(settings.poll_interval_seconds - 5, 30)
-    # Owner-token NX lock (Redis lock pattern) — TTL alone releases; no unsafe DEL.
+    # Count target inbound+outbound plus reviewer Sent Items so Elise-style
+    # REVIEWER_MAILBOXES are not cut off when the lock TTL was sized for targets only.
+    work_units = max(
+        len(settings.mailbox_list) * 2 + len(settings.reviewer_mailbox_list),
+        1,
+    )
+    # TTL must exceed the critical section (Redis distributed lock guidance).
     # https://redis.io/docs/latest/develop/clients/patterns/distributed-locks/
+    lock_ttl = max(
+        settings.poll_interval_seconds * 2,
+        work_units * _POLL_LOCK_SECONDS_PER_MAILBOX,
+        300,
+    )
     token = await acquire_lock(redis, SCHEDULER_POLL_LOCK_KEY, ttl_seconds=lock_ttl)
     if token is None:
         logger.info("poll_skipped_not_leader")
         return
 
+    heartbeat_stop = asyncio.Event()
+
+    async def _heartbeat() -> None:
+        while not heartbeat_stop.is_set():
+            try:
+                await asyncio.wait_for(
+                    heartbeat_stop.wait(),
+                    timeout=_POLL_LOCK_HEARTBEAT_SECONDS,
+                )
+                return
+            except TimeoutError:
+                extended = await extend_lock(
+                    redis,
+                    SCHEDULER_POLL_LOCK_KEY,
+                    token,
+                    ttl_seconds=lock_ttl,
+                )
+                if not extended:
+                    logger.warning("poll_lock_heartbeat_lost")
+                    return
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
     auth = await get_graph_auth(settings, redis)
     graph_client = get_graph_client(auth)
     semaphore = asyncio.Semaphore(settings.poll_concurrency)
@@ -285,6 +482,55 @@ async def run_poll_all_mailboxes() -> None:
             try:
                 await poll_mailbox(mailbox, redis=redis, graph_client=graph_client)
             except Exception:
-                logger.exception("poll_mailbox_failed", mailbox=mailbox)
+                logger.exception(
+                    "poll_mailbox_failed",
+                    mailbox=mailbox,
+                    path="inbound",
+                )
+            try:
+                await poll_mailbox(
+                    mailbox,
+                    redis=redis,
+                    graph_client=graph_client,
+                    folders=_POLL_OUTBOUND_FOLDERS,
+                    outbound_only=True,
+                )
+            except Exception:
+                logger.exception(
+                    "poll_mailbox_failed",
+                    mailbox=mailbox,
+                    path="outbound",
+                )
 
-    await asyncio.gather(*(_poll_one(mailbox) for mailbox in settings.mailbox_list))
+    async def _poll_reviewer_sent(mailbox: str) -> None:
+        async with semaphore:
+            try:
+                await poll_mailbox(
+                    mailbox,
+                    redis=redis,
+                    graph_client=graph_client,
+                    folders=_POLL_OUTBOUND_FOLDERS,
+                    outbound_only=True,
+                )
+            except Exception:
+                logger.exception(
+                    "poll_mailbox_failed",
+                    mailbox=mailbox,
+                    path="reviewer_outbound",
+                )
+
+    try:
+        logger.info(
+            "poll_cycle_start",
+            target_mailboxes=len(settings.mailbox_list),
+            reviewer_mailboxes=len(settings.reviewer_mailbox_list),
+            poll_concurrency=settings.poll_concurrency,
+        )
+        await asyncio.gather(
+            *(_poll_one(mailbox) for mailbox in settings.mailbox_list),
+            *(_poll_reviewer_sent(mailbox) for mailbox in settings.reviewer_mailbox_list),
+        )
+    finally:
+        heartbeat_stop.set()
+        await heartbeat_task
+        await release_lock(redis, SCHEDULER_POLL_LOCK_KEY, token)

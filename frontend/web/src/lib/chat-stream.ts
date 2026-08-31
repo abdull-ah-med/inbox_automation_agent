@@ -1,0 +1,116 @@
+import type { ChatCitation } from "@/lib/types"
+
+export type ChatGroundedVerifier = "SUPPORTED" | "UNSUPPORTED" | "SKIPPED" | "UNKNOWN"
+
+export type ChatStreamMeta = {
+  type: "meta"
+  citations: ChatCitation[]
+  retrieval_count: number
+  mailbox: string | null
+  refused_write: boolean
+  cached?: boolean
+  cache_similarity?: number | null
+  grounded_verifier?: ChatGroundedVerifier
+}
+
+export type ChatStreamEvent =
+  | ChatStreamMeta
+  | { type: "delta"; text: string }
+  | { type: "done"; grounded_verifier?: ChatGroundedVerifier }
+  | { type: "error"; message: string; partial?: boolean }
+  | { type: "status"; text: string }
+
+export type ChatStreamHandlers = {
+  onMeta?: (meta: ChatStreamMeta) => void
+  onDelta?: (text: string) => void
+  onDone?: (groundedVerifier?: ChatGroundedVerifier) => void
+  onError?: (message: string) => void
+  onStatus?: (text: string) => void
+}
+
+const asGroundedVerifier = (value: unknown): ChatGroundedVerifier | undefined =>
+  value === "SUPPORTED" || value === "UNSUPPORTED" || value === "SKIPPED" || value === "UNKNOWN"
+    ? value
+    : undefined
+
+export const parseChatStreamEvent = (block: string): ChatStreamEvent | null => {
+  const data = block
+    .split("\n")
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n")
+  if (!data) return null
+  try {
+    const parsed = JSON.parse(data) as { type?: unknown }
+    if (parsed.type === "delta") {
+      const text = (parsed as { text?: unknown }).text
+      if (typeof text !== "string") return null
+      return { type: "delta", text }
+    }
+    if (parsed.type === "done") {
+      const groundedVerifier = asGroundedVerifier(
+        (parsed as { grounded_verifier?: unknown }).grounded_verifier,
+      )
+      return groundedVerifier
+        ? { type: "done", grounded_verifier: groundedVerifier }
+        : { type: "done" }
+    }
+    if (parsed.type === "error") {
+      const message = (parsed as { message?: unknown }).message
+      if (typeof message !== "string") return null
+      const partial = (parsed as { partial?: unknown }).partial
+      return {
+        type: "error",
+        message,
+        partial: partial === true,
+      }
+    }
+    if (parsed.type === "status") {
+      const text = (parsed as { text?: unknown }).text
+      if (typeof text !== "string") return null
+      return { type: "status", text }
+    }
+    if (parsed.type === "meta") {
+      const meta = parsed as ChatStreamMeta
+      return {
+        type: "meta",
+        citations: Array.isArray(meta.citations) ? meta.citations : [],
+        retrieval_count: typeof meta.retrieval_count === "number" ? meta.retrieval_count : 0,
+        mailbox: meta.mailbox ?? null,
+        refused_write: meta.refused_write,
+        cached: Boolean(meta.cached),
+        cache_similarity: typeof meta.cache_similarity === "number" ? meta.cache_similarity : null,
+        grounded_verifier: asGroundedVerifier(meta.grounded_verifier),
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+export const dispatchChatStreamBlock = (
+  block: string,
+  handlers: ChatStreamHandlers,
+): "done" | "error" | "continue" => {
+  const event = parseChatStreamEvent(block)
+  if (event === null) return "continue"
+  if (event.type === "meta") {
+    handlers.onMeta?.(event)
+    return "continue"
+  }
+  if (event.type === "delta") {
+    handlers.onDelta?.(event.text)
+    return "continue"
+  }
+  if (event.type === "error") {
+    handlers.onError?.(event.message)
+    return "error"
+  }
+  if (event.type === "status") {
+    handlers.onStatus?.(event.text)
+    return "continue"
+  }
+  handlers.onDone?.(event.grounded_verifier)
+  return "done"
+}

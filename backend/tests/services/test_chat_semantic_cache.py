@@ -1,0 +1,770 @@
+"""Chat semantic cache: skip LLM on hit; never store refusals or no-match."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from app.core.config import Settings
+from app.llm.chat import ChatAgentResult
+from app.llm.chat_prompts import NO_MATCH_ANSWER, WRITE_REFUSAL_ANSWER
+from app.models.schemas.search import SearchHit, SearchResponse
+
+SALES = "sales@example.com"
+THREAD_A = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+USER = "user-sub-1"
+NEAR = [0.96] + [0.0] * 1535
+NEAR[1] = 0.28
+
+
+def _settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "environment": "local",
+        "jwt_secret": "c" * 64,
+        "frontend_origin": "http://localhost:3000",
+        "cookie_secure": False,
+        "target_mailboxes": SALES,
+        "anthropic_api_key": "sk-ant-test",
+        "openai_api_key": "sk-test",
+        "chat_model": "claude-haiku-4-5",
+        "classification_model": "claude-haiku-4-5",
+        "chat_semantic_cache_enabled": True,
+        "database_url": ("postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"),
+        "redis_url": "redis://localhost:6379/15",
+    }
+    values.update(overrides)
+    return Settings(**values)  # type: ignore[arg-type]
+
+
+def _hit() -> SearchHit:
+    return SearchHit(
+        thread_id=THREAD_A,
+        mailbox=SALES,
+        conversation_id="conv-a",
+        subject="Invoice dispute — overdue billing",
+        state="REQUIRES_HUMAN",
+        urgency="HIGH",
+        snippet="Please review the overdue billing packet.",
+        score=0.02,
+        last_message_at=datetime(2026, 8, 5, 15, 0, tzinfo=UTC),
+    )
+
+
+class _CacheHit:
+    def __init__(self) -> None:
+        self.response_json = {
+            "answer": "Focus on Invoice dispute — overdue billing.",
+            "citations": [
+                {
+                    "thread_id": str(THREAD_A),
+                    "mailbox": SALES,
+                    "subject": "Invoice dispute — overdue billing",
+                    "state": "REQUIRES_HUMAN",
+                    "urgency": "HIGH",
+                    "snippet": "Please review the overdue billing packet.",
+                    "url_path": f"/threads/{THREAD_A}",
+                }
+            ],
+            "retrieval_count": 1,
+            "mailbox": SALES,
+            "refused_write": False,
+        }
+        self.similarity = 0.96
+        self.id = uuid.uuid4()
+        self.citation_thread_ids: list[uuid.UUID] = []
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_skips_llm_call() -> None:
+    from app.services import chat_service
+
+    cached = _CacheHit()
+    anthropic = MagicMock()
+    anthropic.messages.create = AsyncMock(
+        side_effect=AssertionError("cache hit must not call Claude")
+    )
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=cached),
+        ),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(side_effect=AssertionError("cache hit must not run agent")),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=anthropic,
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    assert result.cached is True
+    assert result.cache_similarity == pytest.approx(0.96)
+    assert result.answer == "Focus on Invoice dispute — overdue billing."
+    assert result.citations[0].thread_id == THREAD_A
+
+
+@pytest.mark.asyncio
+async def test_no_match_response_is_never_cached() -> None:
+    from app.services import chat_service
+
+    store = AsyncMock()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", store),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(return_value=ChatAgentResult(answer="", hits=[])),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="zzzxxyy no such vendor",
+            user_key=USER,
+        )
+
+    assert result.answer != ""
+    assert NO_MATCH_ANSWER.split(".")[0] in result.answer or "no matching" in result.answer.lower()
+    store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_write_refusal_is_never_cached() -> None:
+    from app.services import chat_service
+
+    store = AsyncMock()
+    with (
+        patch(
+            "app.services.chat_service.search_service.search_threads",
+            AsyncMock(return_value=SearchResponse(query="approve this", mailbox=SALES, hits=[])),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", store),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(side_effect=AssertionError("write intent must not call agent")),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="approve this and send",
+            user_key=USER,
+        )
+
+    assert WRITE_REFUSAL_ANSWER in result.answer
+    store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_verdict_answer_is_never_cached() -> None:
+    """H2: fail-closed. A cache HIT skips verify_grounded entirely, so an
+    UNSUPPORTED answer that slipped into the cache would be served,
+    unverified, to every asker for the rest of its TTL.
+    """
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    store = AsyncMock()
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", store),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Ashley signed the deal on Aug 12.",
+                    hits=[hit],
+                )
+            ),
+        ),
+        patch(
+            "app.services.chat_service.verify_grounded",
+            AsyncMock(
+                return_value=Groundedness(verdict="UNSUPPORTED", unsupported_spans=["Aug 12"])
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(chat_groundedness_enabled=True),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="when did Ashley sign",
+            user_key=USER,
+        )
+
+    assert result.grounded_verifier == "UNSUPPORTED"
+    store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unknown_verdict_answer_is_never_cached() -> None:
+    """H2: a verifier timeout/parse-failure (UNKNOWN) must not be treated as
+    good enough to cache — we have no evidence the answer is grounded.
+    """
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    store = AsyncMock()
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", store),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Ashley signed the deal on Aug 12.",
+                    hits=[hit],
+                )
+            ),
+        ),
+        patch(
+            "app.services.chat_service.verify_grounded",
+            AsyncMock(return_value=Groundedness(verdict="UNKNOWN", unsupported_spans=[])),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(chat_groundedness_enabled=True),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="when did Ashley sign",
+            user_key=USER,
+        )
+
+    assert result.grounded_verifier == "UNKNOWN"
+    store.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_with_unsupported_verdict_is_treated_as_miss() -> None:
+    """H2: even if an unverified answer somehow reached the cache table
+    (legacy row, race, manual insert), serving it back as a HIT would bypass
+    verify_grounded forever within the TTL. Reading it must fall through to a
+    fresh agent run instead.
+    """
+    from app.services import chat_service
+
+    cached = _CacheHit()
+    cached.response_json["grounded_verifier"] = "UNSUPPORTED"
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=cached),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Focus on Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+    assert "Invoice dispute" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_bypass_cache_skips_lookup_and_store() -> None:
+    from app.services import chat_service
+
+    lookup = AsyncMock()
+    store = AsyncMock()
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.find_semantic_hit", lookup),
+        patch("app.services.chat_service.chat_cache_repo.store", store),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Focus on Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="what should I focus on today",
+            user_key=USER,
+            bypass_cache=True,
+        )
+
+    assert result.cached is False
+    lookup.assert_not_awaited()
+    store.assert_not_awaited()
+    assert "Invoice dispute" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_follow_up_intent_skips_semantic_cache_embed() -> None:
+    """Deterministic get_thread asks never cache-hit; skip the OpenAI embed."""
+    from app.models.schemas.chat import ChatCitedThread, ChatHistoryTurn
+    from app.services import chat_service
+
+    embed = AsyncMock(side_effect=AssertionError("must not embed for follow-up"))
+    hit = _hit()
+    with (
+        patch("app.services.chat_service.embedding_service.embed_text", embed),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="The overdue billing packet still needs review.",
+                    hits=[hit],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="tell me more about the first one",
+            user_key=USER,
+            history=[
+                ChatHistoryTurn(role="user", content="billing disputes waiting on review"),
+                ChatHistoryTurn(
+                    role="assistant",
+                    content="The overdue billing dispute is waiting on review.",
+                    citations=[
+                        ChatCitedThread(thread_id=hit.thread_id, subject=hit.subject),
+                    ],
+                ),
+            ],
+        )
+
+    assert result.cached is False
+    embed.assert_not_awaited()
+    assert "overdue billing" in result.answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_overview_intent_skips_semantic_cache_embed() -> None:
+    from app.services import chat_service
+
+    embed = AsyncMock(side_effect=AssertionError("must not embed for overview"))
+    with (
+        patch("app.services.chat_service.embedding_service.embed_text", embed),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="There are three threads waiting.",
+                    hits=[],
+                    grounded=True,
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            AsyncMock(),
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="what should I focus on today?",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+    embed.assert_not_awaited()
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_ask_persists_cache_row_across_requests(db_session, migrated_test_database) -> None:
+    """B5: get_db_session never commits; a second, independent connection
+    must be able to see the cache row `ask` wrote — proof the write survived
+    the request-scoped session's implicit rollback-on-close.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.services import chat_service
+
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Focus on Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+
+    other_engine = create_async_engine(migrated_test_database, pool_pre_ping=True)
+    try:
+        other_factory = async_sessionmaker(other_engine)
+        async with other_factory() as other_session:
+            rows = (
+                await other_session.execute(
+                    text(
+                        "SELECT mailbox_key, COUNT(*) "
+                        "FROM chat_response_cache "
+                        "WHERE user_key = :uk "
+                        "GROUP BY mailbox_key"
+                    ),
+                    {"uk": USER},
+                )
+            ).all()
+    finally:
+        await other_engine.dispose()
+
+    assert len(rows) == 1
+    mailbox_key, row_count = rows[0]
+    assert row_count == 1
+    assert mailbox_key != ""
+    assert str(mailbox_key).startswith("all:")
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
+async def test_cache_lookup_missing_table_does_not_block_search(db_session) -> None:
+    """Production is still on 029; cache lookup must not abort the ask session."""
+    from sqlalchemy import text
+
+    from app.core.exceptions import SearchError
+    from app.services import chat_service, search_service
+
+    async def missing_table(*_args, **_kwargs):
+        await db_session.execute(text("SELECT 1 FROM chat_response_cache_missing"))
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            missing_table,
+        ),
+    ):
+        cached, _embedding = await chat_service._lookup_semantic_cache(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            message="give me the latest on omason",
+            mailbox=None,
+            user_key=USER,
+            bypass_cache=False,
+        )
+
+    assert cached is None
+
+    try:
+        result = await search_service.search_threads(
+            db_session,
+            _settings(openai_api_key=""),
+            openai_client=None,
+            query="omason",
+            mailbox=None,
+            limit=5,
+            mode="keyword",
+            allow_empty=True,
+        )
+    except SearchError as exc:
+        pytest.fail(f"cache lookup poisoned search: {exc}")
+
+    assert result.hits == []
+
+
+@pytest.mark.asyncio
+async def test_two_users_no_cross_talk_on_all_mailboxes(db_session) -> None:
+    """H9: unscoped (mailbox=None) cache rows must not leak across users.
+
+    Independent oracle: user A stored 'Alice only'; user B's lookup of the
+    same question with mailbox=None must not return that answer.
+    """
+    from datetime import timedelta
+
+    from app.repositories import chat_cache_repo
+    from app.services import chat_service
+
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key="",
+        user_key="user-a",
+        query_normalized=chat_cache_repo.normalize_chat_query("billing disputes waiting on review"),
+        query_embedding=NEAR,
+        response_json={
+            "answer": "Alice only — Invoice dispute.",
+            "citations": [],
+            "retrieval_count": 1,
+            "mailbox": None,
+            "refused_write": False,
+        },
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Bob's own overdue billing packet.",
+                    hits=[_hit()],
+                )
+            ),
+        ),
+    ):
+        result = await chat_service.ask(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            mailbox=None,
+            user_key="user-b",
+        )
+
+    assert "Alice only" not in result.answer
+    assert result.cached is False
+
+
+@pytest.mark.asyncio
+async def test_unscoped_cache_does_not_survive_mailbox_allowlist_change(
+    db_session,
+) -> None:
+    """H9: mailbox=None must not share the empty-string cache bucket.
+
+    Seed a row the way the old keying stored unscoped asks (mailbox_key='').
+    A lookup with mailbox=None for the same user must miss so a different
+    TARGET_MAILBOXES set cannot inherit that answer.
+    """
+    from datetime import timedelta
+
+    from app.repositories import chat_cache_repo
+    from app.services import chat_service
+
+    expires = datetime.now(UTC) + timedelta(minutes=20)
+    await chat_cache_repo.store(
+        db_session,
+        mailbox_key="",
+        user_key=USER,
+        query_normalized=chat_cache_repo.normalize_chat_query("billing disputes waiting on review"),
+        query_embedding=NEAR,
+        response_json={
+            "answer": "Stale all-mailbox answer.",
+            "citations": [],
+            "retrieval_count": 1,
+            "mailbox": None,
+            "refused_write": False,
+        },
+        citation_thread_ids=[THREAD_A],
+        expires_at=expires,
+    )
+    await db_session.commit()
+
+    with patch(
+        "app.services.chat_service.embedding_service.embed_text",
+        AsyncMock(return_value=NEAR),
+    ):
+        cached, _embedding = await chat_service._lookup_semantic_cache(
+            db_session,
+            _settings(),
+            openai_client=MagicMock(),
+            message="billing disputes waiting on review",
+            mailbox=None,
+            user_key=USER,
+            bypass_cache=False,
+        )
+
+    assert cached is None
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_with_missing_cited_thread_is_miss() -> None:
+    """H19: a cached answer whose cited thread is gone must not be served."""
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    cached = _CacheHit()
+    cached.citation_thread_ids = [THREAD_A]
+    session = AsyncMock()
+    empty = MagicMock()
+    empty.all.return_value = []
+    session.execute = AsyncMock(return_value=empty)
+    hit = _hit()
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=cached),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.invalidate_for_threads",
+            AsyncMock(return_value=1),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="Fresh look at Invoice dispute — overdue billing.",
+                    hits=[hit],
+                )
+            ),
+        ),
+        patch(
+            "app.services.chat_service.verify_grounded",
+            AsyncMock(return_value=Groundedness(verdict="SUPPORTED", unsupported_spans=[])),
+        ),
+    ):
+        result = await chat_service.ask(
+            session,
+            _settings(),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    assert result.cached is False
+    assert result.answer == "Fresh look at Invoice dispute — overdue billing."
+
+
+@pytest.mark.asyncio
+async def test_groundedness_uses_search_result_blocks_not_ui_snippets() -> None:
+    """H24: verifier must see the packed search_result blocks, not UI snippets."""
+    from app.llm.chat_tools import search_results_from_hits
+    from app.llm.groundedness import Groundedness
+    from app.services import chat_service
+
+    hit = _hit()
+    blocks = search_results_from_hits([hit])
+    captured: dict[str, object] = {}
+
+    async def _capture(answer: str, citations: object, **_kwargs: object) -> Groundedness:
+        _ = answer
+        captured["citations"] = citations
+        return Groundedness(verdict="SUPPORTED", unsupported_spans=[])
+
+    with (
+        patch(
+            "app.services.chat_service.embedding_service.embed_text",
+            AsyncMock(return_value=NEAR),
+        ),
+        patch(
+            "app.services.chat_service.chat_cache_repo.find_semantic_hit",
+            AsyncMock(return_value=None),
+        ),
+        patch("app.services.chat_service.chat_cache_repo.store", AsyncMock()),
+        patch(
+            "app.services.chat_service.run_chat_agent",
+            AsyncMock(
+                return_value=ChatAgentResult(
+                    answer="The overdue billing packet still needs review.",
+                    hits=[hit],
+                    grounded=True,
+                    evidence_blocks=blocks,
+                )
+            ),
+        ),
+        patch("app.services.chat_service.verify_grounded", side_effect=_capture),
+    ):
+        await chat_service.ask(
+            AsyncMock(),
+            _settings(chat_groundedness_enabled=True),
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+            message="billing disputes waiting on review",
+            user_key=USER,
+        )
+
+    citations = captured["citations"]
+    assert isinstance(citations, list)
+    assert citations
+    assert citations[0]["type"] == "search_result"
+    assert citations[0]["title"] == "Invoice dispute — overdue billing"

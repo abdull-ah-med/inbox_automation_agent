@@ -17,6 +17,7 @@ def _embedding_row(**overrides: object) -> MagicMock:
     row.mailbox = overrides.get("mailbox", "elise@example.com")
     row.reply_text = overrides.get("reply_text", "Thanks — sending now.")
     row.original_email_preview = overrides.get("original_email_preview")
+    row.learning_note = overrides.get("learning_note")
     row.is_excluded = overrides.get("is_excluded", False)
     row.created_at = overrides.get("created_at")
     return row
@@ -119,7 +120,6 @@ async def test_find_similar_with_mailbox() -> None:
         limit=3,
     )
     assert texts == ["Similar reply"]
-    session.execute.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -143,11 +143,16 @@ async def test_find_similar_without_mailbox() -> None:
 @pytest.mark.asyncio
 async def test_set_excluded_updates_row() -> None:
     reply_id = uuid.uuid4()
+    thread_id = uuid.uuid4()
     updated = _embedding_row(id=reply_id, is_excluded=True)
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = updated
+    update_result = MagicMock()
+    update_result.scalar_one_or_none.return_value = updated
+    list_result = MagicMock()
+    list_result.all.return_value = [
+        (updated, thread_id, "Re: Quote", "similar", "kelvin@example.com"),
+    ]
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=result)
+    session.execute = AsyncMock(side_effect=[update_result, list_result])
     session.flush = AsyncMock()
 
     stored = await reply_embedding_repo.set_excluded(
@@ -157,6 +162,8 @@ async def test_set_excluded_updates_row() -> None:
     )
     assert stored is not None
     assert stored.is_excluded is True
+    assert stored.thread_id == thread_id
+    assert stored.draft_subject == "Re: Quote"
     session.flush.assert_awaited_once()
 
 
@@ -181,10 +188,26 @@ async def test_set_excluded_missing_returns_none() -> None:
 async def test_list_reply_embeddings() -> None:
     rows = [_embedding_row(), _embedding_row(is_excluded=True)]
     result = MagicMock()
-    result.scalars.return_value.all.return_value = rows
+    result.all.return_value = [
+        (rows[0], uuid.uuid4(), "First subject", "once", "a@example.com"),
+        (rows[1], uuid.uuid4(), "Second subject", None, None),
+    ]
     session = AsyncMock()
     session.execute = AsyncMock(return_value=result)
 
-    listed = await reply_embedding_repo.list_reply_embeddings(session, limit=10)
+    listed = await reply_embedding_repo.list_reply_embeddings(
+        session,
+        mailbox="elise@example.com",
+        limit=10,
+    )
     assert len(listed) == 2
+    assert listed[0].draft_subject == "First subject"
     assert listed[1].is_excluded is True
+
+
+@pytest.mark.asyncio
+async def test_missing_mailbox_returns_empty_or_raises() -> None:
+    """H13: listing without a mailbox must not return cross-tenant rows."""
+    session = AsyncMock()
+    with pytest.raises(ValueError, match="mailbox is required"):
+        await reply_embedding_repo.list_reply_embeddings(session, mailbox="")

@@ -36,3 +36,12 @@ def test_build_embedding_source_handles_empty_body() -> None:
         body="   ",
     )
     assert text == "demo-skill\n\nOnly description"
+
+
+def test_pre_import_duplicate_check_uses_name_and_description_only() -> None:
+    """Pre-import similarity uses the same builder without body (single source)."""
+    text = build_embedding_source(
+        name="samplelab-rebilling",
+        description="Rebill SampleLab invoices correctly",
+    )
+    assert text == "samplelab-rebilling\n\nRebill SampleLab invoices correctly"

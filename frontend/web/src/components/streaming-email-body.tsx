@@ -1,0 +1,52 @@
+"use client"
+
+import { EmailBody } from "@/components/email-body"
+import { useSmoothStreamText } from "@/hooks/use-smooth-stream-text"
+import type { ChatCitation } from "@/lib/types"
+import { cn } from "@/lib/utils"
+
+type StreamingEmailBodyProps = {
+  text: string
+  streaming?: boolean
+  className?: string
+  citations?: ChatCitation[]
+}
+
+const OPENING_FENCE = /^```[\w+-]*[ \t]*\r?\n?/
+const CLOSING_FENCE = /\r?\n?```[ \t]*\s*$/
+
+const unwrapWrappingFence = (text: string): string => {
+  const stripped = text.trimStart()
+  if (!stripped.startsWith("```")) return text
+  return stripped.replace(OPENING_FENCE, "").replace(CLOSING_FENCE, "")
+}
+
+/**
+ * Renders an InboxAssistant answer with ChatGPT-style smooth character reveal
+ * while tokens are still arriving (or catching up after the stream ends).
+ * Citation markers like [1] link to the matching thread when citations are passed.
+ */
+export const StreamingEmailBody = ({
+  text,
+  streaming = false,
+  className,
+  citations,
+}: StreamingEmailBodyProps) => {
+  const { visible, animating } = useSmoothStreamText(unwrapWrappingFence(text), streaming)
+
+  return (
+    <EmailBody
+      text={visible}
+      citations={citations}
+      className={cn("wrap-anywhere text-foreground dark:text-foreground", className)}
+      trailing={
+        animating ? (
+          <span
+            aria-label="Generating answer"
+            className="bg-foreground ml-0.5 inline-block h-[1.05em] w-0.5 translate-y-0.5 align-text-bottom motion-safe:animate-pulse"
+          />
+        ) : null
+      }
+    />
+  )
+}

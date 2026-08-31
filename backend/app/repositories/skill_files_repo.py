@@ -77,28 +77,6 @@ async def list_by_skill(
     return [_to_meta(row) for row in result.scalars().all()]
 
 
-async def list_reference_paths(
-    session: AsyncSession,
-    skill_ids: list[uuid.UUID],
-) -> dict[uuid.UUID, list[str]]:
-    """Return reference relative_paths keyed by skill_id."""
-    if not skill_ids:
-        return {}
-    stmt = (
-        select(SkillFile.skill_id, SkillFile.relative_path)
-        .where(
-            SkillFile.skill_id.in_(skill_ids),
-            SkillFile.kind == "reference",
-        )
-        .order_by(SkillFile.relative_path.asc())
-    )
-    result = await session.execute(stmt)
-    out: dict[uuid.UUID, list[str]] = {sid: [] for sid in skill_ids}
-    for skill_id, relative_path in result.all():
-        out.setdefault(skill_id, []).append(relative_path)
-    return out
-
-
 async def get_by_path(
     session: AsyncSession,
     *,

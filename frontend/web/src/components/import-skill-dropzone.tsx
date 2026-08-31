@@ -3,7 +3,13 @@
 import { useRef, useState } from "react"
 import { FileArchive, Upload } from "lucide-react"
 
+import { DuplicateSkillDialog, ImportSkillResultCard } from "@/components/import-skill-parts"
 import { Button } from "@/components/ui/button"
+import {
+  SkillDuplicateCandidatesError,
+  type ImportSkillOptions,
+  type SkillDuplicateCandidate,
+} from "@/lib/api-client"
 import type { ImportSkillResult } from "@/lib/types"
 
 export const MAX_SKILL_ARCHIVE_BYTES = 10 * 1024 * 1024
@@ -15,9 +21,7 @@ export const isAcceptedSkillArchive = (file: File): boolean => {
   return ACCEPTED_EXTENSIONS.some((ext) => lower.endsWith(ext))
 }
 
-export const validateSkillArchiveClient = (
-  file: File,
-): string | null => {
+export const validateSkillArchiveClient = (file: File): string | null => {
   if (!isAcceptedSkillArchive(file)) {
     return "Upload a .zip or .skill archive"
   }
@@ -33,7 +37,7 @@ export const validateSkillArchiveClient = (
 type ImportSkillDropzoneProps = {
   disabled?: boolean
   isPending?: boolean
-  onImport: (file: File) => Promise<ImportSkillResult>
+  onImport: (file: File, options?: ImportSkillOptions) => Promise<ImportSkillResult>
   onImported?: (result: ImportSkillResult) => void
 }
 
@@ -48,9 +52,14 @@ export const ImportSkillDropzone = ({
   const [clientError, setClientError] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
   const [result, setResult] = useState<ImportSkillResult | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [candidates, setCandidates] = useState<SkillDuplicateCandidate[]>([])
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [newName, setNewName] = useState("")
+  const [retryPending, setRetryPending] = useState(false)
 
   const handlePickClick = () => {
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     inputRef.current?.click()
   }
 
@@ -61,8 +70,17 @@ export const ImportSkillDropzone = ({
     }
   }
 
-  const handleFile = async (file: File | null) => {
-    if (!file || disabled || isPending) return
+  const handleImportSuccess = (imported: ImportSkillResult) => {
+    setResult(imported)
+    onImported?.(imported)
+    setDialogOpen(false)
+    setPendingFile(null)
+    setCandidates([])
+    setNewName("")
+  }
+
+  const handleFile = async (file: File | null, options?: ImportSkillOptions) => {
+    if (!file || disabled || isPending || retryPending) return
     setClientError(null)
     setServerError(null)
     setResult(null)
@@ -74,14 +92,18 @@ export const ImportSkillDropzone = ({
     }
 
     try {
-      const imported = await onImport(file)
-      setResult(imported)
-      onImported?.(imported)
+      const imported = await onImport(file, options)
+      handleImportSuccess(imported)
     } catch (error) {
+      if (error instanceof SkillDuplicateCandidatesError) {
+        setPendingFile(file)
+        setCandidates(error.candidates)
+        setNewName("")
+        setDialogOpen(true)
+        return
+      }
       const message =
-        error instanceof Error && error.message.trim()
-          ? error.message
-          : "Import failed"
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
       setServerError(message)
     }
   }
@@ -94,7 +116,7 @@ export const ImportSkillDropzone = ({
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     setDragging(true)
   }
 
@@ -106,12 +128,65 @@ export const ImportSkillDropzone = ({
   const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
     setDragging(false)
-    if (disabled || isPending) return
+    if (disabled || isPending || retryPending) return
     const file = event.dataTransfer.files?.[0] ?? null
     void handleFile(file)
   }
 
-  const busy = disabled || isPending
+  const handleOverwrite = async (candidateId: string) => {
+    if (!pendingFile) return
+    setRetryPending(true)
+    setServerError(null)
+    try {
+      const imported = await onImport(pendingFile, {
+        overwrite: true,
+        overwriteSkillId: candidateId,
+      })
+      handleImportSuccess(imported)
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
+      setServerError(message)
+    } finally {
+      setRetryPending(false)
+    }
+  }
+
+  const handleCreateAsNew = async () => {
+    if (!pendingFile) return
+    const trimmed = newName.trim()
+    if (!trimmed) {
+      setServerError("Enter a new skill name to create alongside the similar skill")
+      return
+    }
+    setRetryPending(true)
+    setServerError(null)
+    try {
+      const imported = await onImport(pendingFile, {
+        overwrite: false,
+        nameOverride: trimmed,
+      })
+      handleImportSuccess(imported)
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim() ? error.message : "Import failed"
+      setServerError(message)
+    } finally {
+      setRetryPending(false)
+    }
+  }
+
+  const handleDialogOpenChange = (open: boolean) => {
+    if (retryPending) return
+    setDialogOpen(open)
+    if (!open) {
+      setPendingFile(null)
+      setCandidates([])
+      setNewName("")
+    }
+  }
+
+  const busy = disabled || isPending || retryPending
 
   return (
     <div className="space-y-3">
@@ -120,7 +195,7 @@ export const ImportSkillDropzone = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         className={[
-          "rounded-lg border border-dashed p-6 transition-colors",
+          "rounded-xl border border-dashed p-6 transition-colors",
           dragging
             ? "border-blue-500 bg-blue-50 dark:bg-blue-950/30"
             : "border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-950/40",
@@ -128,17 +203,14 @@ export const ImportSkillDropzone = ({
         ].join(" ")}
       >
         <div className="flex flex-col items-center gap-3 text-center">
-          <FileArchive
-            className="size-8 text-gray-400"
-            aria-hidden="true"
-          />
+          <FileArchive className="text-muted-foreground size-8" aria-hidden="true" />
           <div>
             <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
               Import Claude Skill
             </p>
             <p className="mt-1 text-xs text-gray-500">
-              Drop a .zip or .skill archive (max 10 MB). Scripts are skipped —
-              this app never executes imported code.
+              Drop a .zip or .skill archive (max 10 MB). Scripts are skipped — this app never
+              executes imported code.
             </p>
           </div>
           <Button
@@ -152,7 +224,7 @@ export const ImportSkillDropzone = ({
             onKeyDown={handlePickKeyDown}
           >
             <Upload aria-hidden="true" />
-            {isPending ? "Importing…" : "Choose file"}
+            {isPending || retryPending ? "Importing…" : "Choose file"}
           </Button>
           <input
             ref={inputRef}
@@ -177,53 +249,22 @@ export const ImportSkillDropzone = ({
         </p>
       ) : null}
 
-      {result ? (
-        <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-900">
-          <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-            Imported {result.name}
-            {result.overwritten ? " (overwritten)" : ""}
-          </p>
-          {result.description ? (
-            <p className="mt-1 text-sm text-gray-500">{result.description}</p>
-          ) : null}
-          {result.reference_files.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
-                Reference files
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-300">
-                {result.reference_files.map((path) => (
-                  <li key={path}>{path}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.asset_files.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">
-                Assets
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-gray-700 dark:text-gray-300">
-                {result.asset_files.map((path) => (
-                  <li key={path}>{path}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-          {result.warnings.length > 0 ? (
-            <div className="mt-3">
-              <p className="text-xs font-semibold tracking-wide text-amber-700 uppercase dark:text-amber-400">
-                Warnings
-              </p>
-              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm text-amber-800 dark:text-amber-300">
-                {result.warnings.map((warning) => (
-                  <li key={warning}>{warning}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      {result ? <ImportSkillResultCard result={result} /> : null}
+
+      <DuplicateSkillDialog
+        open={dialogOpen}
+        onOpenChange={handleDialogOpenChange}
+        candidates={candidates}
+        newName={newName}
+        onNewNameChange={setNewName}
+        retryPending={retryPending}
+        onOverwrite={(candidateId) => {
+          void handleOverwrite(candidateId)
+        }}
+        onCreateAsNew={() => {
+          void handleCreateAsNew()
+        }}
+      />
     </div>
   )
 }

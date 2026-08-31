@@ -60,6 +60,70 @@ async def test_get_message_calls_correct_url(client: GraphClient) -> None:
     assert args[1] == (f"{GRAPH_BASE_URL}/users/user%40example.com/messages/msg-1")
     assert kwargs["headers"]["Authorization"] == "Bearer test-token"
     assert 'outlook.body-content-type="text"' in kwargs["headers"]["Prefer"]
+    assert "uniqueBody" in kwargs["params"]["$select"]
+    select = kwargs["params"]["$select"]
+    assert "microsoft.graph.eventMessage/meetingMessageType" in select
+    assert "microsoft.graph.eventMessageResponse/responseType" in select
+    assert "internetMessageHeaders" in select
+
+
+@pytest.mark.asyncio
+async def test_get_message_html_prefers_html_and_selects_body_only(client: GraphClient) -> None:
+    """Outlook View fetches filtered HTML — never Prefer text or allow-unsafe-html."""
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"{}"
+    response.json.return_value = {
+        "id": "msg-html-1",
+        "body": {"contentType": "html", "content": "<b>Invoice</b>"},
+        "uniqueBody": {"contentType": "html", "content": "<b>Invoice</b>"},
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    message = await client.get_message_html("user@example.com", "msg-html-1")
+
+    assert message.body is not None
+    assert message.body.content == "<b>Invoice</b>"
+    args, kwargs = client._http.request.call_args
+    assert args[0] == "GET"
+    assert args[1] == (f"{GRAPH_BASE_URL}/users/user%40example.com/messages/msg-html-1")
+    prefer = kwargs["headers"]["Prefer"]
+    assert 'outlook.body-content-type="html"' in prefer
+    assert "allow-unsafe-html" not in prefer
+    select = kwargs["params"]["$select"]
+    assert select == "id,body,uniqueBody"
+
+
+@pytest.mark.asyncio
+async def test_list_message_attachments_returns_inline_file(client: GraphClient) -> None:
+    response = MagicMock()
+    response.status_code = 200
+    response.content = b"{}"
+    response.json.return_value = {
+        "value": [
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "id": "att-1",
+                "name": "logo.png",
+                "contentType": "image/png",
+                "contentBytes": "iVBORw0KGgo=",
+                "contentId": "logo@123",
+                "isInline": True,
+                "size": 12,
+            }
+        ]
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    attachments = await client.list_message_attachments("user@example.com", "msg-1")
+
+    assert len(attachments) == 1
+    assert attachments[0].content_id == "logo@123"
+    assert attachments[0].content_bytes == "iVBORw0KGgo="
+    assert attachments[0].is_inline is True
+    args, _kwargs = client._http.request.call_args
+    assert args[0] == "GET"
+    assert args[1] == (f"{GRAPH_BASE_URL}/users/user%40example.com/messages/msg-1/attachments")
 
 
 @pytest.mark.asyncio
@@ -115,15 +179,113 @@ async def test_create_subscription_includes_client_state_and_resource(
 
 
 @pytest.mark.asyncio
+async def test_create_subscription_allows_outlook_seven_day_lifetime(
+    client: GraphClient,
+) -> None:
+    """v1.0 Outlook message max is 10,080 minutes (under seven days).
+
+    https://learn.microsoft.com/en-us/graph/api/resources/subscription
+    """
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    response.json.return_value = {
+        "id": "sub-7d",
+        "resource": "users/user@example.com/mailFolders('inbox')/messages",
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-16T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    sub = await client.create_subscription(
+        "user@example.com",
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+        expiration_minutes=10080,
+    )
+
+    assert sub.id == "sub-7d"
+    client._http.request.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_create_subscription_rejects_overlong_expiration(client: GraphClient) -> None:
-    with pytest.raises(GraphClientError, match="4230"):
+    """One minute past the Outlook message maximum must fail closed."""
+    with pytest.raises(GraphClientError, match="10080"):
         await client.create_subscription(
             "user@example.com",
             "https://example.com/hook",
             "state",
             lifecycle_notification_url="https://example.com/lifecycle",
-            expiration_minutes=5000,
+            expiration_minutes=10081,
         )
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_prefixes_guid_shaped_upn(client: GraphClient) -> None:
+    """Microsoft Example 2: UPN that begins with a GUID needs AAD-UPN:.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    mailbox = "3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+    response.json.return_value = {
+        "id": "sub-guid",
+        "resource": (f"users/AAD-UPN:{mailbox}/mailFolders('inbox')/messages"),
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-12T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    await client.create_subscription(
+        mailbox,
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+    )
+
+    body = client._http.request.await_args.kwargs["json"]
+    assert body["resource"] == (
+        "users/AAD-UPN:3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+        "/mailFolders('inbox')/messages"
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_subscription_uses_directory_oid_as_user_segment(
+    client: GraphClient,
+) -> None:
+    """Bare Entra object IDs stay unprefixed so Exchange maps to one mailbox."""
+    response = MagicMock()
+    response.status_code = 201
+    response.content = b"{}"
+    oid = "bb8775a4-4d8c-42cf-a1d4-4d58c2bb668f"
+    response.json.return_value = {
+        "id": "sub-oid",
+        "resource": f"users/{oid}/mailFolders('inbox')/messages",
+        "changeType": "created",
+        "notificationUrl": "https://example.com/hook",
+        "expirationDateTime": "2026-07-12T00:00:00Z",
+        "clientState": "state",
+    }
+    client._http.request = AsyncMock(return_value=response)
+
+    await client.create_subscription(
+        oid,
+        "https://example.com/hook",
+        "state",
+        lifecycle_notification_url="https://example.com/lifecycle",
+    )
+
+    body = client._http.request.await_args.kwargs["json"]
+    assert body["resource"] == (f"users/{oid}/mailFolders('inbox')/messages")
 
 
 @pytest.mark.asyncio
@@ -361,7 +523,7 @@ async def test_next_link_rejects_non_https_host(client: GraphClient) -> None:
     }
     client._http.request = AsyncMock(return_value=first)
 
-    with pytest.raises(GraphClientError, match="non-HTTPS|Refusing"):
+    with pytest.raises(GraphClientError, match=r"non-HTTPS|Refusing"):
         await client.list_messages("user@example.com", follow_next_link=True)
 
 

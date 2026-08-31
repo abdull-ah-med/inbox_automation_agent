@@ -8,6 +8,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from app.core.config import Settings
+from app.core.redis_keys import MSAL_TOKEN_CACHE_KEY, MSAL_TOKEN_CACHE_TTL_SECONDS
 from app.core.security import decrypt_cache_blob, encrypt_cache_blob
 from app.graph.auth import GraphAuth
 
@@ -41,8 +42,10 @@ async def test_graph_auth_persists_encrypted_cache() -> None:
             await auth._persist_cache_if_changed()
 
     redis.set.assert_awaited_once()
-    stored = redis.set.await_args.args[1]
-    assert decrypt_cache_blob(stored, key) == '{"tok":1}'
+    args, kwargs = redis.set.await_args
+    assert args[0] == MSAL_TOKEN_CACHE_KEY
+    assert decrypt_cache_blob(args[1], key) == '{"tok":1}'
+    assert kwargs.get("ex") == MSAL_TOKEN_CACHE_TTL_SECONDS == 604_800
 
 
 @pytest.mark.asyncio

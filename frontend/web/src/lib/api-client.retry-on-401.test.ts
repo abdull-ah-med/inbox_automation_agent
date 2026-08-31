@@ -1,16 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import {
   clearAuthSession,
   getAccessToken,
   getAuthState,
   setAuthSession,
-} from "@/features/auth/auth-store";
+} from "@/features/auth/auth-store"
 
 describe("auth-store", () => {
   beforeEach(() => {
-    clearAuthSession();
-  });
+    clearAuthSession()
+  })
 
   it("sets and clears in-memory session", () => {
     setAuthSession({
@@ -22,19 +22,19 @@ describe("auth-store", () => {
         role: "user",
         created_at: new Date().toISOString(),
       },
-    });
-    expect(getAccessToken()).toBe("tok");
-    expect(getAuthState().user?.email).toBe("elise@example.com");
-    clearAuthSession();
-    expect(getAccessToken()).toBeNull();
-  });
-});
+    })
+    expect(getAccessToken()).toBe("tok")
+    expect(getAuthState().user?.email).toBe("elise@example.com")
+    clearAuthSession()
+    expect(getAccessToken()).toBeNull()
+  })
+})
 
 describe("api-client retry-on-401", () => {
   beforeEach(() => {
-    clearAuthSession();
-    vi.restoreAllMocks();
-  });
+    clearAuthSession()
+    vi.restoreAllMocks()
+  })
 
   it("retries once after refresh on 401", async () => {
     setAuthSession({
@@ -46,15 +46,13 @@ describe("api-client retry-on-401", () => {
         role: "user",
         created_at: new Date().toISOString(),
       },
-    });
+    })
 
-    document.cookie = "itr_csrf=nonce.sig";
+    document.cookie = "itr_csrf=nonce.sig"
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ detail: "expired" }), { status: 401 }),
-      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ detail: "expired" }), { status: 401 }))
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -83,14 +81,14 @@ describe("api-client retry-on-401", () => {
           }),
           { status: 200 },
         ),
-      );
+      )
 
-    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("fetch", fetchMock)
 
-    const { api } = await import("@/lib/api-client");
-    const data = await api.dashboard.overview();
-    expect(data.total_threads).toBe(0);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(getAccessToken()).toBe("fresh");
-  });
-});
+    const { api } = await import("@/lib/api-client")
+    const data = await api.dashboard.overview()
+    expect(data.total_threads).toBe(0)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(getAccessToken()).toBe("fresh")
+  })
+})

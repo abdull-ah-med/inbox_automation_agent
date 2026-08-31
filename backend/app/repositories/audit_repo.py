@@ -10,13 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.audit_event import AuditEvent
 from app.models.schemas.audit import AuditEventSchema
+from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.dashboard import AuditEntry, TriageFlags
 
 _TRIAGE_EVENTS = (
-    "triage.action_needed",
-    "triage.no_action_discarded",
-    "triage.spam_discarded",
-    "triage.failed",
+    TriageAuditEvent.ACTION_NEEDED,
+    TriageAuditEvent.NO_ACTION_DISCARDED,
+    TriageAuditEvent.SPAM_DISCARDED,
+    TriageAuditEvent.FAILED,
 )
 
 
@@ -39,10 +40,14 @@ def triage_flags_from_event(event: AuditEvent) -> TriageFlags:
     return TriageFlags(
         is_spam=_payload_bool(payload, "is_spam"),
         has_action_items=_payload_bool(payload, "has_action_items"),
+        draft_needed=_payload_bool(payload, "draft_needed"),
         needs_context=_payload_bool(payload, "needs_context"),
         spam_reason=_payload_str(payload, "spam_reason"),
         context_reason=_payload_str(payload, "context_reason"),
         action_items_summary=_payload_str(payload, "action_items_summary"),
+        routing_category=_payload_str(payload, "routing_category"),
+        is_internal=_payload_bool(payload, "is_internal"),
+        is_automated=_payload_bool(payload, "is_automated"),
         outcome=event.event_type,
     )
 
@@ -161,13 +166,19 @@ async def list_by_conversation(
     session: AsyncSession,
     conversation_id: str,
     *,
-    mailbox: str | None = None,
+    mailbox: str,
     limit: int = 100,
 ) -> list[AuditEntry]:
-    conditions = [AuditEvent.conversation_id == conversation_id]
-    if mailbox is not None:
-        conditions.append(AuditEvent.mailbox == mailbox)
-    stmt = select(AuditEvent).where(*conditions).order_by(AuditEvent.created_at.asc()).limit(limit)
+    """List audit events for one conversation, always scoped to a mailbox."""
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.conversation_id == conversation_id,
+            AuditEvent.mailbox == mailbox,
+        )
+        .order_by(AuditEvent.created_at.asc())
+        .limit(limit)
+    )
     result = await session.execute(stmt)
     return [_to_entry(row) for row in result.scalars().all()]
 
@@ -177,10 +188,10 @@ async def list_by_thread_id(
     thread_id: uuid.UUID,
     conversation_id: str,
     *,
-    mailbox: str | None = None,
+    mailbox: str,
     limit: int = 100,
 ) -> list[AuditEntry]:
-    """Audit events are keyed by conversation_id (+ mailbox when provided)."""
+    """Audit events are keyed by conversation_id + mailbox."""
     _ = thread_id
     return await list_by_conversation(
         session,
@@ -188,3 +199,34 @@ async def list_by_thread_id(
         mailbox=mailbox,
         limit=limit,
     )
+
+
+async def list_raw_by_conversation(
+    session: AsyncSession,
+    conversation_id: str,
+    *,
+    mailbox: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Raw audit rows for human narrative mapping (includes payload)."""
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.conversation_id == conversation_id,
+            AuditEvent.mailbox == mailbox,
+        )
+        .order_by(AuditEvent.created_at.desc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    rows: list[dict[str, Any]] = []
+    for event in result.scalars().all():
+        rows.append(
+            {
+                "event_type": event.event_type,
+                "created_at": event.created_at,
+                "payload": event.payload if isinstance(event.payload, dict) else {},
+                "actor": event.actor,
+            }
+        )
+    return rows

@@ -191,7 +191,107 @@ async def test_refresh_expired(settings: Settings) -> None:
             refresh_plaintext=plaintext,
             user_agent=None,
             ip=None,
-            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_login_rehash_uses_hash_only_update(settings: Settings) -> None:
+    """Argon2 param upgrade must not bump password_updated_at / token_version."""
+    user = _user(token_version=3)
+    session = AsyncMock()
+    hash_only = AsyncMock()
+    full_update = AsyncMock()
+    with (
+        patch("app.services.auth_service.user_repo.get_by_email", AsyncMock(return_value=user)),
+        patch("app.services.auth_service.needs_rehash", return_value=True),
+        patch(
+            "app.services.auth_service.user_repo.update_password_hash_only",
+            hash_only,
+        ),
+        patch("app.services.auth_service.user_repo.update_password", full_update),
+        patch(
+            "app.services.auth_service.refresh_token_repo.insert",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        result = await auth_service.login(
+            session,
+            settings,
+            email=user.email,
+            password="CorrectHorseBattery1!",
+            user_agent="test",
+            ip="127.0.0.1",
+        )
+    hash_only.assert_awaited_once()
+    full_update.assert_not_awaited()
+    assert result.response.access_token
+    assert result.rotated_from_hash is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_does_not_store_grace_before_commit(settings: Settings) -> None:
+    """Successful rotation returns rotated_from_hash; Redis grace is route's job."""
+    from app.repositories.refresh_token_repo import RefreshTokenRead
+
+    plaintext, digest = generate_refresh_token()
+    now = datetime.now(UTC)
+    user = _user(password_updated_at=now - timedelta(days=1))
+    stored = RefreshTokenRead(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token_hash=digest,
+        family_id=uuid.uuid4(),
+        issued_at=now - timedelta(hours=1),
+        expires_at=now + timedelta(days=6),
+        revoked_at=None,
+        replaced_by_id=None,
+        user_agent=None,
+        ip=None,
+    )
+    new_row = RefreshTokenRead(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        token_hash="new-hash",
+        family_id=stored.family_id,
+        issued_at=now,
+        expires_at=now + timedelta(days=7),
+        revoked_at=None,
+        replaced_by_id=None,
+        user_agent=None,
+        ip=None,
+    )
+    session = AsyncMock()
+    redis = AsyncMock()
+    redis.set = AsyncMock()
+    with (
+        patch(
+            "app.services.auth_service.refresh_token_repo.get_by_hash_for_update",
+            AsyncMock(return_value=stored),
+        ),
+        patch("app.services.auth_service.user_repo.get_by_id", AsyncMock(return_value=user)),
+        patch(
+            "app.services.auth_service.refresh_token_repo.insert",
+            AsyncMock(return_value=new_row),
+        ),
+        patch(
+            "app.services.auth_service.refresh_token_repo.revoke",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        result = await auth_service.refresh(
+            session,
+            settings,
+            redis,
+            refresh_plaintext=plaintext,
+            user_agent=None,
+            ip=None,
+        )
+    redis.set.assert_not_awaited()
+    assert result.rotated_from_hash == digest
+    assert result.refresh_plaintext
+
+    await auth_service.store_refresh_grace(redis, settings, digest, result)
+    redis.set.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -227,6 +327,22 @@ async def test_create_user_rejects_weak_password(settings: Settings) -> None:
             password="short",
             role="user",
         )
+
+
+@pytest.mark.asyncio
+async def test_refresh_grace_rejects_plaintext_when_encryption_configured() -> None:
+    """Invalid Fernet tokens must not fall back to plaintext JSON."""
+    from cryptography.fernet import Fernet
+
+    key = Fernet.generate_key().decode()
+    settings = Settings(
+        environment="local",
+        jwt_secret="z" * 64,
+        refresh_rotation_grace_seconds=10,
+        msal_cache_encryption_key=key,
+    )
+    forged = '{"refresh_plaintext":"stolen","access_token":"x","user":{}}'
+    assert auth_service._decode_refresh_grace(settings, forged) is None
 
 
 @pytest.mark.asyncio

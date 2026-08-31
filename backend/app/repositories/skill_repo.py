@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete as sa_delete
@@ -14,7 +14,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.exceptions import SkillBudgetExceededError, SkillNameConflictError
+from app.core.config import get_settings
+from app.core.exceptions import (
+    SkillBudgetExceededError,
+    SkillNameConflictError,
+    SkillNotFoundError,
+)
 from app.models.db.skill import Skill
 from app.models.db.skill_file import SkillFile
 from app.models.schemas.skill import (
@@ -24,6 +29,12 @@ from app.models.schemas.skill import (
     SkillUpdateSchema,
 )
 from app.repositories import skill_files_repo
+from app.repositories._vector_common import set_hnsw_session_defaults
+
+
+def _raise_name_conflict(exc: IntegrityError, name: object) -> NoReturn:
+    raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
+
 
 # Caps how many standing instructions can be injected into every draft LLM call.
 MAX_ACTIVE_SKILLS = 20
@@ -65,9 +76,7 @@ def _file_counts(row: Skill) -> tuple[int, int]:
 
 def _to_response(row: Skill) -> SkillResponseSchema:
     refs, assets = _file_counts(row)
-    source_kind: SkillSourceKind = (
-        "imported" if row.source_kind == "imported" else "inline"
-    )
+    source_kind: SkillSourceKind = "imported" if row.source_kind == "imported" else "inline"
     return SkillResponseSchema(
         id=row.id,
         name=row.name,
@@ -105,11 +114,7 @@ def _to_selection(row: Skill) -> SkillSelectionRow:
 
 
 async def list_all(session: AsyncSession) -> list[SkillResponseSchema]:
-    stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
-        .order_by(Skill.created_at.desc())
-    )
+    stmt = select(Skill).options(selectinload(Skill.files)).order_by(Skill.created_at.desc())
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
 
@@ -141,11 +146,7 @@ async def get_by_id(
     session: AsyncSession,
     skill_id: uuid.UUID,
 ) -> SkillResponseSchema | None:
-    stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
-        .where(Skill.id == skill_id)
-    )
+    stmt = select(Skill).options(selectinload(Skill.files)).where(Skill.id == skill_id)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -153,18 +154,8 @@ async def get_by_id(
     return _to_response(row)
 
 
-async def get_orm_by_id(session: AsyncSession, skill_id: uuid.UUID) -> Skill | None:
-    stmt = select(Skill).where(Skill.id == skill_id)
-    result = await session.execute(stmt)
-    return result.scalar_one_or_none()
-
-
 async def get_by_name(session: AsyncSession, name: str) -> SkillResponseSchema | None:
-    stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
-        .where(Skill.name == name)
-    )
+    stmt = select(Skill).options(selectinload(Skill.files)).where(Skill.name == name)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -177,9 +168,7 @@ async def get_by_import_hash(
     sha256: str,
 ) -> SkillResponseSchema | None:
     stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
-        .where(Skill.imported_zip_sha256 == sha256)
+        select(Skill).options(selectinload(Skill.files)).where(Skill.imported_zip_sha256 == sha256)
     )
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
@@ -244,7 +233,7 @@ async def create(
     try:
         await session.flush()
     except IntegrityError as exc:
-        raise SkillNameConflictError(f"Skill name already exists: {data.name}") from exc
+        _raise_name_conflict(exc, data.name)
     await session.refresh(row, attribute_names=["files"])
     return _to_response(row)
 
@@ -261,16 +250,26 @@ async def upsert_imported(
     raw_frontmatter: dict[str, Any] | None,
     files: list[dict[str, object]],
     overwrite: bool,
+    target_skill_id: uuid.UUID | None = None,
 ) -> tuple[SkillResponseSchema, bool]:
     """Create or overwrite an imported skill + bundled files.
 
     Returns (skill, overwritten). Writes ORM directly so SKILL.md bodies may
     exceed the inline SkillCreateSchema max_length (10k).
+
+    When ``target_skill_id`` is set, that row is overwritten (name may change).
+    Otherwise lookup is by ``name``.
     """
     _validate_category_rules(always_apply=always_apply, category=category)
-    existing = await get_by_name(session, name)
-    if existing is not None and not overwrite:
-        raise SkillNameConflictError(f"Skill name already exists: {name}")
+    existing: SkillResponseSchema | None = None
+    if target_skill_id is not None:
+        existing = await get_by_id(session, target_skill_id)
+        if existing is None:
+            raise SkillNotFoundError(f"Skill not found for overwrite: {target_skill_id}")
+    else:
+        existing = await get_by_name(session, name)
+        if existing is not None and not overwrite:
+            raise SkillNameConflictError(f"Skill name already exists: {name}")
 
     if existing is None:
         await _assert_active_budget(session, content=content)
@@ -289,14 +288,16 @@ async def upsert_imported(
         try:
             await session.flush()
         except IntegrityError as exc:
-            raise SkillNameConflictError(f"Skill name already exists: {name}") from exc
+            _raise_name_conflict(exc, name)
         await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
         refreshed = await get_by_id(session, row.id)
-        assert refreshed is not None
+        if refreshed is None:
+            raise RuntimeError(f"Skill missing after insert: {row.id}")
         return refreshed, False
 
     await _assert_active_budget(session, content=content, exclude_id=existing.id)
     values: dict[str, Any] = {
+        "name": name,
         "description": description,
         "content": content,
         "category": category,
@@ -308,12 +309,16 @@ async def upsert_imported(
         "updated_at": datetime.now(UTC),
     }
     stmt = sa_update(Skill).where(Skill.id == existing.id).values(**values).returning(Skill)
-    result = await session.execute(stmt)
+    try:
+        result = await session.execute(stmt)
+    except IntegrityError as exc:
+        _raise_name_conflict(exc, name)
     row = result.scalar_one()
     await session.flush()
     await skill_files_repo.replace_files(session, skill_id=row.id, files=files)
     refreshed = await get_by_id(session, row.id)
-    assert refreshed is not None
+    if refreshed is None:
+        raise RuntimeError(f"Skill missing after update: {row.id}")
     return refreshed, True
 
 
@@ -351,7 +356,7 @@ async def update_skill(
     try:
         result = await session.execute(stmt)
     except IntegrityError as exc:
-        raise SkillNameConflictError(f"Skill name already exists: {values.get('name')}") from exc
+        _raise_name_conflict(exc, values.get("name"))
     row = result.scalar_one_or_none()
     if row is None:
         return None
@@ -374,29 +379,50 @@ async def update_embedding(
     await session.flush()
 
 
-async def rank_by_cosine(
+class SkillSimilarityHit(BaseModel):
+    """Cosine-similarity match for duplicate-skill detection on import."""
+
+    id: uuid.UUID
+    name: str
+    similarity: float
+
+
+async def find_similar(
     session: AsyncSession,
     *,
-    query_embedding: list[float],
-    skill_ids: list[uuid.UUID],
-    limit: int = 8,
-) -> list[SkillSelectionRow]:
-    """Return skills ordered by cosine distance (closest first)."""
-    if not skill_ids or limit < 1:
+    embedding: list[float],
+    threshold: float,
+    limit: int = 3,
+) -> list[SkillSimilarityHit]:
+    """Return active skills at or above ``threshold`` cosine similarity.
+
+    ``threshold`` maps to cosine distance ``1 - similarity``.
+    """
+    if limit < 1:
         return []
-    distance = Skill.embedding.cosine_distance(query_embedding)
+    await set_hnsw_session_defaults(session, get_settings())
+    max_distance = 1.0 - threshold
+    distance = Skill.embedding.cosine_distance(embedding)
+    similarity = (1 - distance).label("similarity")
     stmt = (
-        select(Skill)
-        .options(selectinload(Skill.files))
+        select(Skill.id, Skill.name, similarity)
         .where(
-            Skill.id.in_(skill_ids),
+            Skill.is_active.is_(True),
             Skill.embedding.is_not(None),
+            distance <= max_distance,
         )
         .order_by(distance)
         .limit(limit)
     )
     result = await session.execute(stmt)
-    return [_to_selection(row) for row in result.scalars().all()]
+    return [
+        SkillSimilarityHit(
+            id=row.id,
+            name=row.name,
+            similarity=float(row.similarity),
+        )
+        for row in result.all()
+    ]
 
 
 async def delete_skill(session: AsyncSession, skill_id: uuid.UUID) -> bool:

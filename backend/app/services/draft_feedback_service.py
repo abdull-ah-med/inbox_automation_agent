@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
+from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
+from app.models.schemas.email import ThreadStateEnum
 from app.repositories import draft_repo, thread_repo
 from app.services import (
     audit_service,
@@ -25,6 +27,21 @@ from app.services import (
 logger = structlog.get_logger(__name__)
 
 
+async def _load_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    settings: Settings | None,
+) -> thread_repo.ThreadSchema | None:
+    """Load a thread under tenant scope when settings are real Settings."""
+    if isinstance(settings, Settings):
+        return await thread_repo.get_by_id(
+            session,
+            thread_id,
+            TenantScope.from_settings(settings),
+        )
+    return await thread_repo.get_by_id_trusted(session, thread_id)
+
+
 async def _require_thread_meta(
     session: AsyncSession,
     thread_id: uuid.UUID,
@@ -35,7 +52,7 @@ async def _require_thread_meta(
 
     Enforces TARGET_MAILBOXES allowlist when settings are provided (API path).
     """
-    thread = await thread_repo.get_by_id(session, thread_id)
+    thread = await _load_thread(session, thread_id, settings)
     if thread is None:
         raise DraftNotFoundError(f"Draft thread not found: {thread_id}")
     if settings is not None and not settings.mailbox_allowed(thread.mailbox):
@@ -48,6 +65,8 @@ async def approve_draft(
     draft_id: uuid.UUID,
     *,
     edited_body: str | None = None,
+    approval_note: str | None = None,
+    approval_scope: str | None = None,
     actor: str = "user",
     settings: Settings | None = None,
 ) -> DraftResponseSchema:
@@ -68,8 +87,13 @@ async def approve_draft(
     )
 
     already_approved = existing.approved_at is not None and existing.feedback_action == "approve"
-    if already_approved and (
-        edited_body is None or edited_body == (existing.edited_body or existing.reply_body)
+    learning_unchanged = (
+        approval_note == existing.approval_note and approval_scope == existing.approval_scope
+    )
+    if (
+        already_approved
+        and (edited_body is None or edited_body == (existing.edited_body or existing.reply_body))
+        and learning_unchanged
     ):
         return existing
 
@@ -77,6 +101,8 @@ async def approve_draft(
         session,
         draft_id,
         edited_body=edited_body,
+        approval_note=approval_note,
+        approval_scope=approval_scope,
     )
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
@@ -95,6 +121,19 @@ async def approve_draft(
             },
             actor=actor,
         )
+        if approval_note is not None or approval_scope is not None:
+            await audit_service.log_event(
+                session,
+                event_type="draft.approved.learning_context",
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+                payload={
+                    "draft_id": str(draft_id),
+                    "scope": approval_scope,
+                    "has_note": bool(approval_note),
+                },
+                actor=actor,
+            )
     except Exception:
         logger.warning(
             "draft_feedback_audit_failed",
@@ -106,6 +145,8 @@ async def approve_draft(
         "draft_approved",
         draft_id=str(draft_id),
         had_edit=edited_body is not None,
+        approval_scope=approval_scope,
+        has_approval_note=bool(approval_note),
         actor=actor,
         mailbox=mailbox,
     )
@@ -121,22 +162,54 @@ async def store_approved_reply_memory(
 ) -> None:
     """Best-effort reply memory after the approve txn has committed.
 
+    Stores ``reply_embeddings`` only when ``approval_scope == "similar"``.
+    Scope ``once`` or ``None`` (plain approve) skips embedding per the
+    five-feature plan.
+
     Uses a **dedicated** DB session so embed/DB failures cannot leave the
-    request session in SQLAlchemy's inactive/pending-rollback state
-    (``PendingRollbackError`` — see
-    https://docs.sqlalchemy.org/en/20/errors.html#this-session-s-transaction-has-been-rolled-back-due-to-a-previous-exception-during-flush).
+    request session in SQLAlchemy's inactive/pending-rollback state.
     Never raises to the approve HTTP path.
     """
+    if draft.approval_scope != "similar":
+        mailbox = "unknown"
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                thread = await _load_thread(session, draft.thread_id, settings)
+                mailbox = thread.mailbox if thread is not None else "unknown"
+                if session.in_transaction():
+                    await session.commit()
+        except Exception:
+            logger.exception(
+                "reply_memory_skip_mailbox_lookup_failed",
+                draft_id=str(draft.id),
+                approval_scope=draft.approval_scope,
+            )
+        logger.info(
+            "reply_memory_skipped_scope",
+            draft_id=str(draft.id),
+            mailbox=mailbox,
+            approval_scope=draft.approval_scope,
+        )
+        await tone_profile_service.maybe_rebuild(
+            settings=settings,
+            anthropic_client=anthropic_client,
+            mailbox=mailbox,
+            routing_category=draft.routing_category,
+        )
+        return
+
     mailbox = "unknown"
     try:
         factory = get_session_factory()
         async with factory() as session:
-            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            thread = await _load_thread(session, draft.thread_id, settings)
             mailbox = thread.mailbox if thread is not None else "unknown"
             email_preview = thread.subject if thread is not None else None
             if session.in_transaction():
                 await session.commit()
             final_body = draft.edited_body or draft.reply_body
+            learning_note = draft.approval_note
             await reply_memory_service.store_approved_reply(
                 session,
                 openai_client=openai_client,
@@ -145,6 +218,7 @@ async def store_approved_reply_memory(
                 mailbox=mailbox,
                 final_body=final_body,
                 email_preview=email_preview,
+                learning_note=learning_note,
             )
             if session.in_transaction():
                 await session.commit()
@@ -182,7 +256,7 @@ async def store_rejection_memory(
     try:
         factory = get_session_factory()
         async with factory() as session:
-            thread = await thread_repo.get_by_id(session, draft.thread_id)
+            thread = await _load_thread(session, draft.thread_id, settings)
             mailbox = thread.mailbox if thread is not None else "unknown"
             if session.in_transaction():
                 await session.commit()
@@ -307,6 +381,13 @@ async def mark_wrong(
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
 
+    if reason_code == "wrong_action":
+        await thread_repo.set_thread_outcome(
+            session,
+            existing.thread_id,
+            state=ThreadStateEnum.NO_ACTION.value,
+        )
+
     try:
         await audit_service.log_event(
             session,
@@ -326,6 +407,27 @@ async def mark_wrong(
             draft_id=str(draft_id),
             event_type="draft.marked_wrong",
         )
+
+    if reason_code == "wrong_action":
+        try:
+            await audit_service.log_event(
+                session,
+                event_type="thread.outcome.no_action",
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+                payload={
+                    "draft_id": str(draft_id),
+                    "thread_id": str(existing.thread_id),
+                    "reason_code": reason_code,
+                },
+                actor=actor,
+            )
+        except Exception:
+            logger.warning(
+                "draft_feedback_audit_failed",
+                draft_id=str(draft_id),
+                event_type="thread.outcome.no_action",
+            )
 
     logger.info(
         "draft_marked_wrong",

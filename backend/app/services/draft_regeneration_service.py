@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError, ThreadNotFoundError
+from app.core.tenant_scope import TenantScope
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import DraftResponseSchema
@@ -31,6 +32,7 @@ from app.services import (
     rejection_memory_service,
     skill_selection_service,
     tone_profile_service,
+    urgency_feedback_service,
 )
 
 logger = structlog.get_logger(__name__)
@@ -53,6 +55,8 @@ def _message_to_email(
         conversation_id=conversation_id,
         mailbox=mailbox,
         sender=message.sender,
+        sender_display_name=message.sender_name,
+        is_automated=bool(message.is_automated),
         subject=subject,
         body_text=message.body_text,
         body_preview=message.body_preview,
@@ -60,6 +64,7 @@ def _message_to_email(
         direction=direction,
         to_recipients=list(message.to_recipients),
         cc_recipients=list(message.cc_recipients),
+        bcc_recipients=list(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
     )
 
@@ -82,10 +87,8 @@ async def regenerate_draft(
     before the Sonnet call so Postgres is not held for LLM latency. Persist
     + audit run in a short write transaction afterward.
     """
-    thread = await thread_repo.get_by_id(session, thread_id)
-    if thread is None:
-        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
-    if not settings.mailbox_allowed(thread.mailbox):
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
 
     messages = await message_repo.list_by_thread(session, thread_id)
@@ -119,15 +122,22 @@ async def regenerate_draft(
         thread.conversation_id,
         mailbox=thread.mailbox,
     )
+    latest_draft = await draft_repo.get_latest_by_thread(session, thread_id)
+    draft_routing = (
+        latest_draft.routing_category
+        if latest_draft is not None and latest_draft.routing_category
+        else None
+    )
     if triage_flags is None:
         triage = TriageResultSchema(
             is_spam=False,
             has_action_items=True,
             action_items_summary=None,
             needs_context=False,
-            routing_category="general",
+            routing_category=draft_routing or "general",
         )
     else:
+        routing = triage_flags.routing_category or draft_routing or "general"
         triage = TriageResultSchema(
             is_spam=bool(triage_flags.is_spam) if triage_flags.is_spam is not None else False,
             spam_reason=triage_flags.spam_reason,
@@ -143,7 +153,7 @@ async def regenerate_draft(
                 else False
             ),
             context_reason=triage_flags.context_reason,
-            routing_category="general",
+            routing_category=routing,
         )
 
     active_skills_contents: list[str] = []
@@ -197,6 +207,33 @@ async def regenerate_draft(
         routing_category=routing_category,
         limit=3,
     )
+    urgency_hints = await urgency_feedback_service.find_urgency_hints(
+        session,
+        openai_client=openai_client,
+        settings=settings,
+        email_text=email_text,
+        mailbox=mailbox,
+        routing_category=routing_category,
+        limit=3,
+    )
+
+    from app.services import related_thread_service
+
+    confirmed_associations = await related_thread_service.load_confirmed_contexts(
+        session,
+        thread_id,
+    )
+
+    directory: dict[str, str] | None = None
+    if settings.salute_directory_enabled:
+        from app.services import directory_lookup_service
+
+        directory = await directory_lookup_service.build_directory(
+            session,
+            mailbox,
+            thread_context,
+            current=email,
+        )
 
     # Release any open transaction before OpenAI embed + Sonnet.
     if session.in_transaction():
@@ -218,8 +255,11 @@ async def regenerate_draft(
         tone_references=tone_references,
         tone_profile=tone_profile_block,
         negative_constraints=negative_constraints,
+        urgency_hints=urgency_hints,
         instruction=instruction,
         reference_loader=reference_loader,
+        confirmed_associations=confirmed_associations,
+        directory=directory,
     )
 
     regen_message_id = f"{latest_graph_id}:regen:{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"

@@ -58,9 +58,9 @@ def sample_message() -> GraphMessageSchema:
 
 @pytest.mark.asyncio
 async def test_thread_context_from_db_includes_recipients() -> None:
-    """retry_triage rebuild must restore To/CC for Haiku PoI rules."""
+    """retry_triage rebuild must restore To/CC/BCC for Haiku PoI rules and UI."""
     from app.repositories.message_repo import MessageSchema
-    from app.services.ingestion_service import _thread_context_from_db
+    from app.services.ingestion_service import build_thread_context_from_db
 
     thread_id = uuid.uuid4()
     message_id = "msg-1"
@@ -79,6 +79,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
         received_at=datetime.now(UTC),
         to_recipients=["user@example.com"],
         cc_recipients=["cc@example.com"],
+        bcc_recipients=["bcc@example.com"],
     )
     thread = ThreadSchema(
         id=thread_id,
@@ -104,7 +105,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
             AsyncMock(return_value=[msg_row]),
         ),
     ):
-        result = await _thread_context_from_db(
+        result = await build_thread_context_from_db(
             session, mailbox="user@example.com", message_id=message_id
         )
 
@@ -114,6 +115,7 @@ async def test_thread_context_from_db_includes_recipients() -> None:
     rebuilt = result.thread_context.messages[0]
     assert rebuilt.to_recipients == ["user@example.com"]
     assert rebuilt.cc_recipients == ["cc@example.com"]
+    assert rebuilt.bcc_recipients == ["bcc@example.com"]
     assert rebuilt.body_clean == "Body"
 
 
@@ -127,6 +129,16 @@ def test_extract_mailbox_from_resource() -> None:
     assert extract_mailbox_from_resource(resource) == "user@example.com"
 
 
+def test_extract_mailbox_from_resource_strips_aad_upn_prefix() -> None:
+    """Graph may echo AAD-UPN: on GUID-shaped UPNs; match TARGET_MAILBOXES without it.
+
+    https://learn.microsoft.com/en-us/graph/outlook-change-notifications-overview
+    """
+    mailbox = "3f8c2a71-6d45-4e9b-a237-81c5f0d762ae@contoso.com"
+    resource = f"users/AAD-UPN:{mailbox}/mailFolders('inbox')/messages"
+    assert extract_mailbox_from_resource(resource) == mailbox
+
+
 def test_dedup_key_prefix() -> None:
     assert dedup_key("a@b.com", "msg-1") == "dedup:a@b.com:msg-1"
 
@@ -134,12 +146,21 @@ def test_dedup_key_prefix() -> None:
 def test_redis_key_helpers() -> None:
     from app.core.redis_keys import (
         MSAL_TOKEN_CACHE_KEY,
+        inbox_subscription_key,
+        legacy_subscription_key,
         poll_cursor_key,
+        sent_items_subscription_key,
         subscription_key,
     )
 
-    assert subscription_key("a@b.com") == "graph:sub:a@b.com"
+    assert subscription_key("a@b.com") == "graph:sub:inbox:a@b.com"
+    assert inbox_subscription_key("a@b.com") == "graph:sub:inbox:a@b.com"
+    assert sent_items_subscription_key("a@b.com") == "graph:sub:sentitems:a@b.com"
+    assert subscription_key("a@b.com", "sentitems") == "graph:sub:sentitems:a@b.com"
+    assert legacy_subscription_key("a@b.com") == "graph:sub:a@b.com"
     assert poll_cursor_key("a@b.com") == "graph:poll:last_checked:a@b.com"
+    assert poll_cursor_key("a@b.com", "inbox") == "graph:poll:last_checked:a@b.com"
+    assert poll_cursor_key("a@b.com", "sentitems") == "graph:poll:last_checked:sentitems:a@b.com"
     assert MSAL_TOKEN_CACHE_KEY == "msal:token_cache"
 
 
@@ -524,6 +545,7 @@ async def test_webhook_empty_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -549,6 +571,7 @@ async def test_webhook_invalid_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -566,44 +589,47 @@ async def test_webhook_invalid_payload_returns_202() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_enqueue_passes_only_payload_and_settings() -> None:
-    """Regression: request-scoped redis/graph_client must not be passed to BackgroundTasks."""
+async def test_webhook_enqueue_writes_stream_job_without_background_tasks() -> None:
+    """SPEC: notifications are durable via Redis Streams, not FastAPI BackgroundTasks."""
     app = FastAPI()
     app.include_router(graph_router)
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
+    redis = _webhook_redis()
+    redis.xadd = AsyncMock(return_value="1-0")
     app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
 
-    with patch(
-        "app.api.webhooks.graph._process_notifications",
-        new_callable=AsyncMock,
-    ) as process:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            response = await client.post(
-                "/webhooks/graph/notifications",
-                json={
-                    "value": [
-                        {
-                            "subscriptionId": "sub-1",
-                            "clientState": "secret",
-                            "changeType": "created",
-                            "resource": "users/user@example.com/messages/msg-1",
-                            "resourceData": {"id": "msg-1"},
-                        }
-                    ]
-                },
-            )
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/webhooks/graph/notifications",
+            json={
+                "value": [
+                    {
+                        "subscriptionId": "sub-1",
+                        "clientState": "secret",
+                        "changeType": "created",
+                        "resource": "users/user@example.com/messages/msg-1",
+                        "resourceData": {"id": "msg-1"},
+                    }
+                ]
+            },
+        )
 
     assert response.status_code == 202
-    process.assert_awaited_once()
-    assert len(process.await_args.args) == 2
-    assert process.await_args.kwargs == {}
-    assert process.await_args.args[1] is settings
+    redis.xadd.assert_awaited_once()
+    args, kwargs = redis.xadd.await_args
+    assert args[0] == "graph:webhook:stream"
+    fields = args[1]
+    assert fields["kind"] == "notifications"
+    assert "msg-1" in fields["payload"]
+    assert kwargs.get("maxlen") == 10_000
 
 
 @pytest.mark.asyncio
@@ -613,6 +639,7 @@ async def test_lifecycle_invalid_payload_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -638,6 +665,7 @@ async def test_process_notifications_ingests_and_completes_dedup(
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -701,6 +729,7 @@ async def test_webhook_releases_dedup_when_triage_fails() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -768,6 +797,7 @@ async def test_webhook_accepts_but_skips_forged_client_state() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="expected-secret",
         target_mailboxes="user@example.com",
     )
@@ -810,6 +840,7 @@ async def test_process_notifications_skips_mismatched_client_state() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="expected-secret",
         target_mailboxes="user@example.com",
     )
@@ -849,6 +880,7 @@ async def test_webhook_acks_when_client_state_unconfigured() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="",
         target_mailboxes="user@example.com",
     )
@@ -944,6 +976,7 @@ async def test_webhook_validation_handshake_returns_plain_text() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -973,6 +1006,7 @@ async def test_webhook_validation_rejected_without_pending_window() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1022,6 +1056,7 @@ async def test_webhook_notification_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1060,6 +1095,7 @@ async def test_lifecycle_notification_returns_202() -> None:
 
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         target_mailboxes="user@example.com",
     )
@@ -1128,6 +1164,7 @@ async def test_webhook_rejects_oversized_body_without_content_length() -> None:
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_max_body_bytes=1024,
     )
@@ -1147,34 +1184,139 @@ async def test_webhook_rejects_oversized_body_without_content_length() -> None:
 
 
 @pytest.mark.asyncio
-async def test_webhook_rate_limit_uses_peer_not_xff() -> None:
-    """X-Forwarded-For must not create a new rate-limit bucket."""
+async def test_webhook_rate_limit_still_enqueues_valid_client_state() -> None:
+    """Over-limit with matching clientState must still ACK 202 and enqueue."""
     from app.core.dependencies import get_redis, get_settings
 
     app = FastAPI()
     app.include_router(graph_router)
     settings = Settings(
         environment="local",
+        graph_webhooks_enabled=True,
         graph_webhook_client_state="secret",
         webhook_rate_limit_per_minute=10,
+        trust_x_forwarded_for=False,
     )
     redis = _webhook_redis()
-    # Simulate shared peer key already over limit.
     redis.eval = AsyncMock(return_value=11)
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_redis] = lambda: redis
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/webhooks/graph/notifications",
-            json={"value": []},
-            headers={"X-Forwarded-For": "203.0.113.99"},
-        )
+    with patch(
+        "app.api.webhooks.graph.enqueue_webhook_job",
+    ) as enqueue_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "secret",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+                headers={"X-Forwarded-For": "203.0.113.99"},
+            )
 
-    assert response.status_code == 429
-    # Rate key must be derived from peer (testclient), not spoofed XFF.
+    assert response.status_code == 202
+    enqueue_mock.assert_awaited_once()
+    # Untrusted: rate key from peer, not spoofed XFF.
     call_args = redis.eval.await_args
     assert call_args is not None
     rate_key = call_args.args[2]
+    assert "203.0.113.99" not in rate_key
+
+
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_skips_bad_client_state() -> None:
+    """Over-limit + wrong clientState ACKs 202 without enqueue (abuse path)."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhooks_enabled=True,
+        graph_webhook_client_state="secret",
+        webhook_rate_limit_per_minute=10,
+    )
+    redis = _webhook_redis()
+    redis.eval = AsyncMock(return_value=11)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+
+    with patch(
+        "app.api.webhooks.graph.enqueue_webhook_job",
+    ) as enqueue_mock:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "wrong",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+            )
+
+    assert response.status_code == 202
+    enqueue_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_webhook_rate_limit_uses_x_real_ip_when_trusted() -> None:
+    """When TRUST_X_FORWARDED_FOR, bucket on nginx X-Real-IP."""
+    from app.core.dependencies import get_redis, get_settings
+
+    app = FastAPI()
+    app.include_router(graph_router)
+    settings = Settings(
+        environment="local",
+        graph_webhooks_enabled=True,
+        graph_webhook_client_state="secret",
+        webhook_rate_limit_per_minute=10,
+        trust_x_forwarded_for=True,
+    )
+    redis = _webhook_redis()
+    redis.eval = AsyncMock(return_value=1)
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_redis] = lambda: redis
+
+    with patch("app.api.webhooks.graph.enqueue_webhook_job"):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            await client.post(
+                "/webhooks/graph/notifications",
+                json={
+                    "value": [
+                        {
+                            "subscriptionId": "sub-1",
+                            "clientState": "secret",
+                            "changeType": "created",
+                            "resource": "users/user@example.com/messages/msg-1",
+                            "resourceData": {"id": "msg-1"},
+                        }
+                    ]
+                },
+                headers={
+                    "X-Real-IP": "198.51.100.10",
+                    "X-Forwarded-For": "203.0.113.99, 198.51.100.10",
+                },
+            )
+
+    call_args = redis.eval.await_args
+    assert call_args is not None
+    rate_key = call_args.args[2]
+    assert "198.51.100.10" in rate_key
     assert "203.0.113.99" not in rate_key

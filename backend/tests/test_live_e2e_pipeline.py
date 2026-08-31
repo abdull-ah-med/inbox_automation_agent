@@ -44,6 +44,7 @@ from app.core.config import Settings
 from app.core.dependencies import anthropic_client_from_settings, get_slack_app
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import dedup_key, slack_posted_key
+from app.core.tenant_scope import TenantScope
 from app.db.session import dispose_engine
 from app.graph.auth import GraphAuth
 from app.graph.client import GraphClient
@@ -169,7 +170,11 @@ async def _load_db_evidence(
     thread = None
     if thread_id:
         try:
-            thread = await thread_repo.get_by_id(session, uuid.UUID(thread_id))
+            thread = await thread_repo.get_by_id(
+                session,
+                uuid.UUID(thread_id),
+                TenantScope.single(mailbox),
+            )
         except ValueError:
             thread = None
     if thread is None and conversation_id:

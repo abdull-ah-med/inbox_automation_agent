@@ -96,7 +96,7 @@ def app(local_settings: Settings):
 async def test_list_skills_ok(app) -> None:
     skills = [_skill(), _skill(name="Vendor")]
     with patch(
-        "app.api.web.skills.skill_repo.list_all",
+        "app.api.web.skills.skill_service.list_skills",
         AsyncMock(return_value=skills),
     ):
         transport = ASGITransport(app=app)
@@ -110,7 +110,7 @@ async def test_list_skills_ok(app) -> None:
 async def test_create_skill_201(app) -> None:
     skill = _skill()
     with patch(
-        "app.api.web.skills.skill_repo.create",
+        "app.api.web.skills.skill_service.create_skill",
         AsyncMock(return_value=skill),
     ):
         transport = ASGITransport(app=app)
@@ -130,7 +130,7 @@ async def test_create_skill_201(app) -> None:
 @pytest.mark.asyncio
 async def test_create_duplicate_409(app) -> None:
     with patch(
-        "app.api.web.skills.skill_repo.create",
+        "app.api.web.skills.skill_service.create_skill",
         AsyncMock(side_effect=SkillNameConflictError("dup")),
     ):
         transport = ASGITransport(app=app)
@@ -145,8 +145,8 @@ async def test_create_duplicate_409(app) -> None:
 @pytest.mark.asyncio
 async def test_update_missing_404(app) -> None:
     with patch(
-        "app.api.web.skills.skill_repo.update_skill",
-        AsyncMock(return_value=None),
+        "app.api.web.skills.skill_service.update_skill",
+        AsyncMock(side_effect=SkillNotFoundError("Skill not found")),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -160,8 +160,8 @@ async def test_update_missing_404(app) -> None:
 @pytest.mark.asyncio
 async def test_delete_missing_404(app) -> None:
     with patch(
-        "app.api.web.skills.skill_repo.delete_skill",
-        AsyncMock(return_value=False),
+        "app.api.web.skills.skill_service.delete_skill",
+        AsyncMock(side_effect=SkillNotFoundError("Skill not found")),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -270,6 +270,15 @@ def test_skills_injected_into_user_content() -> None:
     assert "Standing instructions (skills):" in content
     assert "Always CC Jordan on drug-screen emails" in content
     assert "Acknowledge within 24h" in content
+    assert "<untrusted_skills>" in content
+    assert "<untrusted_email>" in content
+    # Locked learning-loop order: skills before email body.
+    assert content.index("Standing instructions (skills):") < content.index("Body:")
+    assert content.index("Previously flagged issues to avoid:") < content.index("Tone profile:")
+    assert content.index("Tone profile:") < content.index("Mailbox:")
+    assert content.index("<untrusted_skills>") < content.index("<untrusted_email>")
+    # Triage is system-derived and stays outside the untrusted email wrapper.
+    assert content.index("</untrusted_email>") < content.index("Triage result:")
 
 
 def test_skill_not_found_exception_exists() -> None:

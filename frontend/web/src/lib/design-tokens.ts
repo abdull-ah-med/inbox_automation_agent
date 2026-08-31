@@ -1,11 +1,13 @@
 /** Inbox accent palette from the demo + helpers. */
 
+import type { CSSProperties } from "react"
+
 const DEMO_COLORS = {
   "client-relations": "#2563eb",
   sales: "#16a34a",
   vendor: "#d97706",
   intermediary: "#7c3aed",
-} as const;
+} as const
 
 /** Map real configured mailboxes onto the demo palette in a stable order. */
 const KEY_COLOR_ORDER = [
@@ -13,7 +15,7 @@ const KEY_COLOR_ORDER = [
   DEMO_COLORS.sales,
   DEMO_COLORS.vendor,
   DEMO_COLORS.intermediary,
-] as const;
+] as const
 
 const KNOWN_COLORS: Record<string, string> = {
   ...DEMO_COLORS,
@@ -21,53 +23,51 @@ const KNOWN_COLORS: Record<string, string> = {
   support: DEMO_COLORS.sales,
   info: DEMO_COLORS.vendor,
   sampleagent: DEMO_COLORS.intermediary,
-};
+}
 
 const KNOWN_LABELS: Record<string, string> = {
   "client-relations": "Client Relations",
   sales: "Sales",
   vendor: "Vendor",
   intermediary: "Intermediary",
-};
+  sampleagent: "Elise",
+}
 
 function hashKey(key: string): number {
-  let h = 0;
+  let h = 0
   for (let i = 0; i < key.length; i += 1) {
-    h = (h * 31 + key.charCodeAt(i)) >>> 0;
+    h = (h * 31 + key.charCodeAt(i)) >>> 0
   }
-  return h;
+  return h
 }
 
 export function inboxColor(key: string): string {
-  if (KNOWN_COLORS[key]) return KNOWN_COLORS[key];
-  return KEY_COLOR_ORDER[hashKey(key) % KEY_COLOR_ORDER.length];
+  if (KNOWN_COLORS[key]) return KNOWN_COLORS[key]
+  return KEY_COLOR_ORDER[hashKey(key) % KEY_COLOR_ORDER.length]
+}
+
+/**
+ * Light: tinted chip + accent text (readable on white).
+ * Dark: solid accent fill + white text (previous look).
+ */
+export const inboxChipClassName =
+  "rounded-full px-2 py-0.5 text-xs font-medium text-[color:var(--inbox-accent)] bg-[color-mix(in_srgb,var(--inbox-accent)_15%,white)] dark:bg-[var(--inbox-accent)] dark:text-white"
+
+export function inboxAccentStyle(key: string): CSSProperties {
+  return { ["--inbox-accent" as string]: inboxColor(key) }
 }
 
 export function inboxLabel(key: string, fallback?: string): string {
-  if (KNOWN_LABELS[key]) return KNOWN_LABELS[key];
-  if (fallback?.trim()) return fallback;
+  if (KNOWN_LABELS[key]) return KNOWN_LABELS[key]
+  if (fallback?.trim()) return fallback
   return key
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+    .join(" ")
 }
 
-export function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  const diffMs = Date.now() - date.getTime();
-  const mins = Math.round(diffMs / 60_000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.round(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
+export { formatRelativeTime } from "@/lib/dates"
 
 export function formatEventName(event: string): string {
-  return event
-    .replace(/[._]/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return event.replace(/[._]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
 }

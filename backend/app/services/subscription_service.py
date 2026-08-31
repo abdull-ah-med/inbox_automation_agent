@@ -1,27 +1,31 @@
 """Graph change-notification subscription orchestration.
 
-Creates/reconciles/renews one subscription per target mailbox and handles
-lifecycle events. Does not call classification, drafts, or Slack.
+Creates/reconciles/renews inbox + sentitems subscriptions per target mailbox
+and handles lifecycle events. Does not call classification, drafts, or Slack.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from redis.asyncio import Redis
+from redis.exceptions import ResponseError
 
 from app.core.config import Settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
+    MISSED_POLL_LOOKBACK_SECONDS,
     SUBSCRIPTION_RENEW_BEFORE_SECONDS,
     VALIDATION_PENDING_TTL_SECONDS,
     WEBHOOK_VALIDATION_PENDING_KEY,
+    inbox_subscription_key,
+    legacy_subscription_key,
     subscription_key,
 )
-from app.graph.client import GraphClient
+from app.graph.client import GraphClient, outlook_subscription_user
 from app.models.schemas.graph import (
     GraphNotificationItemSchema,
     GraphSubscriptionSchema,
@@ -29,46 +33,103 @@ from app.models.schemas.graph import (
 
 logger = structlog.get_logger(__name__)
 
+SubscriptionFolder = Literal["inbox", "sentitems"]
+_SUBSCRIPTION_FOLDERS: tuple[SubscriptionFolder, ...] = ("inbox", "sentitems")
 
-def _inbox_resource(mailbox: str) -> str:
-    return f"users/{mailbox}/mailFolders('inbox')/messages"
+# Refcount the validation window so concurrent create_subscription handshakes
+# cannot close each other. INCR opens / refreshes TTL; DECR closes at zero.
+# https://redis.io/docs/latest/commands/incr/
+_BEGIN_VALIDATION_WINDOW = """
+local count = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+return count
+"""
+
+_END_VALIDATION_WINDOW = """
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  return 0
+end
+local count = redis.call('DECR', KEYS[1])
+if count <= 0 then
+  redis.call('DEL', KEYS[1])
+  return 0
+end
+return count
+"""
+
+
+def _folder_resource(mailbox: str, folder: SubscriptionFolder) -> str:
+    user = outlook_subscription_user(mailbox)
+    return f"users/{user}/mailFolders('{folder}')/messages"
 
 
 def _normalize_resource(resource: str) -> str:
     return resource.strip().lower().replace(" ", "")
 
 
-def _subscription_matches_mailbox(sub: GraphSubscriptionSchema, mailbox: str) -> bool:
-    """Match a subscription to a mailbox without substring false positives.
+def extract_folder_from_resource(resource: str) -> SubscriptionFolder | None:
+    """Return ``inbox`` / ``sentitems`` when the resource targets a well-known folder."""
+    normalized = _normalize_resource(resource)
+    if "mailfolders('sentitems')" in normalized:
+        return "sentitems"
+    if "mailfolders('inbox')" in normalized:
+        return "inbox"
+    return None
+
+
+def _subscription_matches_mailbox_folder(
+    sub: GraphSubscriptionSchema,
+    mailbox: str,
+    folder: SubscriptionFolder,
+) -> bool:
+    """Match a subscription to one mailbox folder without substring false positives.
 
     Uses the mailbox path segment extracted from ``resource`` (exact, case-insensitive)
-    or an exact normalized equality against the inbox resource we create.
-    Never uses ``mailbox in resource`` — that matches ``test@`` inside ``contest@``.
+    plus exact folder equality. Never uses ``mailbox in resource``.
     """
     from app.services.ingestion_service import extract_mailbox_from_resource
 
     extracted = extract_mailbox_from_resource(sub.resource)
-    if extracted is not None and extracted.strip().lower() == mailbox.strip().lower():
-        return True
-    return _normalize_resource(sub.resource) == _normalize_resource(_inbox_resource(mailbox))
+    if extracted is None or extracted.strip().lower() != mailbox.strip().lower():
+        return False
+    return _normalize_resource(sub.resource) == _normalize_resource(
+        _folder_resource(mailbox, folder)
+    )
+
+
+def _subscription_matches_mailbox(sub: GraphSubscriptionSchema, mailbox: str) -> bool:
+    """Backward-compatible inbox match used by existing tests and callers."""
+    return _subscription_matches_mailbox_folder(sub, mailbox, "inbox")
 
 
 async def begin_webhook_validation_window(redis: Redis) -> None:
-    """Allow Graph validationToken echoes while create_subscription is in flight."""
-    await redis.set(
+    """Allow Graph validationToken echoes while create_subscription is in flight.
+
+    Uses a refcount so overlapping creates (multi-mailbox reconcile) keep the
+    window open until the last create finishes.
+    """
+    await redis.eval(
+        _BEGIN_VALIDATION_WINDOW,
+        1,
         WEBHOOK_VALIDATION_PENDING_KEY,
-        "1",
-        ex=VALIDATION_PENDING_TTL_SECONDS,
+        str(VALIDATION_PENDING_TTL_SECONDS),
     )
 
 
 async def end_webhook_validation_window(redis: Redis) -> None:
-    await redis.delete(WEBHOOK_VALIDATION_PENDING_KEY)
+    """Decrement the validation-window refcount; delete at zero."""
+    await redis.eval(_END_VALIDATION_WINDOW, 1, WEBHOOK_VALIDATION_PENDING_KEY)
 
 
 async def webhook_validation_window_open(redis: Redis) -> bool:
     raw = await redis.get(WEBHOOK_VALIDATION_PENDING_KEY)
-    return isinstance(raw, str) and bool(raw)
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        return int(raw) > 0
+    except ValueError:
+        # Legacy single-flag values (e.g. "1" from SET) still count as open.
+        return True
 
 
 def _is_expired_or_near_expiry(
@@ -81,40 +142,178 @@ def _is_expired_or_near_expiry(
     return exp <= now + timedelta(seconds=renew_before_seconds)
 
 
-def _serialize_subscription(sub: GraphSubscriptionSchema, mailbox: str) -> str:
-    payload: dict[str, Any] = {
+def _is_wrongtype(exc: ResponseError) -> bool:
+    return str(exc).upper().startswith("WRONGTYPE")
+
+
+def _subscription_hash_mapping(
+    sub: GraphSubscriptionSchema,
+    mailbox: str,
+    folder: SubscriptionFolder,
+) -> dict[str, str]:
+    return {
         "subscription_id": sub.id,
         "mailbox": mailbox,
+        "folder": folder,
         "resource": sub.resource,
         "expiration": sub.expiration_date_time.isoformat(),
         "notification_url": sub.notification_url,
-        "lifecycle_notification_url": sub.lifecycle_notification_url,
+        "lifecycle_notification_url": sub.lifecycle_notification_url or "",
     }
-    return json.dumps(payload)
+
+
+def _subscription_id_from_json(raw: str) -> str | None:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    sub_id = data.get("subscription_id")
+    return sub_id if isinstance(sub_id, str) else None
+
+
+def _mapping_from_legacy_json(raw: str, subscription_id: str) -> dict[str, str]:
+    mapping: dict[str, str] = {"subscription_id": subscription_id}
+    try:
+        extra = json.loads(raw)
+    except json.JSONDecodeError:
+        return mapping
+    if not isinstance(extra, dict):
+        return mapping
+    for field in (
+        "mailbox",
+        "folder",
+        "resource",
+        "expiration",
+        "notification_url",
+        "lifecycle_notification_url",
+    ):
+        value = extra.get(field)
+        if isinstance(value, str):
+            mapping[field] = value
+    return mapping
+
+
+async def _hset_subscription(redis: Redis, key: str, mapping: dict[str, str]) -> None:
+    """Write a hash. Redis cannot change a string key in place — DEL then HSET.
+
+    https://redis.io/docs/latest/develop/data-types/hashes/
+    """
+    try:
+        await redis.hset(key, mapping=mapping)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        await redis.delete(key)
+        await redis.hset(key, mapping=mapping)
 
 
 async def _store_subscription(
     redis: Redis,
     mailbox: str,
     sub: GraphSubscriptionSchema,
+    folder: SubscriptionFolder,
 ) -> None:
-    await redis.set(subscription_key(mailbox), _serialize_subscription(sub, mailbox))
+    await _hset_subscription(
+        redis,
+        subscription_key(mailbox, folder),
+        _subscription_hash_mapping(sub, mailbox, folder),
+    )
+    if folder == "inbox":
+        # Drop legacy key once rewritten so future reads use the folder key.
+        await redis.delete(legacy_subscription_key(mailbox))
 
 
-async def _clear_subscription(redis: Redis, mailbox: str) -> None:
-    await redis.delete(subscription_key(mailbox))
+async def _clear_subscription(
+    redis: Redis,
+    mailbox: str,
+    folder: SubscriptionFolder,
+) -> None:
+    await redis.delete(subscription_key(mailbox, folder))
+    if folder == "inbox":
+        await redis.delete(legacy_subscription_key(mailbox))
 
 
-async def _load_cached_subscription_id(redis: Redis, mailbox: str) -> str | None:
-    raw = await redis.get(subscription_key(mailbox))
+async def _read_subscription_id(redis: Redis, key: str) -> str | None:
+    try:
+        sub_id = await redis.hget(key, "subscription_id")
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        sub_id = None
+    if isinstance(sub_id, str) and sub_id:
+        return sub_id
+    try:
+        raw = await redis.get(key)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        return None
     if not isinstance(raw, str) or not raw:
         return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
+    parsed = _subscription_id_from_json(raw)
+    if parsed is None:
         return None
-    sub_id = data.get("subscription_id")
-    return sub_id if isinstance(sub_id, str) else None
+    await _hset_subscription(redis, key, _mapping_from_legacy_json(raw, parsed))
+    return parsed
+
+
+async def _copy_hash_mapping(
+    redis: Redis,
+    source_key: str,
+    *,
+    mailbox: str,
+    folder: SubscriptionFolder,
+    subscription_id: str,
+) -> dict[str, str]:
+    try:
+        fields = await redis.hgetall(source_key)
+    except ResponseError as exc:
+        if not _is_wrongtype(exc):
+            raise
+        fields = None
+    mapping: dict[str, str] = {
+        "subscription_id": subscription_id,
+        "mailbox": mailbox,
+        "folder": folder,
+    }
+    if isinstance(fields, dict):
+        for field, value in fields.items():
+            if isinstance(field, str) and isinstance(value, str) and value:
+                mapping[field] = value
+        mapping["subscription_id"] = subscription_id
+        mapping["mailbox"] = mailbox
+        mapping["folder"] = folder
+    return mapping
+
+
+async def _load_cached_subscription_id(
+    redis: Redis,
+    mailbox: str,
+    folder: SubscriptionFolder = "inbox",
+) -> str | None:
+    loaded = await _read_subscription_id(redis, subscription_key(mailbox, folder))
+    if loaded is not None:
+        return loaded
+    if folder != "inbox":
+        return None
+    # One-shot migration: pre-folder key ``graph:sub:{mailbox}``.
+    legacy_key = legacy_subscription_key(mailbox)
+    loaded = await _read_subscription_id(redis, legacy_key)
+    if loaded is None:
+        return None
+    mapping = await _copy_hash_mapping(
+        redis,
+        legacy_key,
+        mailbox=mailbox,
+        folder=folder,
+        subscription_id=loaded,
+    )
+    await _hset_subscription(redis, inbox_subscription_key(mailbox), mapping)
+    await redis.delete(legacy_key)
+    logger.info("subscription_legacy_key_migrated", mailbox=mailbox)
+    return loaded
 
 
 def _subscription_urls_ok(
@@ -139,8 +338,9 @@ async def reconcile_mailbox_subscription(
     graph_client: GraphClient,
     settings: Settings,
     mailbox: str,
+    folder: SubscriptionFolder = "inbox",
 ) -> GraphSubscriptionSchema | None:
-    """Ensure exactly one valid subscription exists for the mailbox."""
+    """Ensure exactly one valid subscription exists for the mailbox folder."""
     notification_url = settings.graph_notification_url.strip()
     lifecycle_url = settings.resolved_lifecycle_url
     client_state = settings.graph_webhook_client_state.strip()
@@ -149,6 +349,7 @@ async def reconcile_mailbox_subscription(
         logger.warning(
             "subscription_reconcile_skipped_missing_config",
             mailbox=mailbox,
+            folder=folder,
             has_notification_url=bool(notification_url),
             has_lifecycle_url=bool(lifecycle_url),
             has_client_state=bool(client_state),
@@ -156,7 +357,7 @@ async def reconcile_mailbox_subscription(
         return None
 
     existing = await graph_client.list_subscriptions()
-    mailbox_subs = [s for s in existing if _subscription_matches_mailbox(s, mailbox)]
+    mailbox_subs = [s for s in existing if _subscription_matches_mailbox_folder(s, mailbox, folder)]
 
     keep: GraphSubscriptionSchema | None = None
     for sub in mailbox_subs:
@@ -175,6 +376,7 @@ async def reconcile_mailbox_subscription(
         logger.info(
             "subscription_deleting_stale",
             mailbox=mailbox,
+            folder=folder,
             subscription_id=sub.id,
         )
         try:
@@ -183,14 +385,16 @@ async def reconcile_mailbox_subscription(
             logger.exception(
                 "subscription_delete_failed",
                 mailbox=mailbox,
+                folder=folder,
                 subscription_id=sub.id,
             )
 
     if keep is not None:
-        await _store_subscription(redis, mailbox, keep)
+        await _store_subscription(redis, mailbox, keep, folder)
         logger.info(
             "subscription_reconcile_kept",
             mailbox=mailbox,
+            folder=folder,
             subscription_id=keep.id,
         )
         return keep
@@ -202,13 +406,15 @@ async def reconcile_mailbox_subscription(
             notification_url,
             client_state,
             lifecycle_notification_url=lifecycle_url,
+            folder=folder,
         )
     finally:
         await end_webhook_validation_window(redis)
-    await _store_subscription(redis, mailbox, created)
+    await _store_subscription(redis, mailbox, created, folder)
     logger.info(
         "subscription_reconcile_created",
         mailbox=mailbox,
+        folder=folder,
         subscription_id=created.id,
     )
     return created
@@ -220,6 +426,7 @@ async def renew_mailbox_subscription(
     graph_client: GraphClient,
     settings: Settings,
     mailbox: str,
+    folder: SubscriptionFolder = "inbox",
     force: bool = False,
 ) -> GraphSubscriptionSchema | None:
     """Renew subscription if near expiry, or always when ``force=True``.
@@ -229,9 +436,9 @@ async def renew_mailbox_subscription(
     even when expiration is still far away. See:
     https://learn.microsoft.com/en-us/graph/change-notifications-lifecycle-events
     """
-    cached_id = await _load_cached_subscription_id(redis, mailbox)
+    cached_id = await _load_cached_subscription_id(redis, mailbox, folder)
     existing = await graph_client.list_subscriptions()
-    mailbox_subs = [s for s in existing if _subscription_matches_mailbox(s, mailbox)]
+    mailbox_subs = [s for s in existing if _subscription_matches_mailbox_folder(s, mailbox, folder)]
 
     target: GraphSubscriptionSchema | None = None
     if cached_id:
@@ -245,17 +452,19 @@ async def renew_mailbox_subscription(
             graph_client=graph_client,
             settings=settings,
             mailbox=mailbox,
+            folder=folder,
         )
 
     if not force and not _is_expired_or_near_expiry(target.expiration_date_time):
-        await _store_subscription(redis, mailbox, target)
+        await _store_subscription(redis, mailbox, target, folder)
         return target
 
     renewed = await graph_client.renew_subscription(target.id)
-    await _store_subscription(redis, mailbox, renewed)
+    await _store_subscription(redis, mailbox, renewed, folder)
     logger.info(
         "subscription_renewed",
         mailbox=mailbox,
+        folder=folder,
         subscription_id=renewed.id,
         forced=force,
     )
@@ -269,15 +478,21 @@ async def reconcile_all_mailboxes(
     settings: Settings,
 ) -> None:
     for mailbox in settings.mailbox_list:
-        try:
-            await reconcile_mailbox_subscription(
-                redis=redis,
-                graph_client=graph_client,
-                settings=settings,
-                mailbox=mailbox,
-            )
-        except Exception:
-            logger.exception("subscription_reconcile_mailbox_failed", mailbox=mailbox)
+        for folder in _SUBSCRIPTION_FOLDERS:
+            try:
+                await reconcile_mailbox_subscription(
+                    redis=redis,
+                    graph_client=graph_client,
+                    settings=settings,
+                    mailbox=mailbox,
+                    folder=folder,
+                )
+            except Exception:
+                logger.exception(
+                    "subscription_reconcile_mailbox_failed",
+                    mailbox=mailbox,
+                    folder=folder,
+                )
 
 
 async def renew_all_mailboxes(
@@ -287,15 +502,21 @@ async def renew_all_mailboxes(
     settings: Settings,
 ) -> None:
     for mailbox in settings.mailbox_list:
-        try:
-            await renew_mailbox_subscription(
-                redis=redis,
-                graph_client=graph_client,
-                settings=settings,
-                mailbox=mailbox,
-            )
-        except Exception:
-            logger.exception("subscription_renew_mailbox_failed", mailbox=mailbox)
+        for folder in _SUBSCRIPTION_FOLDERS:
+            try:
+                await renew_mailbox_subscription(
+                    redis=redis,
+                    graph_client=graph_client,
+                    settings=settings,
+                    mailbox=mailbox,
+                    folder=folder,
+                )
+            except Exception:
+                logger.exception(
+                    "subscription_renew_mailbox_failed",
+                    mailbox=mailbox,
+                    folder=folder,
+                )
 
 
 def _mailbox_from_subscription(
@@ -330,9 +551,11 @@ async def handle_lifecycle_event(
         logger.warning("lifecycle_event_missing", subscription_id=notification.subscription_id)
         return
 
+    folder = extract_folder_from_resource(notification.resource) or "inbox"
+
     redis_lookup: dict[str, str] = {}
     for configured_mailbox in settings.mailbox_list:
-        cached = await _load_cached_subscription_id(redis, configured_mailbox)
+        cached = await _load_cached_subscription_id(redis, configured_mailbox, folder)
         if cached:
             redis_lookup[configured_mailbox] = cached
 
@@ -343,10 +566,25 @@ async def handle_lifecycle_event(
         redis_lookup=redis_lookup,
     )
     if not mailbox:
+        # Fall back: scan both folder caches for this subscription id.
+        for configured_mailbox in settings.mailbox_list:
+            for candidate_folder in _SUBSCRIPTION_FOLDERS:
+                cached = await _load_cached_subscription_id(
+                    redis, configured_mailbox, candidate_folder
+                )
+                if cached == notification.subscription_id:
+                    mailbox = configured_mailbox
+                    folder = candidate_folder
+                    break
+            if mailbox:
+                break
+
+    if not mailbox:
         logger.warning(
             "lifecycle_mailbox_unresolved",
             subscription_id=notification.subscription_id,
             lifecycle_event=event,
+            folder=folder,
         )
         return
 
@@ -356,6 +594,7 @@ async def handle_lifecycle_event(
             mailbox=mailbox,
             subscription_id=notification.subscription_id,
             lifecycle_event=event,
+            folder=folder,
         )
         return
 
@@ -363,6 +602,7 @@ async def handle_lifecycle_event(
         "lifecycle_event_received",
         lifecycle_event=event,
         mailbox=mailbox,
+        folder=folder,
         subscription_id=notification.subscription_id,
     )
 
@@ -372,17 +612,19 @@ async def handle_lifecycle_event(
             graph_client=graph_client,
             settings=settings,
             mailbox=mailbox,
+            folder=folder,
             force=True,
         )
         return
 
     if event == "subscriptionRemoved":
-        await _clear_subscription(redis, mailbox)
+        await _clear_subscription(redis, mailbox, folder)
         await reconcile_mailbox_subscription(
             redis=redis,
             graph_client=graph_client,
             settings=settings,
             mailbox=mailbox,
+            folder=folder,
         )
         return
 
@@ -391,13 +633,27 @@ async def handle_lifecycle_event(
             from app.workers.poll_fallback_worker import poll_mailbox
 
             poll_mailbox_fn = poll_mailbox
-        lookback = datetime.now(UTC) - timedelta(hours=2)
-        await poll_mailbox_fn(
-            mailbox,
-            redis=redis,
-            graph_client=graph_client,
-            lookback_override=lookback,
-        )
+        lookback = datetime.now(UTC) - timedelta(seconds=MISSED_POLL_LOOKBACK_SECONDS)
+        kwargs: dict[str, Any] = {
+            "redis": redis,
+            "graph_client": graph_client,
+            "lookback_override": lookback,
+        }
+        # SentItems missed events poll that folder via outbound path when supported.
+        try:
+            await poll_mailbox_fn(
+                mailbox,
+                folders=("sentitems",) if folder == "sentitems" else None,
+                outbound_only=(folder == "sentitems"),
+                **kwargs,
+            )
+        except TypeError:
+            await poll_mailbox_fn(mailbox, **kwargs)
         return
 
-    logger.warning("lifecycle_event_unknown", lifecycle_event=event, mailbox=mailbox)
+    logger.warning(
+        "lifecycle_event_unknown",
+        lifecycle_event=event,
+        mailbox=mailbox,
+        folder=folder,
+    )

@@ -8,11 +8,15 @@ Dedup lifecycle (Redis SET NX EX):
 3. On failure, delete the claim so webhook/poll retries can proceed.
 4. If claim is ``in_flight`` but the message already exists in Postgres, return
    ``retry_triage`` so callers can finish triage without re-fetching Graph.
+5. When the conversation tip is outbound (shared-mailbox send or reviewer
+   copy), return ``outbound`` and resolve via sent-reply — never Sonnet-draft
+   a thread whose newest message is already our reply.
 """
 
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import unquote
@@ -21,7 +25,8 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
+from app.core.automated_mail import is_automated_mail
+from app.core.config import Settings, get_settings
 from app.core.exceptions import GraphClientError
 from app.core.redis_keys import (
     DEDUP_PROCESSING_TTL_SECONDS,
@@ -32,21 +37,27 @@ from app.core.redis_keys import (
     dedup_key,
     triage_lock_key,
 )
+from app.core.tenant_scope import TenantScope
 from app.graph.client import GraphClient
 from app.llm import email_clean
 from app.models.schemas.email import (
     EmailDirectionEnum,
     EmailMessageSchema,
     ThreadContextSchema,
+    ThreadStateEnum,
 )
 from app.models.schemas.graph import (
+    GraphMessageBodySchema,
     GraphMessageSchema,
     GraphNotificationItemSchema,
     GraphRecipientSchema,
     IngestResultSchema,
     SimulateIngestRequestSchema,
 )
-from app.repositories import message_repo, thread_repo
+from app.repositories import message_repo, sent_reply_repo, thread_repo
+from app.repositories.message_repo import MessageSchema
+from app.services.related_match import alert_cluster_keys
+from app.utils.email_quotes import split_quoted_history
 
 logger = structlog.get_logger(__name__)
 
@@ -58,6 +69,14 @@ _MESSAGE_ID_FROM_RESOURCE = re.compile(
 )
 _MAILBOX_FROM_RESOURCE = re.compile(
     r"^users/([^/]+)/",
+    re.IGNORECASE,
+)
+_SENT_ITEMS_FOLDER = re.compile(
+    r"mailfolders\('sentitems'\)",
+    re.IGNORECASE,
+)
+_WELL_KNOWN_FOLDER = re.compile(
+    r"mailfolders\('(?P<folder>inbox|junkemail|sentitems)'\)",
     re.IGNORECASE,
 )
 
@@ -73,7 +92,47 @@ def extract_mailbox_from_resource(resource: str) -> str | None:
     match = _MAILBOX_FROM_RESOURCE.search(resource)
     if not match:
         return None
-    return unquote(match.group(1))
+    mailbox = unquote(match.group(1))
+    prefix = "AAD-UPN:"
+    if mailbox.upper().startswith(prefix):
+        return mailbox[len(prefix) :]
+    return mailbox
+
+
+def is_sent_items_resource(resource: str) -> bool:
+    """True when the Graph resource path targets the Sent Items well-known folder."""
+    normalized = resource.strip().lower().replace(" ", "")
+    return _SENT_ITEMS_FOLDER.search(normalized) is not None
+
+
+def extract_well_known_folder(resource: str) -> str | None:
+    """Return inbox / junkemail / sentitems when the Graph resource names that folder."""
+    normalized = resource.strip().lower().replace(" ", "")
+    match = _WELL_KNOWN_FOLDER.search(normalized)
+    if match is None:
+        return None
+    return match.group("folder").lower()
+
+
+async def _maybe_set_alert_fingerprint(
+    session: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    mailbox: str,
+    sender: str,
+    subject: str,
+) -> None:
+    keys = alert_cluster_keys(mailbox=mailbox, sender=sender, subject=subject)
+    if keys is None:
+        return
+    fingerprint, signature, sender_norm = keys
+    await thread_repo.set_alert_fingerprint(
+        session,
+        thread_id,
+        fingerprint,
+        signature=signature,
+        sender_norm=sender_norm,
+    )
 
 
 def _sender_address(message: GraphMessageSchema) -> str:
@@ -81,6 +140,26 @@ def _sender_address(message: GraphMessageSchema) -> str:
         if candidate and candidate.email_address and candidate.email_address.address:
             return candidate.email_address.address
     return "unknown"
+
+
+def _sender_display_name(message: GraphMessageSchema) -> str | None:
+    for candidate in (message.from_, message.sender):
+        if candidate and candidate.email_address:
+            name = (candidate.email_address.name or "").strip()
+            address = (candidate.email_address.address or "").strip()
+            if name and name.casefold() != address.casefold():
+                return name
+    return None
+
+
+def _graph_headers_map(message: GraphMessageSchema) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in message.internet_message_headers:
+        name = (item.name or "").strip()
+        value = (item.value or "").strip()
+        if name and value:
+            out[name] = value
+    return out
 
 
 def _recipient_addresses(
@@ -93,21 +172,62 @@ def _recipient_addresses(
     return addresses
 
 
+def _item_plain_text(body: GraphMessageBodySchema | None) -> str:
+    if body is None:
+        return ""
+    return email_clean.to_plain_text(
+        body.content or "",
+        content_type=body.content_type or "text",
+    )
+
+
 def _body_text(message: GraphMessageSchema) -> str:
-    if message.body and message.body.content:
-        return message.body.content
+    plain = _item_plain_text(message.body)
+    if plain.strip():
+        return plain
     return message.body_preview or ""
 
 
-def _direction_for_sender(mailbox: str, sender: str) -> EmailDirectionEnum:
+def _unique_body_text(message: GraphMessageSchema, full_body: str) -> str:
+    """Newest reply only. Graph uniqueBody is a hint — ticket dumps still need split."""
+    unique = _item_plain_text(message.unique_body)
+    candidate = unique.strip() if unique.strip() else (full_body or "").strip()
+    if not candidate:
+        return ""
+    main, quoted = split_quoted_history(candidate)
+    if quoted is not None:
+        return email_clean.strip_plain_text_artifacts(main.strip())
+    return email_clean.strip_plain_text_artifacts(candidate)
+
+
+def _direction_for_sender(
+    mailbox: str,
+    sender: str,
+    *,
+    settings: Settings | None = None,
+) -> EmailDirectionEnum:
     if sender.lower() == mailbox.lower():
+        return EmailDirectionEnum.OUTBOUND
+    resolved = settings if settings is not None else get_settings()
+    if resolved.is_reviewer_address(sender):
         return EmailDirectionEnum.OUTBOUND
     return EmailDirectionEnum.INBOUND
 
 
+def _newest_message(
+    messages: list[EmailMessageSchema],
+) -> EmailMessageSchema | None:
+    if not messages:
+        return None
+    return max(messages, key=lambda item: item.received_at)
+
+
 def _body_content_type(message: GraphMessageSchema) -> str:
     if message.body and message.body.content_type:
-        return message.body.content_type.strip().lower() or "text"
+        ctype = message.body.content_type.strip().lower() or "text"
+        if ctype == "html":
+            return "text"
+        return ctype
     return "text"
 
 
@@ -128,11 +248,7 @@ def _ensure_body_clean_from_row(
     body_clean_version: int | None,
 ) -> tuple[str, int]:
     """Return (body_clean, version), recomputing when missing or stale."""
-    if (
-        body_clean
-        and body_clean.strip()
-        and body_clean_version == email_clean.CLEAN_VERSION
-    ):
+    if body_clean and body_clean.strip() and body_clean_version == email_clean.CLEAN_VERSION:
         return body_clean, body_clean_version
     cleaned = email_clean.clean_email_body(body_text, content_type=body_content_type)
     return cleaned.body_clean, email_clean.CLEAN_VERSION
@@ -146,20 +262,33 @@ def _to_email_message_schema(
 ) -> EmailMessageSchema:
     sender = _sender_address(message)
     received_at = message.received_date_time or datetime.now(UTC)
+    body_text = _body_text(message)
     email = EmailMessageSchema(
         message_id=message.id,
         conversation_id=conversation_id,
         mailbox=mailbox,
         sender=sender,
+        sender_display_name=_sender_display_name(message),
+        is_automated=is_automated_mail(
+            sender=sender,
+            subject=message.subject,
+            headers=_graph_headers_map(message),
+            sender_display_name=_sender_display_name(message),
+        ),
         subject=message.subject or "(no subject)",
-        body_text=_body_text(message),
+        body_text=body_text,
         body_preview=message.body_preview,
+        unique_body_text=_unique_body_text(message, body_text),
         body_content_type=_body_content_type(message),
         received_at=received_at,
         direction=_direction_for_sender(mailbox, sender),
         to_recipients=_recipient_addresses(message.to_recipients),
         cc_recipients=_recipient_addresses(message.cc_recipients),
+        bcc_recipients=_recipient_addresses(message.bcc_recipients),
         has_attachments=bool(message.has_attachments),
+        graph_folder=message.source_folder,
+        meeting_message_type=message.meeting_message_type,
+        meeting_response_type=message.response_type,
     )
     return _apply_body_clean(email)
 
@@ -237,17 +366,18 @@ async def release_triage_lock(
     await release_lock(redis, triage_lock_key(mailbox, message_id), token)
 
 
-async def _thread_context_from_db(
+async def build_thread_context_from_db(
     session: AsyncSession,
     *,
     mailbox: str,
     message_id: str,
+    resolve_outbound_tip: bool = True,
 ) -> IngestResultSchema | None:
     """Rebuild triage inputs from Postgres when Redis says processing but rows exist."""
     existing = await message_repo.get_by_graph_id(session, message_id)
     if existing is None:
         return None
-    thread = await thread_repo.get_by_id(session, existing.thread_id)
+    thread = await thread_repo.get_by_id(session, existing.thread_id, TenantScope.single(mailbox))
     if thread is None:
         return None
     db_messages = await message_repo.list_by_thread(session, thread.id)
@@ -259,10 +389,7 @@ async def _thread_context_from_db(
             body_clean=row.body_clean,
             body_clean_version=row.body_clean_version,
         )
-        if (
-            row.body_clean != body_clean
-            or row.body_clean_version != clean_version
-        ):
+        if row.body_clean != body_clean or row.body_clean_version != clean_version:
             await message_repo.update_body_clean(
                 session,
                 message_id=row.id,
@@ -289,17 +416,53 @@ async def _thread_context_from_db(
                 ),
                 to_recipients=list(row.to_recipients or []),
                 cc_recipients=list(row.cc_recipients or []),
+                bcc_recipients=list(row.bcc_recipients or []),
                 has_attachments=bool(row.has_attachments),
+                graph_folder=row.graph_folder,
+                meeting_message_type=row.meeting_message_type,
+                meeting_response_type=row.meeting_response_type,
+                sender_display_name=row.sender_name,
+                is_automated=bool(row.is_automated),
                 summary_one_line=row.summary_one_line,
                 summary_json=row.summary_json,
             )
         )
+    tip_row = max(db_messages, key=lambda row: row.received_at) if db_messages else None
     thread_context = ThreadContextSchema(
         conversation_id=thread.conversation_id,
         mailbox=mailbox,
         subject=thread.subject,
         messages=context_messages,
     )
+    if (
+        resolve_outbound_tip
+        and tip_row is not None
+        and tip_row.direction == EmailDirectionEnum.OUTBOUND.value
+    ):
+        from app.services import sent_reply_service
+
+        await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread.id,
+            message=tip_row,
+            conversation_id=thread.conversation_id,
+            mailbox=mailbox,
+        )
+        logger.info(
+            "ingestion_retry_tip_outbound_resolved",
+            mailbox=mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+            tip_graph_message_id=tip_row.graph_message_id,
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=thread.conversation_id,
+            thread_context=thread_context,
+        )
+
     return IngestResultSchema(
         message_id=message_id,
         status="retry_triage",
@@ -316,6 +479,7 @@ async def ingest_graph_message(
     graph_client: GraphClient,
     mailbox: str,
     message_id: str,
+    source_folder: str | None = None,
 ) -> IngestResultSchema:
     """Fetch a Graph message, resolve its thread, and persist thread + messages.
 
@@ -327,19 +491,23 @@ async def ingest_graph_message(
         logger.info("ingestion_duplicate", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="duplicate")
     if claim == "in_flight":
-        retry = await _thread_context_from_db(session, mailbox=mailbox, message_id=message_id)
+        retry = await build_thread_context_from_db(session, mailbox=mailbox, message_id=message_id)
         if retry is not None:
             logger.info(
                 "ingestion_retry_triage",
                 mailbox=mailbox,
                 message_id=message_id,
             )
+            if retry.status == "outbound":
+                await complete_ingest_dedup(redis, mailbox, message_id)
             return retry
         logger.info("ingestion_in_flight", mailbox=mailbox, message_id=message_id)
         return IngestResultSchema(message_id=message_id, status="in_flight")
 
     try:
         message = await graph_client.get_message(mailbox, message_id)
+        if source_folder:
+            message = message.model_copy(update={"source_folder": source_folder})
         conversation_id = message.conversation_id
         if not conversation_id:
             raise GraphClientError(f"Message {message_id} is missing conversationId")
@@ -354,6 +522,13 @@ async def ingest_graph_message(
             subject=subject,
             last_message_at=received_at,
         )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=mailbox,
+            sender=_sender_address(message),
+            subject=subject,
+        )
 
         thread_messages = await graph_client.list_thread_messages(mailbox, conversation_id)
         # Graph list can lag get_message (replication). Always include the trigger.
@@ -362,6 +537,7 @@ async def ingest_graph_message(
         thread_messages = list(by_id.values())
 
         context_messages: list[EmailMessageSchema] = []
+        persisted_by_graph_id: dict[str, MessageSchema] = {}
         for thread_msg in thread_messages:
             email_msg = _to_email_message_schema(
                 mailbox=mailbox,
@@ -369,7 +545,7 @@ async def ingest_graph_message(
                 message=thread_msg,
             )
             context_messages.append(email_msg)
-            await message_repo.create_message(
+            persisted = await message_repo.create_message(
                 session,
                 thread_id=thread.id,
                 graph_message_id=thread_msg.id,
@@ -377,14 +553,61 @@ async def ingest_graph_message(
                 sender=email_msg.sender,
                 body_text=email_msg.body_text,
                 body_preview=email_msg.body_preview,
+                unique_body_text=email_msg.unique_body_text,
                 received_at=email_msg.received_at,
                 to_recipients=email_msg.to_recipients,
                 cc_recipients=email_msg.cc_recipients,
+                bcc_recipients=email_msg.bcc_recipients,
                 has_attachments=email_msg.has_attachments,
+                graph_folder=email_msg.graph_folder,
                 body_content_type=email_msg.body_content_type,
                 body_clean=email_msg.body_clean,
                 body_clean_version=email_clean.CLEAN_VERSION,
                 body_clean_computed_at=datetime.now(UTC),
+                meeting_message_type=email_msg.meeting_message_type,
+                meeting_response_type=email_msg.meeting_response_type,
+                sender_name=email_msg.sender_display_name,
+                is_automated=email_msg.is_automated,
+            )
+            persisted_by_graph_id[thread_msg.id] = persisted
+
+        # Tip outbound (shared mailbox send or reviewer copy) closes the loop.
+        # Reviewer-from alone is not enough: Elise often sends as the shared
+        # address, which conversation sync marks Sent without Sent Items resolve.
+        tip = _newest_message(context_messages)
+        tip_persisted = (
+            persisted_by_graph_id.get(tip.message_id)
+            if tip is not None and tip.direction == EmailDirectionEnum.OUTBOUND
+            else None
+        )
+        if tip is not None and tip_persisted is not None:
+            from app.services import sent_reply_service
+
+            await sent_reply_service.resolve_thread_from_outbound(
+                session,
+                thread_id=thread.id,
+                message=tip_persisted,
+                conversation_id=conversation_id,
+                mailbox=mailbox,
+            )
+            # status="outbound" is not in _TRIAGE_ELIGIBLE; poll/webhook call
+            # run_catchup_after_outbound instead (triage-only + learn). Dedup
+            # must complete here — otherwise the key stays "processing" until
+            # TTL expires and the next poll window re-resolves this message.
+            await complete_ingest_dedup(redis, mailbox, message_id)
+            logger.info(
+                "ingestion_tip_outbound_resolved",
+                mailbox=mailbox,
+                message_id=message_id,
+                tip_graph_message_id=tip.message_id,
+                thread_id=str(thread.id),
+                conversation_id=conversation_id,
+            )
+            return IngestResultSchema(
+                message_id=message_id,
+                status="outbound",
+                thread_id=str(thread.id),
+                conversation_id=conversation_id,
             )
 
         thread_context = ThreadContextSchema(
@@ -446,6 +669,22 @@ async def ingest_notification(
         )
         return IngestResultSchema(message_id=message_id, status="skipped")
 
+    if is_sent_items_resource(notification.resource):
+        if not settings.outbound_mailbox_allowed(mailbox):
+            logger.warning(
+                "ingestion_notification_mailbox_not_allowed",
+                mailbox=mailbox,
+                subscription_id=notification.subscription_id,
+            )
+            return IngestResultSchema(message_id=message_id, status="skipped")
+        return await handle_outbound_notification(
+            session=session,
+            redis=redis,
+            graph_client=graph_client,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+
     if not settings.mailbox_allowed(mailbox):
         logger.warning(
             "ingestion_notification_mailbox_not_allowed",
@@ -460,6 +699,239 @@ async def ingest_notification(
         graph_client=graph_client,
         mailbox=mailbox,
         message_id=message_id,
+        source_folder=extract_well_known_folder(notification.resource),
+    )
+
+
+async def handle_outbound_notification(
+    *,
+    session: AsyncSession,
+    redis: Redis,
+    graph_client: GraphClient,
+    mailbox: str,
+    message_id: str,
+) -> IngestResultSchema:
+    """Persist a Sent Items message as OUTBOUND and resolve the thread.
+
+    Does **not** run Sonnet draft generation. Poll/webhook callers invoke
+    ``sent_reply_learning_service.run_catchup_after_outbound`` after this
+    returns ``status="outbound"`` so Haiku triage + reply-memory learning
+    still run when inbound exists. Uses the same Redis dedup keys as inbound
+    ingest so webhook retries remain idempotent.
+    """
+    from app.services import sent_reply_service
+
+    claim = await claim_ingest_dedup(redis, mailbox, message_id)
+    if claim == "completed":
+        healed = await _heal_completed_outbound(
+            session=session,
+            mailbox=mailbox,
+            message_id=message_id,
+        )
+        if healed is not None:
+            return healed
+        logger.info("outbound_ingestion_duplicate", mailbox=mailbox, message_id=message_id)
+        return IngestResultSchema(message_id=message_id, status="duplicate")
+    if claim == "in_flight":
+        logger.info("outbound_ingestion_in_flight", mailbox=mailbox, message_id=message_id)
+        return IngestResultSchema(message_id=message_id, status="in_flight")
+
+    try:
+        message = await graph_client.get_message(mailbox, message_id)
+        conversation_id = message.conversation_id
+        if not conversation_id:
+            raise GraphClientError(f"Message {message_id} is missing conversationId")
+
+        received_at = message.received_date_time or datetime.now(UTC)
+        subject = message.subject or "(no subject)"
+        settings = get_settings()
+        shared = await thread_repo.find_thread_by_conversation_id(
+            session,
+            conversation_id,
+            mailboxes=settings.mailbox_list,
+        )
+        if (
+            shared is None
+            and settings.is_reviewer_address(mailbox)
+            and not settings.mailbox_allowed(mailbox)
+        ):
+            await complete_ingest_dedup(redis, mailbox, message_id)
+            logger.info(
+                "outbound_no_matching_shared_thread",
+                mailbox=mailbox,
+                message_id=message_id,
+                conversation_id=conversation_id,
+            )
+            return IngestResultSchema(
+                message_id=message_id,
+                status="skipped",
+                conversation_id=conversation_id,
+            )
+        attach_mailbox = shared.mailbox if shared is not None else mailbox
+        thread = await thread_repo.upsert_thread(
+            session,
+            mailbox=attach_mailbox,
+            conversation_id=conversation_id,
+            subject=subject,
+            last_message_at=received_at,
+        )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=attach_mailbox,
+            sender=_sender_address(message),
+            subject=subject,
+        )
+
+        email_msg = _to_email_message_schema(
+            mailbox=mailbox,
+            conversation_id=conversation_id,
+            message=message,
+        )
+        # Sent Items notifications are always treated as outbound from this mailbox.
+        email_msg = email_msg.model_copy(update={"direction": EmailDirectionEnum.OUTBOUND})
+
+        persisted = await message_repo.create_message(
+            session,
+            thread_id=thread.id,
+            graph_message_id=message.id,
+            direction=EmailDirectionEnum.OUTBOUND.value,
+            sender=email_msg.sender,
+            body_text=email_msg.body_text,
+            body_preview=email_msg.body_preview,
+            unique_body_text=email_msg.unique_body_text,
+            received_at=email_msg.received_at,
+            to_recipients=email_msg.to_recipients,
+            cc_recipients=email_msg.cc_recipients,
+            bcc_recipients=email_msg.bcc_recipients,
+            has_attachments=email_msg.has_attachments,
+            body_content_type=email_msg.body_content_type,
+            body_clean=email_msg.body_clean,
+            body_clean_version=email_clean.CLEAN_VERSION,
+            body_clean_computed_at=datetime.now(UTC),
+            meeting_message_type=email_msg.meeting_message_type,
+            meeting_response_type=email_msg.meeting_response_type,
+            sender_name=email_msg.sender_display_name,
+            is_automated=email_msg.is_automated,
+        )
+
+        await sent_reply_service.resolve_thread_from_outbound(
+            session,
+            thread_id=thread.id,
+            message=persisted,
+            conversation_id=conversation_id,
+            mailbox=attach_mailbox,
+        )
+
+        await complete_ingest_dedup(redis, mailbox, message_id)
+
+        logger.info(
+            "outbound_ingestion_complete",
+            mailbox=mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+            conversation_id=conversation_id,
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=conversation_id,
+        )
+    except Exception:
+        await release_ingest_dedup(redis, mailbox, message_id)
+        raise
+
+
+async def _heal_completed_outbound(
+    *,
+    session: AsyncSession,
+    mailbox: str,
+    message_id: str,
+) -> IngestResultSchema | None:
+    """Resolve when Redis says done but the thread never got sent-reply close.
+
+    Happens when conversation sync ingested the send (direction=outbound) and
+    triage completed the dedup key before Sent Items ever called resolve.
+
+    Never re-applies RESOLVED when a newer inbound is the tip — Sent Items
+    lookback of an old send must not undo follow-up drafting.
+    """
+    _ = mailbox
+    from app.services import sent_reply_service
+
+    existing = await message_repo.get_by_graph_id(session, message_id)
+    if existing is None:
+        return None
+    if existing.direction != EmailDirectionEnum.OUTBOUND.value:
+        return None
+
+    thread = await thread_repo.get_by_id_trusted(session, existing.thread_id)
+    if thread is None:
+        return None
+
+    sent = await sent_reply_repo.get_by_thread(session, thread.id)
+    already_replied = await sent_reply_service.thread_tip_already_replied(session, thread.id)
+    if already_replied and thread.state == ThreadStateEnum.RESOLVED.value:
+        return None
+    if already_replied:
+        # Tip is still the send we resolved; state drifted (re-drafted). Re-apply.
+        await thread_repo.set_thread_outcome(
+            session,
+            thread.id,
+            state=ThreadStateEnum.RESOLVED.value,
+        )
+        logger.info(
+            "outbound_heal_reapplied_resolved",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return IngestResultSchema(
+            message_id=message_id,
+            status="outbound",
+            thread_id=str(thread.id),
+            conversation_id=thread.conversation_id,
+        )
+    if sent is not None:
+        # Follow-up inbound after a recorded send — do not slam RESOLVED.
+        logger.info(
+            "outbound_heal_skipped_newer_inbound",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return None
+
+    messages = await message_repo.list_by_thread(session, thread.id)
+    tip = max(messages, key=lambda row: row.received_at) if messages else None
+    if tip is None or tip.id != existing.id:
+        logger.info(
+            "outbound_heal_skipped_not_tip",
+            mailbox=thread.mailbox,
+            message_id=message_id,
+            thread_id=str(thread.id),
+        )
+        return None
+
+    await sent_reply_service.resolve_thread_from_outbound(
+        session,
+        thread_id=thread.id,
+        message=existing,
+        conversation_id=thread.conversation_id,
+        mailbox=thread.mailbox,
+    )
+    logger.info(
+        "outbound_heal_resolved",
+        mailbox=thread.mailbox,
+        message_id=message_id,
+        thread_id=str(thread.id),
+    )
+    return IngestResultSchema(
+        message_id=message_id,
+        status="outbound",
+        thread_id=str(thread.id),
+        conversation_id=thread.conversation_id,
     )
 
 
@@ -483,10 +955,12 @@ async def ingest_simulated_message(
         )
         return IngestResultSchema(message_id=payload.message_id, status="duplicate")
     if claim == "in_flight":
-        retry = await _thread_context_from_db(
+        retry = await build_thread_context_from_db(
             session, mailbox=payload.mailbox, message_id=payload.message_id
         )
         if retry is not None:
+            if retry.status == "outbound":
+                await complete_ingest_dedup(redis, payload.mailbox, payload.message_id)
             return retry
         return IngestResultSchema(message_id=payload.message_id, status="in_flight")
 
@@ -498,8 +972,19 @@ async def ingest_simulated_message(
             subject=payload.subject,
             last_message_at=payload.received_at,
         )
+        await _maybe_set_alert_fingerprint(
+            session,
+            thread_id=thread.id,
+            mailbox=payload.mailbox,
+            sender=payload.sender,
+            subject=payload.subject,
+        )
 
         direction = _direction_for_sender(payload.mailbox, payload.sender)
+        unique_main, unique_quoted = split_quoted_history(payload.body_text)
+        unique_body_text = (
+            unique_main.strip() if unique_quoted is not None else (payload.body_text or "").strip()
+        )
         email_msg = _apply_body_clean(
             EmailMessageSchema(
                 message_id=payload.message_id,
@@ -509,12 +994,17 @@ async def ingest_simulated_message(
                 subject=payload.subject,
                 body_text=payload.body_text,
                 body_preview=payload.body_preview,
+                unique_body_text=unique_body_text,
                 body_content_type="text",
                 received_at=payload.received_at,
                 direction=direction,
                 to_recipients=list(payload.to_recipients),
                 cc_recipients=list(payload.cc_recipients),
-                has_attachments=payload.has_attachments,
+                bcc_recipients=list(payload.bcc_recipients),
+                is_automated=is_automated_mail(
+                    sender=payload.sender,
+                    subject=payload.subject,
+                ),
             )
         )
         await message_repo.create_message(
@@ -525,14 +1015,17 @@ async def ingest_simulated_message(
             sender=payload.sender,
             body_text=payload.body_text,
             body_preview=payload.body_preview,
+            unique_body_text=email_msg.unique_body_text,
             received_at=payload.received_at,
             to_recipients=list(payload.to_recipients),
             cc_recipients=list(payload.cc_recipients),
+            bcc_recipients=list(payload.bcc_recipients),
             has_attachments=payload.has_attachments,
             body_content_type=email_msg.body_content_type,
             body_clean=email_msg.body_clean,
             body_clean_version=email_clean.CLEAN_VERSION,
             body_clean_computed_at=datetime.now(UTC),
+            is_automated=email_msg.is_automated,
         )
 
         thread_context = ThreadContextSchema(

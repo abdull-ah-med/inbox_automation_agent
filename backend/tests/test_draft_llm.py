@@ -10,9 +10,9 @@ import pytest
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
 from app.llm import draft_generator as draft_llm
-from app.llm.prompts import DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
+from app.llm.prompts import BRIEFING_SYSTEM_PROMPT, DRAFT_SYSTEM_PROMPT, PROMPT_VERSION
 from app.models.schemas.classification import TriageResultSchema
-from app.models.schemas.draft import DraftSchema
+from app.models.schemas.draft import BriefingSchema, DraftSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema
 
@@ -72,6 +72,59 @@ def _ok_draft() -> DraftSchema:
     )
 
 
+def test_build_user_content_injects_reply_addressee_from_thread_tip() -> None:
+    mailbox = "inquiries@sample-site.example.com"
+    first = _email().model_copy(
+        update={
+            "message_id": "1",
+            "mailbox": mailbox,
+            "sender": "Smit Patel <smit.patel@sample-transport.example.com>",
+            "to_recipients": [mailbox],
+            "cc_recipients": [],
+        }
+    )
+    tip = _email().model_copy(
+        update={
+            "message_id": "2",
+            "mailbox": mailbox,
+            "sender": mailbox,
+            "direction": EmailDirectionEnum.OUTBOUND,
+            "to_recipients": ["Dev@sample-site.example.com"],
+            "cc_recipients": [],
+            "body_text": "Following up with Dev.",
+        }
+    )
+    context = ThreadContextSchema(
+        conversation_id=first.conversation_id,
+        mailbox=mailbox,
+        subject=first.subject,
+        messages=[first, tip],
+    )
+    content = draft_llm._build_user_content(tip, context, _triage())
+    assert "Reply addressee (hard constraint):" in content
+    assert "Salute: (none — no personal name known)" in content
+    assert "Primary To: dev@sample-site.example.com" in content
+    assert "Source: last_outbound_to" in content
+    assert '"Hi,"' in content or "Hi," in content
+
+
+def test_build_user_content_includes_owner_signoff_when_set() -> None:
+    email = _email().model_copy(update={"mailbox": "sampleagent@sample-site.example.com"})
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+        mailbox_owner="Elise",
+    )
+    assert "Sign the reply as Elise" in content
+    assert 'Closing name must be exactly "Elise"' in content
+
+
+def test_build_user_content_omits_owner_signoff_when_unset() -> None:
+    content = draft_llm._build_user_content(_email(), _context(_email()), _triage())
+    assert "Sign the reply as" not in content
+
+
 def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     email = _email()
     prior = EmailMessageSchema(
@@ -104,6 +157,46 @@ def test_build_user_content_includes_triage_and_optional_blocks() -> None:
     assert "conv-matched" in content
     assert "Related prior thread about onboarding." in content
     assert "Thanks — sending the packet now." in content
+
+
+def test_build_user_content_packs_confirmed_associations_not_unconfirmed() -> None:
+    email = _email()
+    confirmed = EmailMessageSchema(
+        message_id="assoc-1",
+        conversation_id="sampleclient-8-14",
+        mailbox="cr@example.com",
+        sender="rep@sample-client.example.com",
+        subject="SampleClient follow-up 8/14",
+        body_text="SampleClient packet due Friday the 14th.",
+        received_at=datetime(2026, 8, 14, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+    )
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+        confirmed_associations=[
+            CrossThreadContextSchema(
+                matched_conversation_id="sampleclient-8-14",
+                similarity_score=1.0,
+                thread_messages=[confirmed],
+            )
+        ],
+    )
+    assert "SampleClient packet due Friday the 14th." in content
+    assert "consider emailing cr@example.com" in content
+    assert "January invoice unpaid" not in content
+
+
+def test_build_user_content_includes_urgency_hints() -> None:
+    content = draft_llm._build_user_content(
+        _email(),
+        _context(_email()),
+        _triage(),
+        urgency_hints=["[HIGH] Client has an SLA deadline tomorrow"],
+    )
+    assert "Past urgency corrections" in content
+    assert "[HIGH] Client has an SLA deadline tomorrow" in content
 
 
 def test_build_user_content_uses_cleaned_body_not_quotes() -> None:
@@ -273,3 +366,82 @@ async def test_generate_draft_logs_metadata_only(monkeypatch: pytest.MonkeyPatch
     assert email.body_text not in joined
     assert "Happy to send the intake packet today." not in joined
     assert "vendor@example.com" not in joined
+
+
+def _calendar_triage() -> TriageResultSchema:
+    return TriageResultSchema(
+        is_spam=False,
+        spam_reason=None,
+        has_action_items=True,
+        action_items_summary="RSVP to IDME demo in Calendar",
+        needs_context=False,
+        context_reason=None,
+        draft_needed=False,
+    )
+
+
+def _ok_briefing() -> BriefingSchema:
+    return BriefingSchema(
+        subject_line="Invitation: IDME's Demo - 2nd Week",
+        teaching_note="RSVP in Calendar; do not email a reply.",
+        urgency="NORMAL",
+        urgency_reason="Scheduled meeting with no hard operational deadline.",
+        suggested_actions=[
+            {
+                "step": 1,
+                "action": "Accept or decline in Calendar",
+                "stakeholder": "Elise",
+                "rationale": "The ask is an RSVP, not an email.",
+            }
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_draft_without_draft_needed_uses_briefing_schema() -> None:
+    email = _email().model_copy(
+        update={
+            "sender": "siddiq@sample-partner.example.com",
+            "sender_display_name": "Abu Bakkar Siddiq",
+            "subject": "Invitation: IDME's Demo - 2nd Week",
+            "body_text": "Join with Google Meet",
+            "meeting_message_type": "meetingRequest",
+        }
+    )
+    client = AsyncMock()
+    parsed = MagicMock()
+    parsed.parsed_output = _ok_briefing()
+    parsed.usage = MagicMock(input_tokens=40, output_tokens=20)
+    client.messages.parse = AsyncMock(return_value=parsed)
+    client.messages.create = AsyncMock()
+
+    result = await draft_llm.generate_draft(
+        email,
+        _context(email),
+        _calendar_triage(),
+        client=client,
+        settings=_settings(),
+        skills=["You must always attach the rate card."],
+        reference_loader=AsyncMock(),
+    )
+
+    assert result.draft.reply_body == ""
+    assert result.draft.teaching_note == "RSVP in Calendar; do not email a reply."
+    assert result.draft.suggested_recipients == []
+    assert result.draft.forward_to is None
+    kwargs = client.messages.parse.await_args.kwargs
+
+    assert kwargs["output_format"] is BriefingSchema
+    assert "reply_body" not in BriefingSchema.model_fields
+    assert kwargs["max_tokens"] < draft_llm.DRAFT_MAX_TOKENS
+    assert kwargs["system"][0]["text"] == BRIEFING_SYSTEM_PROMPT
+    user_content = kwargs["messages"][0]["content"]
+    system_text = kwargs["system"][0]["text"]
+    assert "reply_body" not in user_content
+    assert "reply_body" not in system_text
+    assert "Hi {name}" not in user_content
+    assert "Hi Abu" not in user_content
+    assert "Sign the reply as" not in user_content
+    assert "Reply addressee" not in user_content
+    assert "rate card" not in user_content
+    client.messages.create.assert_not_called()

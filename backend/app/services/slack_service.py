@@ -18,6 +18,7 @@ from slack_bolt.async_app import AsyncApp
 from app.core.config import Settings
 from app.core.outlook_links import outlook_web_link
 from app.core.redis_keys import SLACK_POSTED_TTL_SECONDS, slack_posted_key
+from app.core.redis_lock import compare_delete
 from app.models.schemas.draft import DraftSchema
 from app.models.schemas.email_triage_state import EmailTriageState, SlackDelivery
 
@@ -236,7 +237,8 @@ async def post_review_card(
         )
         return SlackPostResult(status="skipped_no_draft")
 
-    assert slack_app is not None  # narrowed by _slack_configured
+    if slack_app is None:
+        raise RuntimeError("slack_app required when Slack is configured")
     email = state.original_email
     lock_key = slack_posted_key(email.mailbox, email.message_id)
     acquired = await redis.set(lock_key, "1", nx=True, ex=SLACK_POSTED_TTL_SECONDS)
@@ -264,7 +266,7 @@ async def post_review_card(
         )
     except Exception:
         # Allow a later retry to post — release the idempotency lock on failure.
-        await redis.delete(lock_key)
+        await compare_delete(redis, lock_key, "1")
         logger.exception(
             "slack_post_failed",
             mailbox=email.mailbox,
@@ -278,7 +280,7 @@ async def post_review_card(
         message_ts = response.get("ts")
     if not message_ts:
         # Unknown success shape — release lock so poll can retry cleanly.
-        await redis.delete(lock_key)
+        await compare_delete(redis, lock_key, "1")
         logger.error(
             "slack_post_missing_ts",
             mailbox=email.mailbox,

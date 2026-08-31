@@ -1,3 +1,4 @@
+import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
 type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple"
@@ -21,15 +22,12 @@ export const StatusBadge = ({
   className?: string
 }) => {
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded px-2 py-0.5 text-xs font-medium",
-        TONE_CLASS[tone],
-        className,
-      )}
+    <Badge
+      variant="secondary"
+      className={cn("rounded-md border-0 leading-none", TONE_CLASS[tone], className)}
     >
       {label}
-    </span>
+    </Badge>
   )
 }
 

@@ -77,6 +77,13 @@ class GraphRecipientSchema(BaseModel):
     email_address: GraphEmailAddressSchema | None = Field(default=None, alias="emailAddress")
 
 
+class GraphInternetMessageHeaderSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    name: str | None = None
+    value: str | None = None
+
+
 class GraphMessageBodySchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -90,9 +97,11 @@ class GraphMessageSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     id: str
+    odata_type: str | None = Field(default=None, alias="@odata.type")
     subject: str | None = None
     body_preview: str | None = Field(default=None, alias="bodyPreview")
     body: GraphMessageBodySchema | None = None
+    unique_body: GraphMessageBodySchema | None = Field(default=None, alias="uniqueBody")
     sender: GraphRecipientSchema | None = None
     from_: GraphRecipientSchema | None = Field(default=None, alias="from")
     to_recipients: list[GraphRecipientSchema] = Field(
@@ -103,17 +112,51 @@ class GraphMessageSchema(BaseModel):
         default_factory=list,
         alias="ccRecipients",
     )
+    bcc_recipients: list[GraphRecipientSchema] = Field(
+        default_factory=list,
+        alias="bccRecipients",
+    )
     received_date_time: datetime | None = Field(default=None, alias="receivedDateTime")
     conversation_id: str | None = Field(default=None, alias="conversationId")
     is_read: bool | None = Field(default=None, alias="isRead")
     has_attachments: bool | None = Field(default=None, alias="hasAttachments")
     importance: str | None = None
+    meeting_message_type: str | None = Field(default=None, alias="meetingMessageType")
+    response_type: str | None = Field(default=None, alias="responseType")
+    internet_message_headers: list[GraphInternetMessageHeaderSchema] = Field(
+        default_factory=list,
+        alias="internetMessageHeaders",
+    )
+    # Set by the poller; not a Graph JSON field.
+    source_folder: str | None = None
 
 
 class GraphMessageListSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     value: list[GraphMessageSchema] = Field(default_factory=list)
+    odata_next_link: str | None = Field(default=None, alias="@odata.nextLink")
+
+
+class GraphFileAttachmentSchema(BaseModel):
+    """Subset of fileAttachment used to resolve cid: images in HTML bodies."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    id: str | None = None
+    name: str | None = None
+    content_type: str | None = Field(default=None, alias="contentType")
+    content_bytes: str | None = Field(default=None, alias="contentBytes")
+    content_id: str | None = Field(default=None, alias="contentId")
+    is_inline: bool | None = Field(default=None, alias="isInline")
+    size: int | None = None
+    odata_type: str | None = Field(default=None, alias="@odata.type")
+
+
+class GraphAttachmentListSchema(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    value: list[GraphFileAttachmentSchema] = Field(default_factory=list)
     odata_next_link: str | None = Field(default=None, alias="@odata.nextLink")
 
 
@@ -145,12 +188,20 @@ class SimulateIngestRequestSchema(BaseModel):
     received_at: datetime
     to_recipients: list[str] = Field(default_factory=list, max_length=50)
     cc_recipients: list[str] = Field(default_factory=list, max_length=50)
+    bcc_recipients: list[str] = Field(default_factory=list, max_length=50)
     has_attachments: bool = False
 
 
 class IngestResultSchema(BaseModel):
     message_id: str
-    status: Literal["ingested", "duplicate", "skipped", "retry_triage", "in_flight"]
+    status: Literal[
+        "ingested",
+        "duplicate",
+        "skipped",
+        "retry_triage",
+        "in_flight",
+        "outbound",
+    ]
     thread_id: str | None = None
     conversation_id: str | None = None
     thread_context: ThreadContextSchema | None = None

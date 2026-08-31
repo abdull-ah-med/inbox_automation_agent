@@ -11,9 +11,17 @@ from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.internal_mail import extract_email_address
+from app.models.db.draft import Draft
 from app.models.db.rejection_memory import RejectionMemory
+from app.repositories._vector_common import cap_limit, set_hnsw_session_defaults
+from app.repositories.memory_list_common import latest_inbound_sender_subquery
+from app.utils.text import truncate_display
 
 _NOTE_DISPLAY_MAX = 240
+_BODY_PREVIEW_MAX = 400
+_ONE_LINE_MAX = 140
 
 
 class RejectionMemorySchema(BaseModel):
@@ -29,10 +37,31 @@ class RejectionMemorySchema(BaseModel):
     created_at: datetime | None = None
 
 
+class RejectionMemoryListItem(BaseModel):
+    """Settings list row — rejection note plus draft context."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    draft_id: uuid.UUID
+    thread_id: uuid.UUID | None = None
+    mailbox: str
+    routing_category: str
+    reason_code: str
+    note: str
+    reason_text: str | None = None
+    is_excluded: bool = False
+    created_at: datetime | None = None
+    draft_subject: str | None = None
+    draft_body: str | None = None
+    draft_body_preview: str | None = None
+    preview_line: str | None = None
+    sender_email: str | None = None
+    receiver_email: str | None = None
+
+
 def format_constraint_line(*, reason_code: str, note: str) -> str:
-    text = note.strip()
-    if len(text) > _NOTE_DISPLAY_MAX:
-        text = text[: _NOTE_DISPLAY_MAX - 1] + "…"
+    text = truncate_display(note.strip(), _NOTE_DISPLAY_MAX)
     return f"[{reason_code}] {text}"
 
 
@@ -182,6 +211,7 @@ async def find_similar_constraints(
 ) -> list[str]:
     if limit < 1:
         return []
+    await set_hnsw_session_defaults(session, get_settings())
     distance = RejectionMemory.embedding.cosine_distance(query_embedding)
     stmt = (
         select(
@@ -221,3 +251,142 @@ async def set_excluded_for_ids(
     result = await session.execute(stmt)
     await session.flush()
     return int(getattr(result, "rowcount", 0) or 0)
+
+
+def _one_line(text: str | None, *, max_len: int = _ONE_LINE_MAX) -> str | None:
+    if not text or not str(text).strip():
+        return None
+    collapsed = " ".join(str(text).split())
+    return truncate_display(collapsed, max_len)
+
+
+def _sender_email(raw: str | None) -> str | None:
+    if not raw or not str(raw).strip():
+        return None
+    return extract_email_address(str(raw)) or str(raw).strip()
+
+
+def _list_item_from_row(
+    memory: RejectionMemory,
+    *,
+    thread_id: uuid.UUID | None,
+    draft_subject: str | None,
+    draft_body: str | None,
+    sender_raw: str | None,
+) -> RejectionMemoryListItem:
+    preview = None
+    if draft_body and draft_body.strip():
+        preview = truncate_display(draft_body.strip(), _BODY_PREVIEW_MAX)
+    return RejectionMemoryListItem(
+        id=memory.id,
+        draft_id=memory.draft_id,
+        thread_id=thread_id,
+        mailbox=memory.mailbox,
+        routing_category=memory.routing_category,
+        reason_code=memory.reason_code,
+        note=memory.note,
+        reason_text=memory.note,
+        is_excluded=bool(memory.is_excluded),
+        created_at=memory.created_at,
+        draft_subject=draft_subject,
+        draft_body=draft_body,
+        draft_body_preview=preview,
+        preview_line=_one_line(draft_body),
+        sender_email=_sender_email(sender_raw),
+        receiver_email=memory.mailbox,
+    )
+
+
+async def _list_enriched(
+    session: AsyncSession,
+    *,
+    where_clause: object,
+    limit: int,
+) -> list[RejectionMemoryListItem]:
+    capped = cap_limit(limit, maximum=500)
+    body_expr = func.coalesce(Draft.edited_body, Draft.body)
+    inbound = latest_inbound_sender_subquery()
+    stmt = (
+        select(
+            RejectionMemory,
+            Draft.thread_id,
+            Draft.subject,
+            body_expr,
+            inbound.c.sender,
+        )
+        .outerjoin(Draft, Draft.id == RejectionMemory.draft_id)
+        .outerjoin(inbound, inbound.c.thread_id == Draft.thread_id)
+        .where(where_clause)
+        .order_by(RejectionMemory.created_at.desc())
+        .limit(capped)
+    )
+    result = await session.execute(stmt)
+    return [
+        _list_item_from_row(
+            memory,
+            thread_id=thread_id,
+            draft_subject=subject,
+            draft_body=body,
+            sender_raw=sender,
+        )
+        for memory, thread_id, subject, body, sender in result.all()
+    ]
+
+
+async def list_for_mailbox(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    limit: int = 100,
+) -> list[RejectionMemoryListItem]:
+    """List rejection memories newest-first for Settings (includes excluded)."""
+    if not (mailbox or "").strip():
+        raise ValueError("mailbox is required")
+    return await _list_enriched(
+        session,
+        where_clause=RejectionMemory.mailbox == mailbox,
+        limit=limit,
+    )
+
+
+async def list_all_for_mailboxes(
+    session: AsyncSession,
+    *,
+    mailboxes: list[str],
+    limit: int = 100,
+) -> list[RejectionMemoryListItem]:
+    """Cross-mailbox list for Settings. Empty allowlist returns no rows."""
+    allowed = [item.strip() for item in mailboxes if item and item.strip()]
+    if not allowed:
+        return []
+    return await _list_enriched(
+        session,
+        where_clause=RejectionMemory.mailbox.in_(allowed),
+        limit=limit,
+    )
+
+
+async def set_excluded(
+    session: AsyncSession,
+    memory_id: uuid.UUID,
+    *,
+    is_excluded: bool,
+) -> RejectionMemoryListItem | None:
+    """Toggle exclusion for one rejection memory row."""
+    stmt = (
+        sa_update(RejectionMemory)
+        .where(RejectionMemory.id == memory_id)
+        .values(is_excluded=is_excluded)
+        .returning(RejectionMemory)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    items = await _list_enriched(
+        session,
+        where_clause=RejectionMemory.id == memory_id,
+        limit=1,
+    )
+    return items[0] if items else None

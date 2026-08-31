@@ -17,7 +17,12 @@ from app.core.exceptions import TriageError
 from app.llm.context_pack import pack_same_thread
 from app.llm.email_clean import effective_body_text
 from app.llm.pii_redact import scrub_email_for_llm, scrub_thread_for_llm
-from app.llm.prompts import PROMPT_VERSION, TRIAGE_SYSTEM_PROMPT
+from app.llm.prompts import (
+    PROMPT_VERSION,
+    TRIAGE_SYSTEM_PROMPT,
+    UNTRUSTED_EMAIL_TAG,
+    wrap_untrusted,
+)
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 
@@ -40,6 +45,7 @@ def _build_user_content(
     *,
     verbatim_tail: int = 2,
     full_if_at_most: int = 5,
+    mailbox_owner: str | None = None,
 ) -> str:
     thread_block = pack_same_thread(
         thread_context,
@@ -54,21 +60,45 @@ def _build_user_content(
         body_text=email.body_text,
         body_content_type=email.body_content_type,
     )
+    outlook_location = ""
+    if (email.graph_folder or "").strip().lower() == "junkemail":
+        outlook_location = "Outlook location: Junk Email\n"
 
-    return (
+    owner_line = ""
+    if mailbox_owner and mailbox_owner.strip():
+        name = mailbox_owner.strip()
+        owner_line = (
+            f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
+        )
+
+    meeting = (email.meeting_message_type or "").strip()
+    meeting_line = f"Graph meetingMessageType: {meeting}\n" if meeting else ""
+    automated_line = ""
+    if email.is_automated:
+        automated_line = (
+            "Ingest hint (not a verdict): headers/From looked automated. "
+            "Judge from the body and thread — a named person on a helpdesk "
+            "address is not a robot.\n"
+        )
+    email_block = (
         f"Mailbox: {email.mailbox}\n"
+        f"{owner_line}"
         f"Message ID: {email.message_id}\n"
         f"Conversation ID: {email.conversation_id}\n"
         f"Direction: {email.direction.value}\n"
         f"Sender: {email.sender}\n"
         f"To: {to_list}\n"
         f"CC: {cc_list}\n"
+        f"{outlook_location}"
+        f"{meeting_line}"
+        f"{automated_line}"
         f"Subject: {email.subject}\n"
         f"Received at: {email.received_at.isoformat()}\n"
         f"Body:\n{body}\n\n"
         f"Thread context ({len(thread_context.messages)} messages, oldest first):\n"
         f"{thread_block}\n"
     )
+    return wrap_untrusted(UNTRUSTED_EMAIL_TAG, email_block)
 
 
 async def _parse_once(
@@ -119,6 +149,7 @@ async def triage_email(
         scrub_thread_for_llm(thread_context),
         verbatim_tail=settings.thread_verbatim_tail,
         full_if_at_most=settings.thread_full_if_at_most,
+        mailbox_owner=settings.owner_for_mailbox(email.mailbox),
     )
     started = time.perf_counter()
     last_error: Exception | None = None
@@ -141,7 +172,9 @@ async def triage_email(
                 latency_ms=latency_ms,
                 is_spam=triage.is_spam,
                 has_action_items=triage.has_action_items,
+                draft_needed=triage.draft_needed,
                 needs_context=triage.needs_context,
+                is_automated=triage.is_automated,
                 attempt=attempt + 1,
             )
             return TriageCallResult(

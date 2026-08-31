@@ -67,6 +67,10 @@ class ReplyMemoryNotFoundError(InboxTriageError):
     """Raised when a reply-memory (tone reference) id does not exist."""
 
 
+class RejectionMemoryNotFoundError(InboxTriageError):
+    """Raised when a rejection-memory id does not exist."""
+
+
 class SkillNameConflictError(InboxTriageError):
     """Raised when creating/updating a skill with a duplicate name."""
 
@@ -99,5 +103,38 @@ class SkillAlreadyImportedError(SkillArchiveError):
         self.skill_id = skill_id
 
 
+class SkillDuplicateCandidatesError(SkillArchiveError):
+    """Raised when import finds semantically similar existing skills."""
+
+    def __init__(
+        self,
+        message: str = "Similar skills already exist",
+        *,
+        candidates: list[dict[str, object]],
+    ) -> None:
+        super().__init__(message)
+        self.candidates = candidates
+
+
 class ThreadNotFoundError(InboxTriageError):
     """Raised when a thread id does not exist for regeneration or lookup."""
+
+
+class InvalidDateRangeError(InboxTriageError):
+    """Raised when an ops-metrics date window is inverted or too wide."""
+
+
+class UnknownMailboxError(InboxTriageError):
+    """Raised when a mailbox filter is not in the configured allowlist."""
+
+
+class EmptySearchQueryError(InboxTriageError):
+    """Raised when a search query is missing or blank after strip."""
+
+
+class SearchError(InboxTriageError):
+    """Raised when hybrid retrieval cannot complete either search leg."""
+
+
+class ChatError(InboxTriageError):
+    """Raised when the grounded chat answer call fails after retry."""

@@ -3,19 +3,13 @@
 import { useEffect } from "react"
 
 import { AppHeader } from "@/components/app-header"
+import { InboxAssistant } from "@/components/inbox-assistant"
 import { Skeleton } from "@/components/ui/skeleton"
 import { clearAuthSession } from "@/features/auth/auth-store"
 import { useAuthBootstrap, useAuthState } from "@/features/auth/use-auth"
-import {
-  hasLogoutGuard,
-  replaceToLogin,
-} from "@/lib/auth-navigation"
+import { hasLogoutGuard, replaceToLogin } from "@/lib/auth-navigation"
 
-export default function AppShellLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function AppShellLayout({ children }: { children: React.ReactNode }) {
   const { bootstrapped } = useAuthBootstrap()
   const auth = useAuthState()
 
@@ -54,7 +48,7 @@ export default function AppShellLayout({
   if (!bootstrapped) {
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
-        <div className="mx-auto max-w-8xl space-y-4 p-15">
+        <div className="app-shell mx-auto space-y-4 px-6 py-6" aria-busy="true" aria-live="polite">
           <Skeleton className="h-16 w-full rounded-lg" />
           <Skeleton className="h-40 w-full rounded-lg" />
         </div>
@@ -67,7 +61,7 @@ export default function AppShellLayout({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen overflow-x-hidden bg-gray-50 dark:bg-gray-950">
       <a
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-blue-600 focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-white"
@@ -75,9 +69,10 @@ export default function AppShellLayout({
         Skip to main content
       </a>
       <AppHeader />
-      <main id="main-content" className="mx-auto max-w-8xl p-15">
+      <main id="main-content" className="app-shell mx-auto px-4 py-6 sm:px-6">
         {children}
       </main>
+      <InboxAssistant />
     </div>
   )
 }

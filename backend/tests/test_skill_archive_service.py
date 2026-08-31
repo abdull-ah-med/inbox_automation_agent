@@ -11,12 +11,13 @@ from uuid import uuid4
 import pytest
 
 from app.core.exceptions import (
-    SkillAlreadyImportedError,
+    SkillDuplicateCandidatesError,
     SkillPackageTooLargeError,
     SkillPackagingError,
     SkillPathTraversalError,
 )
 from app.models.schemas.skill import ImportSkillResultSchema, SkillResponseSchema
+from app.repositories.skill_repo import SkillSimilarityHit
 from app.services import skill_archive_service
 from app.services.skill_archive_service import (
     MAX_ARCHIVE_BYTES,
@@ -57,9 +58,7 @@ def _valid_archive(**extra: bytes | str) -> bytes:
 
 def test_parse_valid_archive_extracts_files_and_kinds() -> None:
     """Valid Anthropic-packaged zip yields name/body and typed file rows."""
-    name, description, body, extras, files, warnings = parse_skill_archive(
-        _valid_archive()
-    )
+    name, description, body, extras, files, warnings = parse_skill_archive(_valid_archive())
     assert name == "demo-skill"
     assert description.startswith("A demo skill")
     assert "Always bill" in body
@@ -187,17 +186,20 @@ def test_scripts_folder_emits_warning_and_skips_rows() -> None:
 async def test_import_idempotent_same_hash_raises_without_overwrite(
     settings,
 ) -> None:
-    """Re-uploading identical bytes raises SkillAlreadyImportedError."""
+    """Re-uploading identical bytes raises SkillDuplicateCandidatesError."""
     raw = _valid_archive()
     digest = hashlib.sha256(raw).hexdigest()
     existing = MagicMock()
     existing.id = uuid4()
     existing.name = "demo-skill"
 
-    with patch(
-        "app.services.skill_archive_service.skill_repo.get_by_import_hash",
-        AsyncMock(return_value=existing),
-    ), pytest.raises(SkillAlreadyImportedError) as exc_info:
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=existing),
+        ),
+        pytest.raises(SkillDuplicateCandidatesError) as exc_info,
+    ):
         await skill_archive_service.import_skill_archive(
             AsyncMock(),
             archive_bytes=raw,
@@ -206,25 +208,24 @@ async def test_import_idempotent_same_hash_raises_without_overwrite(
             openai_client=None,
             overwrite=False,
         )
-    assert exc_info.value.skill_id == existing.id
+    assert len(exc_info.value.candidates) == 1
+    assert exc_info.value.candidates[0]["id"] == existing.id
+    assert exc_info.value.candidates[0]["name"] == "demo-skill"
+    assert exc_info.value.candidates[0]["similarity"] == 1.0
     assert digest  # sanity: hash computed for comparison path
 
 
-@pytest.mark.asyncio
-async def test_import_overwrite_replaces_content_and_files(settings) -> None:
-    """overwrite=True replaces skill content + bundled files."""
-    raw = _valid_archive()
-    skill_id = uuid4()
-    skill = SkillResponseSchema.model_validate(
+def _skill_response(*, skill_id=None, name: str = "demo-skill") -> SkillResponseSchema:
+    return SkillResponseSchema.model_validate(
         {
-            "id": skill_id,
-            "name": "demo-skill",
+            "id": skill_id or uuid4(),
+            "name": name,
             "description": "A demo skill for unit tests",
             "content": "Always bill the correct department.",
             "category": "billing",
             "is_active": True,
             "source_kind": "imported",
-            "imported_zip_sha256": hashlib.sha256(raw).hexdigest(),
+            "imported_zip_sha256": "abc",
             "reference_file_count": 2,
             "asset_file_count": 1,
             "created_at": "2026-08-05T00:00:00Z",
@@ -232,9 +233,22 @@ async def test_import_overwrite_replaces_content_and_files(settings) -> None:
         }
     )
 
+
+@pytest.mark.asyncio
+async def test_import_overwrite_replaces_content_and_files(settings) -> None:
+    """overwrite=True replaces skill content + bundled files."""
+    raw = _valid_archive()
+    skill_id = uuid4()
+    skill = _skill_response(skill_id=skill_id)
+    skill = skill.model_copy(update={"imported_zip_sha256": hashlib.sha256(raw).hexdigest()})
+
     with (
         patch(
             "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
             AsyncMock(return_value=None),
         ),
         patch(
@@ -265,3 +279,253 @@ async def test_import_overwrite_replaces_content_and_files(settings) -> None:
     assert kwargs["overwrite"] is True
     assert kwargs["name"] == "demo-skill"
     assert len(kwargs["files"]) == 3
+
+
+@pytest.mark.asyncio
+async def test_import_similar_without_overwrite_raises(settings) -> None:
+    """Semantically similar skills block import until overwrite or rename."""
+    raw = _valid_archive()
+    hit_id = uuid4()
+    client = MagicMock()
+    settings = settings.model_copy(update={"openai_api_key": "sk-test"})
+
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.embedding_service.embed_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.find_similar",
+            AsyncMock(
+                return_value=[
+                    SkillSimilarityHit(id=hit_id, name="samplelab-rebilling", similarity=0.91)
+                ]
+            ),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.upsert_imported",
+            AsyncMock(),
+        ) as upsert,
+        pytest.raises(SkillDuplicateCandidatesError) as exc_info,
+    ):
+        await skill_archive_service.import_skill_archive(
+            AsyncMock(),
+            archive_bytes=raw,
+            original_filename="demo-skill.zip",
+            settings=settings,
+            openai_client=client,
+            overwrite=False,
+        )
+
+    assert len(exc_info.value.candidates) == 1
+    assert exc_info.value.candidates[0]["id"] == hit_id
+    assert exc_info.value.candidates[0]["similarity"] == 0.91
+    upsert.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_with_skill_id_targets_candidate(settings) -> None:
+    """overwrite + overwrite_skill_id writes into that skill row."""
+    raw = _valid_archive()
+    target_id = uuid4()
+    skill = _skill_response(skill_id=target_id, name="samplelab-rebilling")
+    client = MagicMock()
+    settings = settings.model_copy(update={"openai_api_key": "sk-test"})
+
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.embedding_service.embed_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.find_similar",
+            AsyncMock(
+                return_value=[
+                    SkillSimilarityHit(id=target_id, name="samplelab-rebilling", similarity=0.93)
+                ]
+            ),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.upsert_imported",
+            AsyncMock(return_value=(skill, True)),
+        ) as upsert,
+        patch(
+            "app.services.skill_archive_service.skill_embedding_service.maybe_embed_skill",
+            AsyncMock(),
+        ),
+    ):
+        result = await skill_archive_service.import_skill_archive(
+            AsyncMock(),
+            archive_bytes=raw,
+            original_filename="demo-skill.zip",
+            settings=settings,
+            openai_client=client,
+            overwrite=True,
+            overwrite_skill_id=target_id,
+        )
+
+    assert result.overwritten is True
+    assert upsert.await_args.kwargs["target_skill_id"] == target_id
+    assert upsert.await_args.kwargs["overwrite"] is True
+
+
+@pytest.mark.asyncio
+async def test_import_overwrite_without_id_picks_top_candidate(settings) -> None:
+    """overwrite=True without id selects the highest-similarity match."""
+    raw = _valid_archive()
+    top_id = uuid4()
+    other_id = uuid4()
+    skill = _skill_response(skill_id=top_id, name="samplelab-rebilling")
+    client = MagicMock()
+    settings = settings.model_copy(update={"openai_api_key": "sk-test"})
+
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.embedding_service.embed_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.find_similar",
+            AsyncMock(
+                return_value=[
+                    SkillSimilarityHit(id=top_id, name="samplelab-rebilling", similarity=0.94),
+                    SkillSimilarityHit(id=other_id, name="other-skill", similarity=0.86),
+                ]
+            ),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.upsert_imported",
+            AsyncMock(return_value=(skill, True)),
+        ) as upsert,
+        patch(
+            "app.services.skill_archive_service.skill_embedding_service.maybe_embed_skill",
+            AsyncMock(),
+        ),
+    ):
+        await skill_archive_service.import_skill_archive(
+            AsyncMock(),
+            archive_bytes=raw,
+            original_filename="demo-skill.zip",
+            settings=settings,
+            openai_client=client,
+            overwrite=True,
+        )
+
+    assert upsert.await_args.kwargs["target_skill_id"] == top_id
+
+
+@pytest.mark.asyncio
+async def test_import_similarity_threshold_respected(settings) -> None:
+    """find_similar is called with settings.skill_similarity_threshold."""
+    raw = _valid_archive()
+    client = MagicMock()
+    settings = settings.model_copy(
+        update={"openai_api_key": "sk-test", "skill_similarity_threshold": 0.9}
+    )
+    skill = _skill_response()
+
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.embedding_service.embed_text",
+            AsyncMock(return_value=[0.2] * 8),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.find_similar",
+            AsyncMock(return_value=[]),
+        ) as find_similar,
+        patch(
+            "app.services.skill_archive_service.skill_repo.upsert_imported",
+            AsyncMock(return_value=(skill, False)),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_embedding_service.maybe_embed_skill",
+            AsyncMock(),
+        ),
+    ):
+        await skill_archive_service.import_skill_archive(
+            AsyncMock(),
+            archive_bytes=raw,
+            original_filename="demo-skill.zip",
+            settings=settings,
+            openai_client=client,
+            overwrite=False,
+        )
+
+    assert find_similar.await_args.kwargs["threshold"] == 0.9
+
+
+@pytest.mark.asyncio
+async def test_import_name_override_skips_duplicate_check(settings) -> None:
+    """Creating as new with name_override bypasses similarity conflict."""
+    raw = _valid_archive()
+    skill = _skill_response(name="demo-skill-v2")
+    client = MagicMock()
+    settings = settings.model_copy(update={"openai_api_key": "sk-test"})
+
+    with (
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_import_hash",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.get_by_name",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.skill_archive_service.skill_repo.find_similar",
+            AsyncMock(),
+        ) as find_similar,
+        patch(
+            "app.services.skill_archive_service.skill_repo.upsert_imported",
+            AsyncMock(return_value=(skill, False)),
+        ) as upsert,
+        patch(
+            "app.services.skill_archive_service.skill_embedding_service.maybe_embed_skill",
+            AsyncMock(),
+        ),
+    ):
+        result = await skill_archive_service.import_skill_archive(
+            AsyncMock(),
+            archive_bytes=raw,
+            original_filename="demo-skill.zip",
+            settings=settings,
+            openai_client=client,
+            overwrite=False,
+            name_override="demo-skill-v2",
+        )
+
+    assert result.name == "demo-skill-v2"
+    find_similar.assert_not_awaited()
+    assert upsert.await_args.kwargs["name"] == "demo-skill-v2"

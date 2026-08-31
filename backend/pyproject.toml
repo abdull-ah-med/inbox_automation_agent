@@ -41,6 +41,8 @@ dependencies = [
     "cssselect>=1.2,<2.0",
     # OpenAI embedding token budgeting (cl100k_base).
     "tiktoken>=0.13,<0.14",
+    # Weekly ops report PDF (pure Python; no Cairo/Pango).
+    "reportlab>=4.2,<5.0",
 ]
 
 [project.optional-dependencies]
@@ -50,22 +52,108 @@ dev = [
     "pytest-cov>=7.1,<8.0",
     "ruff>=0.15,<0.16",
     "mypy>=2.2,<3.0",
+    "pypdf>=5.0,<7.0",
+]
+# LLM response quality evals (DeepEval + RAGAS). Not installed by default CI.
+#   pip install -e ".[eval]"
+# Do not add deepeval[inspect] here — DeepEval docs say it bloats installs outside inspect tooling.
+eval = [
+    "deepeval>=3.0,<4.0",
+    "ragas>=0.2,<1.0",
+    # ragas 0.4.x still imports langchain_community.chat_models.vertexai at
+    # module load; that path was removed in langchain-community 0.4+.
+    "langchain-community>=0.3.0,<0.4",
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
 
+[tool.setuptools.package-data]
+app = ["assets/fonts/*"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
 extend-exclude = ["app/llm/_vendor"]
 
+[tool.ruff.format]
+# Black-compatible defaults (https://docs.astral.sh/ruff/formatter/).
+docstring-code-format = true
+
 [tool.ruff.lint]
-# E/F = pyflakes+pycodestyle, I = import sorting, UP = pyupgrade,
-# B = bugbear (real-bug patterns), ASYNC = async correctness (critical here),
-# C4 = comprehensions, SIM = simplifications.
-select = ["E", "F", "I", "UP", "B", "ASYNC", "C4", "SIM"]
+# Prefer an explicit select over ALL so upgrades do not silently expand the
+# gate (https://docs.astral.sh/ruff/linter/#rule-selection).
+# E/W/F = pycodestyle+pyflakes, I = isort, UP = pyupgrade,
+# B = bugbear, ASYNC = async correctness, C4 = comprehensions, SIM = simplify,
+# S = bandit security, FAST = FastAPI, RUF = Ruff-specific, PERF/PIE = perf/pie,
+# RET/ARG = returns/unused args, PTH = pathlib, T20 = no print, DTZ = tz-aware
+# datetimes, LOG/G = logging, A = builtin shadowing, ERA = commented-out code
+# (AI/slop residue), PT = pytest style, C90 = McCabe complexity,
+# PLR = pylint refactor (branches/statements/returns).
+# Budgets: scripts/lint-budgets.toml
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "UP",
+    "B",
+    "ASYNC",
+    "C4",
+    "C90",
+    "SIM",
+    "S",
+    "FAST",
+    "RUF",
+    "PERF",
+    "PIE",
+    "RET",
+    "ARG",
+    "PTH",
+    "T20",
+    "DTZ",
+    "LOG",
+    "G",
+    "A",
+    "ERA",
+    "PT",
+    "PLR0911",
+    "PLR0912",
+    "PLR0915",
+]
+ignore = [
+    # Formatter owns wrapping (https://docs.astral.sh/ruff/formatter/#conflicting-lint-rules).
+    "E501",
+    # Bandit flags common credential *field names* (password=, redis URL placeholders)
+    # as hardcoded secrets; real secrets stay out of git via .env / CI secrets.
+    "S105",
+    "S106",
+    # Existing tests often combine related asserts; enable gradually after triage.
+    "PT018",
+    # Micro-style; prefer clarity over forced comprehensions in hot paths.
+    "PERF401",
+    "PERF403",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
+
+[tool.ruff.lint.pylint]
+max-branches = 20
+max-statements = 80
+max-returns = 8
+
+[tool.ruff.lint.per-file-ignores]
+# pytest asserts are the API; bandit S101 is for production assert misuse.
+# Live/integration tests intentionally exercise long happy-path flows.
+"tests/**" = ["S101", "T20", "ARG", "S603", "S607", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"scripts/**" = ["T20", "C901", "PLR0911", "PLR0912", "PLR0915"]
+# FastAPI Depends() defaults are intentional (https://docs.astral.sh/ruff/rules/function-call-in-default-argument/).
+"app/api/**" = ["B008"]
+# Vendored / migration surfaces.
+"app/db/migrations/**" = ["ARG", "ERA", "RUF", "C901", "PLR0911", "PLR0912", "PLR0915"]
+"app/llm/_vendor/**" = ["C901", "PLR0911", "PLR0912", "PLR0915"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -92,6 +180,7 @@ module = [
     "slack_sdk.*",
     "pgvector.*",
     "apscheduler.*",
+    "reportlab.*",
     "app.llm._vendor.talon.*",
 ]
 ignore_missing_imports = true
@@ -108,10 +197,13 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
+    "db: executes SQL against Postgres (skipped if unavailable; CI must run these)",
     "live_graph: opt-in live Microsoft Graph tests (set RUN_LIVE_GRAPH=1)",
     "live_claude: opt-in live Anthropic Haiku triage tests (set RUN_LIVE_CLAUDE=1)",
     "live_e2e: opt-in live Graph→Redis→DB→PII→Haiku pipeline (set RUN_LIVE_E2E=1)",
     "live_embedding: opt-in live OpenAI embedding + similarity + tone E2E (set RUN_LIVE_EMBEDDING_E2E=1)",
+    "llm_eval: opt-in DeepEval/RAGAS LLM response evals (set RUN_LLM_EVAL=1; needs pip install -e '.[eval]')",
+    "deepeval: CI faithfulness/relevancy gate (needs ANTHROPIC_API_KEY + OPENAI_API_KEY)",
 ]
 
 [tool.coverage.run]

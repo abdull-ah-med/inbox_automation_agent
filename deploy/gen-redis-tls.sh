@@ -46,8 +46,15 @@ sudo chmod 600 ca.key redis.key
 
 REDIS_PASSWORD=$(openssl rand -hex 24)
 
+# ACL: default user with password, all non-dangerous commands.
+# App needs scripting (locks), streams (webhooks), hashes, and strings.
+# Do NOT change local docker-compose.yml auth — intentional for local.
+cat > users.acl <<ACL
+user default on >${REDIS_PASSWORD} ~* +@all -@dangerous
+ACL
+
 echo ""
-echo "Generated: $TLS_DIR/{ca.crt,ca.key,redis.crt,redis.key}"
+echo "Generated: $TLS_DIR/{ca.crt,ca.key,redis.crt,redis.key,users.acl}"
 echo ""
 echo "REDIS_PASSWORD=$REDIS_PASSWORD"
 echo ""

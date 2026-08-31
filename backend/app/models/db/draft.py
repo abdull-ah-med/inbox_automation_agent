@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -34,6 +34,12 @@ class Draft(Base):
     feedback_action: Mapped[str | None] = mapped_column(String(16), nullable=True)
     feedback_reason_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     routing_category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    approval_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approval_scope: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    approval_note_persisted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
     suggested_actions: Mapped[list[Any] | None] = mapped_column(
         JSONB,
         nullable=True,
@@ -51,4 +57,12 @@ class Draft(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+    __table_args__ = (
+        Index(
+            "ix_drafts_approved_at",
+            text("approved_at DESC"),
+            postgresql_where=text("approved_at IS NOT NULL"),
+        ),
+        Index("ix_drafts_thread_id_created_at", "thread_id", text("created_at DESC")),
     )

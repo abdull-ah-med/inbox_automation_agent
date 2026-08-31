@@ -1,0 +1,40 @@
+# Shared complexity / size budgets for frontend (oxlint) and backend (ruff + ABC gate).
+# Keep these in sync with:
+#   frontend/web/.oxlintrc.json
+#   backend/pyproject.toml [tool.ruff.lint.mccabe] / [tool.ruff.lint.pylint]
+#   scripts/check_abc_budgets.py
+#
+# Frontend cyclomatic / LOC / statements are enforced by oxlint.
+# Backend cyclomatic / branches / statements are enforced by ruff.
+# This file + check_abc_budgets.py enforce LOC-per-file (both) and ABC (Python AST;
+# frontend .ts modules only — JSX call density makes TSX ABC unreliable).
+
+[frontend]
+cyclomatic = 20
+max_file_loc = 600
+max_function_loc = 250
+max_depth = 5
+max_params = 5
+max_statements = 60
+# ABC for non-TSX modules under src/lib and src/hooks
+max_abc = 50
+
+[frontend.tests]
+cyclomatic = 30
+max_file_loc = 1200
+max_function_loc = 400
+max_abc = 80
+
+[backend]
+cyclomatic = 20
+max_branches = 20
+max_statements = 80
+max_returns = 8
+max_file_loc = 1200
+# Fitzpatrick ABC magnitude per function (Python AST)
+max_abc = 80
+
+[backend.tests]
+cyclomatic = 30
+max_file_loc = 1600
+max_abc = 120

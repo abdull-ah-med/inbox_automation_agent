@@ -6,7 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,10 +20,12 @@ from app.models.schemas.draft import (
     SuggestedActionSchema,
     SuggestedRecipientSchema,
 )
+from app.repositories._vector_common import cap_limit
 
 Urgency = Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
 _VALID_URGENCY = frozenset({"CRITICAL", "HIGH", "NORMAL", "LOW"})
 FeedbackAction = Literal["approve", "reject", "wrong"]
+_OUTLOOK_CATCHUP_NOTE = "Learned from Outlook send"
 
 
 def _recipients_payload(draft: DraftSchema) -> dict[str, Any]:
@@ -135,14 +137,10 @@ def _parse_tool_calls(raw: object) -> list[DraftToolCallSchema] | None:
                 is_error=bool(item.get("is_error")),
                 bytes=item.get("bytes") if isinstance(item.get("bytes"), int) else None,
                 truncated=(
-                    item.get("truncated")
-                    if isinstance(item.get("truncated"), bool)
-                    else None
+                    item.get("truncated") if isinstance(item.get("truncated"), bool) else None
                 ),
                 iteration=(
-                    item.get("iteration")
-                    if isinstance(item.get("iteration"), int)
-                    else None
+                    item.get("iteration") if isinstance(item.get("iteration"), int) else None
                 ),
             )
         )
@@ -192,6 +190,8 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         feedback_action=row.feedback_action if isinstance(row.feedback_action, str) else None,
         feedback_reason_code=feedback_reason if isinstance(feedback_reason, str) else None,
         routing_category=routing if isinstance(routing, str) else None,
+        approval_note=row.approval_note if isinstance(row.approval_note, str) else None,
+        approval_scope=row.approval_scope if isinstance(row.approval_scope, str) else None,
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
         applied_skills=_parse_applied_skills(row.applied_skills_json),
         tool_calls=_parse_tool_calls(row.tool_calls_json),
@@ -308,6 +308,8 @@ async def approve_draft(
     draft_id: uuid.UUID,
     *,
     edited_body: str | None = None,
+    approval_note: str | None = None,
+    approval_scope: str | None = None,
 ) -> DraftResponseSchema | None:
     existing = await get_draft_by_id(session, draft_id)
     if existing is None:
@@ -315,7 +317,14 @@ async def approve_draft(
 
     already_approved = existing.approved_at is not None and existing.feedback_action == "approve"
     current_body = existing.edited_body or existing.reply_body
-    if already_approved and (edited_body is None or edited_body == current_body):
+    learning_unchanged = (
+        approval_note == existing.approval_note and approval_scope == existing.approval_scope
+    )
+    if (
+        already_approved
+        and (edited_body is None or edited_body == current_body)
+        and learning_unchanged
+    ):
         return existing
 
     values: dict[str, Any] = {
@@ -326,6 +335,10 @@ async def approve_draft(
         values["approved_at"] = datetime.now(UTC)
     if edited_body is not None:
         values["edited_body"] = edited_body
+    if approval_note is not None or approval_scope is not None:
+        values["approval_note"] = approval_note
+        values["approval_scope"] = approval_scope
+        values["approval_note_persisted_at"] = datetime.now(UTC)
 
     stmt = update(Draft).where(Draft.id == draft_id).values(**values).returning(Draft)
     result = await session.execute(stmt)
@@ -401,18 +414,44 @@ async def mark_wrong(
     return _to_response(row)
 
 
-async def get_approved_drafts(
+async def set_urgency(
     session: AsyncSession,
+    draft_id: uuid.UUID,
     *,
-    mailbox: str | None = None,
-    limit: int = 100,
-) -> list[DraftResponseSchema]:
-    stmt = select(Draft).where(Draft.approved_at.is_not(None))
-    if mailbox is not None:
-        stmt = stmt.join(Thread, Thread.id == Draft.thread_id).where(Thread.mailbox == mailbox)
-    stmt = stmt.order_by(Draft.approved_at.desc()).limit(limit)
+    urgency: str,
+    urgency_reason: str,
+) -> DraftResponseSchema | None:
+    """Update draft urgency + reason."""
+    stmt = (
+        update(Draft)
+        .where(Draft.id == draft_id)
+        .values(urgency=urgency, urgency_reason=urgency_reason)
+        .returning(Draft)
+    )
     result = await session.execute(stmt)
-    return [_to_response(row) for row in result.scalars().all()]
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return _to_response(row)
+
+
+async def set_edited_body(
+    session: AsyncSession,
+    draft_id: uuid.UUID,
+    *,
+    edited_body: str,
+) -> DraftResponseSchema | None:
+    """Persist a non-LLM body edit (e.g. salutation rewrite)."""
+    stmt = (
+        update(Draft).where(Draft.id == draft_id).values(edited_body=edited_body).returning(Draft)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    await session.flush()
+    return _to_response(row)
 
 
 async def count_approvals(
@@ -449,7 +488,7 @@ async def list_recent_approved_bodies(
     limit: int = 20,
 ) -> list[str]:
     """Return recent approved reply bodies (edited_body ?? body), newest first."""
-    capped = max(1, min(limit, 50))
+    capped = cap_limit(limit, maximum=50)
     stmt = (
         select(Draft.edited_body, Draft.body)
         .join(Thread, Thread.id == Draft.thread_id)
@@ -476,16 +515,26 @@ async def latest_teaching_notes_by_threads(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],
 ) -> dict[uuid.UUID, str]:
-    """Bulk-fetch each thread's most recent non-empty teaching note.
+    """Bulk-fetch each thread's most recent non-empty LLM teaching note.
 
     Powers the Teaching Note preview on thread list/cards without an N+1 —
     one query for every thread on the page, keyed by ``thread_id``.
+    Excludes Outlook catch-up learning drafts so the UI never shows
+    ``Learned from Outlook send`` as the proposed teaching note.
     """
     if not thread_ids:
         return {}
+    proposed_only = and_(
+        Draft.teaching_note.is_not(None),
+        Draft.teaching_note != _OUTLOOK_CATCHUP_NOTE,
+        or_(
+            Draft.approval_note.is_(None),
+            Draft.approval_note != _OUTLOOK_CATCHUP_NOTE,
+        ),
+    )
     latest_id = (
         select(Draft.thread_id, func.max(Draft.created_at).label("max_created_at"))
-        .where(Draft.thread_id.in_(thread_ids), Draft.teaching_note.is_not(None))
+        .where(Draft.thread_id.in_(thread_ids), proposed_only)
         .group_by(Draft.thread_id)
         .subquery()
     )
@@ -496,6 +545,39 @@ async def latest_teaching_notes_by_threads(
     )
     result = await session.execute(stmt)
     return {row.thread_id: row.teaching_note for row in result if row.teaching_note}
+
+
+async def review_finished_by_threads(
+    session: AsyncSession,
+    thread_ids: list[uuid.UUID],
+) -> set[uuid.UUID]:
+    """Thread ids whose latest draft is approved or marked wrong (no-reply)."""
+    if not thread_ids:
+        return set()
+    ranked = (
+        select(
+            Draft.thread_id.label("tid"),
+            Draft.feedback_action.label("feedback_action"),
+            Draft.approved_at.label("approved_at"),
+            func.row_number()
+            .over(
+                partition_by=Draft.thread_id,
+                order_by=(Draft.created_at.desc(), Draft.id.desc()),
+            )
+            .label("rn"),
+        )
+        .where(Draft.thread_id.in_(thread_ids))
+        .subquery()
+    )
+    stmt = select(ranked.c.tid).where(
+        ranked.c.rn == 1,
+        or_(
+            ranked.c.approved_at.is_not(None),
+            ranked.c.feedback_action == "wrong",
+        ),
+    )
+    result = await session.execute(stmt)
+    return {row[0] for row in result.all()}
 
 
 async def get_latest_by_thread(
@@ -511,3 +593,38 @@ async def get_latest_by_thread(
     if row is None:
         return None
     return _to_response(row)
+
+
+async def get_latest_proposed_by_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> DraftResponseSchema | None:
+    """Latest LLM proposal — excludes Outlook catch-up learning drafts."""
+    stmt = (
+        select(Draft)
+        .where(
+            Draft.thread_id == thread_id,
+            Draft.teaching_note != _OUTLOOK_CATCHUP_NOTE,
+            or_(
+                Draft.approval_note.is_(None),
+                Draft.approval_note != _OUTLOOK_CATCHUP_NOTE,
+            ),
+        )
+        .order_by(Draft.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None:
+        return None
+    return _to_response(row)
+
+
+async def list_by_thread(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> list[DraftResponseSchema]:
+    """Return all drafts for a thread, newest first."""
+    stmt = select(Draft).where(Draft.thread_id == thread_id).order_by(Draft.created_at.desc())
+    result = await session.execute(stmt)
+    return [_to_response(row) for row in result.scalars().all()]

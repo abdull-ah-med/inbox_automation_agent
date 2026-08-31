@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 
@@ -17,7 +18,7 @@ from app.models.schemas.email_triage_state import EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.services import pipeline_service
 
-_EMBED_SAFE = "app.services.pipeline_service.embedding_service.embed_and_store_safe"
+_EMBED_SAFE = "app.services.pipeline.service.embedding_service.embed_and_store_safe"
 
 
 def _patch_embed() -> object:
@@ -79,19 +80,19 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_run_draft),
         ) as draft_mock,
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(
-            "app.services.pipeline_service._summarize_non_spam",
+            "app.services.pipeline.service._summarize_non_spam",
             new=AsyncMock(),
         ),
         _patch_embed() as embed_mock,
@@ -132,6 +133,97 @@ async def test_run_after_ingest_sets_state_and_audits() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_after_ingest_clears_spam_for_allowlisted_sender() -> None:
+    """Haiku spam + reviewer allowlist must still draft, not discard."""
+    from app.llm.triage import TriageCallResult
+
+    email = _email()
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=email.mailbox,
+        subject=email.subject,
+        messages=[email],
+    )
+    ingest = IngestResultSchema(
+        message_id="m1",
+        status="ingested",
+        thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        conversation_id="c1",
+        thread_context=context,
+    )
+    llm_spam = TriageCallResult(
+        triage=TriageResultSchema(
+            is_spam=True,
+            spam_reason="Automated vendor mail",
+            has_action_items=True,
+            action_items_summary="Send packet",
+            needs_context=False,
+            routing_category="vendor",
+        ),
+        prompt_version="v",
+        model="claude-haiku-4-5",
+        input_tokens=1,
+        output_tokens=1,
+        latency_ms=5,
+    )
+
+    async def _run_draft(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.draft_status = "DRAFTED"
+        state.draft = DraftSchema(
+            subject_line="Re: Need docs",
+            reply_body="Here is the packet.",
+            teaching_note="Reply with the docs.",
+            urgency="NORMAL",
+            urgency_reason="Routine",
+        )
+        return state
+
+    with (
+        patch(
+            "app.services.triage_service.triage_llm.triage_email",
+            new=AsyncMock(return_value=llm_spam),
+        ),
+        patch(
+            "app.services.pipeline.service._allowlisted_senders",
+            new=AsyncMock(return_value=frozenset({"vendor@example.com"})),
+        ),
+        patch(
+            "app.services.pipeline.service.draft_service.run_draft",
+            new=AsyncMock(side_effect=_run_draft),
+        ),
+        patch(
+            "app.services.pipeline.service.audit_service.log_event",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service._summarize_non_spam",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service.reply_memory_service.find_similar_replies",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.pipeline.service.thread_repo.set_thread_outcome",
+            new=AsyncMock(return_value=None),
+        ),
+        _patch_embed(),
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    assert state.triage is not None
+    assert state.triage.is_spam is False
+    assert state.draft_status == "DRAFTED"
+
+
+@pytest.mark.asyncio
 async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
     email = _email()
     context = ThreadContextSchema(
@@ -165,19 +257,19 @@ async def test_run_after_ingest_draft_failure_audits_requires_human() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_service.run_draft",
+            "app.services.pipeline.service.draft_service.run_draft",
             new=AsyncMock(side_effect=_fail_draft),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ) as audit,
         patch(
-            "app.services.pipeline_service._summarize_non_spam",
+            "app.services.pipeline.service._summarize_non_spam",
             new=AsyncMock(),
         ),
         _patch_embed(),
@@ -245,11 +337,11 @@ async def test_run_post_ingest_triage_returns_none_when_haiku_fails() -> None:
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_fail_triage),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(
@@ -318,19 +410,39 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
 
     with (
         patch(
-            "app.services.pipeline_service.triage_service.run_triage",
+            "app.services.pipeline.service.triage_service.run_triage",
             new=AsyncMock(side_effect=_run_triage),
         ),
         patch(
-            "app.services.pipeline_service.draft_repo.get_draft_by_message",
+            "app.services.pipeline.service.sent_reply_service.thread_tip_already_replied",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "app.services.pipeline.service.sent_reply_repo.get_by_thread",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "app.services.pipeline_service.draft_llm.generate_draft",
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline.service.draft_repo.get_draft_by_message",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline.service.draft_llm.generate_draft",
             new=AsyncMock(side_effect=DraftGenerationError("boom")),
         ),
         patch(
-            "app.services.pipeline_service.audit_service.log_event",
+            "app.services.related_thread_service.load_confirmed_contexts",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.recurrence_service.count_automated_inbound_48h",
+            new=AsyncMock(return_value=0),
+        ),
+        patch(
+            "app.services.pipeline.service.audit_service.log_event",
             new=AsyncMock(),
         ),
         patch(
@@ -357,7 +469,28 @@ async def test_run_post_ingest_triage_returns_none_when_draft_requires_human() -
     embed_mock.assert_awaited()
 
 
-def test_pipeline_ready_for_dedup() -> None:
+@pytest.mark.parametrize(
+    ("draft_status", "slack_delivery", "has_triage", "ready"),
+    [
+        ("SKIPPED", "not_attempted", True, True),
+        ("DRAFTED", "posted", True, True),
+        ("DRAFTED", "already_posted", True, True),
+        ("DRAFTED", "skipped_unconfigured", True, True),
+        ("DRAFTED", "not_required", True, True),
+        ("DRAFTED", "failed", True, False),
+        ("DRAFTED", "not_attempted", True, False),
+        ("REQUIRES_HUMAN", "not_attempted", True, False),
+        ("PENDING", "not_attempted", True, False),
+        ("REQUIRES_HUMAN", "not_attempted", False, False),
+    ],
+)
+def test_pipeline_ready_for_dedup_matrix(
+    draft_status: str,
+    slack_delivery: str,
+    has_triage: bool,
+    ready: bool,
+) -> None:
+    """Independent oracle: docstring on pipeline_ready_for_dedup."""
     email = _email()
     context = ThreadContextSchema(
         conversation_id="c1",
@@ -365,45 +498,24 @@ def test_pipeline_ready_for_dedup() -> None:
         subject=email.subject,
         messages=[email],
     )
-    base = EmailTriageState(original_email=email, thread_context=context)
-    triage = TriageResultSchema(
-        is_spam=False,
-        has_action_items=True,
-        action_items_summary="x",
-        needs_context=False,
+    triage = (
+        TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="x",
+            needs_context=False,
+        )
+        if has_triage
+        else None
     )
-
-    skipped = base.model_copy(update={"triage": triage, "draft_status": "SKIPPED"})
-    drafted_ok = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "posted",
-        }
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=context,
+        triage=triage,
+        draft_status=draft_status,  # type: ignore[arg-type]
+        slack_delivery=slack_delivery,  # type: ignore[arg-type]
     )
-    drafted_slack_failed = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "failed",
-        }
-    )
-    drafted_not_attempted = base.model_copy(
-        update={
-            "triage": triage,
-            "draft_status": "DRAFTED",
-            "slack_delivery": "not_attempted",
-        }
-    )
-    needs_human = base.model_copy(update={"triage": triage, "draft_status": "REQUIRES_HUMAN"})
-    failed = base.model_copy(update={"triage": None, "draft_status": "REQUIRES_HUMAN"})
-
-    assert pipeline_service.pipeline_ready_for_dedup(skipped) is True
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_ok) is True
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_slack_failed) is False
-    assert pipeline_service.pipeline_ready_for_dedup(drafted_not_attempted) is False
-    assert pipeline_service.pipeline_ready_for_dedup(needs_human) is False
-    assert pipeline_service.pipeline_ready_for_dedup(failed) is False
+    assert pipeline_service.pipeline_ready_for_dedup(state) is ready
 
 
 def test_select_original_email_requires_exact_message_id() -> None:
@@ -443,3 +555,141 @@ def test_select_original_email_requires_exact_message_id() -> None:
             message_id="missing",
             thread_context=context,
         )
+
+
+def test_empty_reply_body_does_not_need_slack_review_card() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Invitation: IDME's Demo - 2nd Week",
+            reply_body="",
+            teaching_note="RSVP in Calendar; do not email a reply.",
+            urgency="NORMAL",
+            urgency_reason="Scheduled meeting",
+        ),
+    )
+    assert pipeline_service.slack_review_card_required(state) is False
+
+
+def test_letter_draft_needs_slack_review_card() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Re: Need docs",
+            reply_body="Here is the packet.",
+            teaching_note="Reply with the docs.",
+            urgency="HIGH",
+            urgency_reason="Client waiting",
+        ),
+    )
+    assert pipeline_service.slack_review_card_required(state) is True
+
+
+@pytest.mark.asyncio
+async def test_finalize_skips_slack_when_reply_body_is_empty() -> None:
+    email = _email()
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        draft_status="DRAFTED",
+        draft=DraftSchema(
+            subject_line="Invitation: IDME's Demo - 2nd Week",
+            reply_body="",
+            teaching_note="RSVP in Calendar; do not email a reply.",
+            urgency="NORMAL",
+            urgency_reason="Scheduled meeting",
+        ),
+    )
+    posted = AsyncMock()
+    with (
+        patch(
+            "app.services.pipeline.service._safe_audit",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service._apply_draft_outcome_state",
+            new=AsyncMock(),
+        ),
+        patch(
+            "app.services.pipeline.service._post_slack_card_after_commit",
+            new=posted,
+        ),
+    ):
+        session = MagicMock()
+        begin = MagicMock()
+        begin.__aenter__ = AsyncMock(return_value=None)
+        begin.__aexit__ = AsyncMock(return_value=False)
+        session.begin.return_value = begin
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+
+        def session_factory() -> MagicMock:
+            return session
+
+        result = await pipeline_service._phased_finalize_draft_and_slack(
+            state=state,
+            thread_id=UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+            redis=AsyncMock(),
+            settings=Settings(),
+            session_factory=session_factory,
+            post_slack=True,
+        )
+    assert result.slack_delivery == "not_required"
+    posted.assert_not_called()
+
+
+def test_audit_payload_uses_haiku_automated_not_ingest_identity() -> None:
+    """Alex on helpdesk@: ingest tagged robot; Haiku read a human ticket reply."""
+    from app.services.pipeline.triage_phase import _audit_payload
+
+    email = EmailMessageSchema(
+        message_id="m-alex",
+        conversation_id="c-dd",
+        mailbox="info@sample-services.example.com",
+        sender="helpdesk@sample-helpdesk.example.com",
+        sender_display_name="Alex Taylor (SampleHelpdesk)",
+        subject="[SampleHelpdesk] Re: Fw: Applicant Brittany Edwards",
+        body_text="The public link can stay on for those jurisdictions.",
+        received_at=datetime(2026, 8, 28, 21, 33, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+        is_automated=True,
+    )
+    state = EmailTriageState(
+        original_email=email,
+        thread_context=ThreadContextSchema(
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            subject=email.subject,
+            messages=[email],
+        ),
+        triage=TriageResultSchema(
+            is_spam=False,
+            has_action_items=True,
+            action_items_summary="Answer the document question",
+            needs_context=False,
+            is_automated=False,
+        ),
+    )
+    payload = _audit_payload(state)
+    assert payload["is_automated"] is False

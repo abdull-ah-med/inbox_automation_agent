@@ -1,35 +1,30 @@
-"use client";
+"use client"
 
 import {
   QueryClient,
   QueryClientProvider,
   useMutation,
-  useQuery,
   useQueryClient,
-} from "@tanstack/react-query";
-import { usePathname } from "next/navigation";
+} from "@tanstack/react-query"
+import { usePathname } from "next/navigation"
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
-  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
-} from "react";
+} from "react"
 
-import {
-  getAuthState,
-  subscribeAuth,
-} from "@/features/auth/auth-store";
-import { api } from "@/lib/api-client";
-import { replaceToLogin } from "@/lib/auth-navigation";
+import { getAuthState, subscribeAuth } from "@/features/auth/auth-store"
+import { api } from "@/lib/api-client"
+import { replaceToLogin } from "@/lib/auth-navigation"
 
 const AuthBootstrapContext = createContext<{ bootstrapped: boolean }>({
   bootstrapped: false,
-});
+})
 
 function makeQueryClient() {
   return new QueryClient({
@@ -40,109 +35,93 @@ function makeQueryClient() {
         refetchOnWindowFocus: false,
       },
     },
-  });
+  })
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [queryClient] = useState(makeQueryClient);
-  const [bootstrapped, setBootstrapped] = useState(false);
-  const auth = useSyncExternalStore(subscribeAuth, getAuthState, getAuthState);
-  const pathname = usePathname();
-  const bootstrappedOnce = useRef(false);
+  const [queryClient] = useState(makeQueryClient)
+  const [bootstrapped, setBootstrapped] = useState(false)
+  const auth = useSyncExternalStore(subscribeAuth, getAuthState, getAuthState)
+  const pathname = usePathname()
+  const bootstrappedOnce = useRef(false)
 
   const silentRefresh = useCallback(async () => {
     // Already have an access token (e.g. just logged in) — skip refresh.
     if (getAuthState().accessToken) {
-      setBootstrapped(true);
-      return;
+      setBootstrapped(true)
+      return
     }
     // Login page: do not auto-refresh (avoids 429 spam + redirect loops).
     if (pathname === "/login" || pathname?.startsWith("/login")) {
-      setBootstrapped(true);
-      return;
+      setBootstrapped(true)
+      return
     }
     try {
-      await api.refresh();
+      await api.refresh()
     } finally {
-      setBootstrapped(true);
+      setBootstrapped(true)
     }
-  }, [pathname]);
+  }, [pathname])
 
   useEffect(() => {
-    if (bootstrappedOnce.current) return;
-    bootstrappedOnce.current = true;
-    void silentRefresh();
-  }, [silentRefresh]);
+    if (bootstrappedOnce.current) return
+    bootstrappedOnce.current = true
+    void silentRefresh()
+  }, [silentRefresh])
 
   // Proactive refresh 30s before expiry.
   useEffect(() => {
-    if (!auth.expiresAt) return;
-    const delay = Math.max(auth.expiresAt - Date.now() - 30_000, 5_000);
+    if (!auth.expiresAt) return
+    const delay = Math.max(auth.expiresAt - Date.now() - 30_000, 5_000)
     const timer = window.setTimeout(() => {
-      void api.refresh();
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [auth.expiresAt]);
+      void api.refresh()
+    }, delay)
+    return () => window.clearTimeout(timer)
+  }, [auth.expiresAt])
 
   useEffect(() => {
     const onFocus = () => {
-      const { expiresAt, accessToken } = getAuthState();
+      const { expiresAt, accessToken } = getAuthState()
       if (accessToken && expiresAt && expiresAt < Date.now()) {
-        void api.refresh();
+        void api.refresh()
       }
-    };
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, []);
-
-  const value = useMemo(() => ({ bootstrapped }), [bootstrapped]);
+    }
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [])
 
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthBootstrapContext.Provider value={value}>
+      <AuthBootstrapContext.Provider value={{ bootstrapped }}>
         {children}
       </AuthBootstrapContext.Provider>
     </QueryClientProvider>
-  );
+  )
 }
 
 export function useAuthBootstrap() {
-  return useContext(AuthBootstrapContext);
+  return useContext(AuthBootstrapContext)
 }
 
 export function useAuthState() {
-  return useSyncExternalStore(subscribeAuth, getAuthState, getAuthState);
-}
-
-export function useCurrentUser() {
-  const auth = useAuthState();
-  return useQuery({
-    queryKey: ["auth", "me"],
-    queryFn: () => api.me(),
-    enabled: Boolean(auth.accessToken),
-    initialData: auth.user ?? undefined,
-  });
+  return useSyncExternalStore(subscribeAuth, getAuthState, getAuthState)
 }
 
 export function useLogin() {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ email, password }: { email: string; password: string }) =>
       api.login(email, password),
-    onSuccess: (data) => {
-      queryClient.setQueryData(["auth", "me"], data.user);
-    },
-  });
+  })
 }
 
 export function useLogout() {
-  const queryClient = useQueryClient();
+  const queryClient = useQueryClient()
   return useMutation({
     mutationFn: () => api.logout(),
     onSettled: () => {
-      queryClient.clear();
+      queryClient.clear()
       // Hard replace so Back / bfcache cannot restore the signed-in screen.
-      replaceToLogin();
+      replaceToLogin()
     },
-  });
+  })
 }

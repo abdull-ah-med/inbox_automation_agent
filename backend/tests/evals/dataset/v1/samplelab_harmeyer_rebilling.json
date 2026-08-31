@@ -1,0 +1,25 @@
+{
+  "id": "samplelab-harmeyer-rebilling",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B", "C"],
+  "subject": "Process SampleLab invoice and rebill Harmeyer",
+  "body": "Hi Elise — please process the samplelab invoice from SampleLabVendor and rebill Harmeyer Transport for last month. Build the detail files and confirm department tabs plus the Trolinder spelling before you reply with the plan.",
+  "mailbox": "elise@example.com",
+  "sender": "accounting@client.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "needs_context": false,
+    "routing_category": "billing",
+    "action_items_summary": "Process SampleLab rebilling for Harmeyer"
+  },
+  "use_samplelab_skill": true,
+  "expected_tools": [
+    {
+      "name": "read_skill_reference",
+      "path_prefix": "references/"
+    }
+  ],
+  "expected_facts": ["Harmeyer", "Trolinder"],
+  "geval_criteria": "The draft should follow SampleLab rebilling skill guidance when present in context, mention Harmeyer where appropriate, and must not invent client department names or billing rules that are absent from the retrieval/skill context."
+}

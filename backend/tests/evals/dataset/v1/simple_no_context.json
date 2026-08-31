@@ -1,0 +1,19 @@
+{
+  "id": "simple-no-context",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "Office closed Friday",
+  "body": "Just a heads-up that our office will be closed this Friday for a company holiday. No action needed — sharing for awareness.",
+  "mailbox": "inquiries@example.com",
+  "sender": "partner@vendor.example.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": false,
+    "needs_context": false,
+    "routing_category": "general",
+    "action_items_summary": null
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "The draft should acknowledge the Friday office closure notice without inventing unrelated action items."
+}

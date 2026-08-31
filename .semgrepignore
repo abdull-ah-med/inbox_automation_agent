@@ -1,0 +1,16 @@
+# Semgrep ignore paths — keep in sync with scripts/semgrep-scan.sh intent.
+# Docs: https://semgrep.dev/docs/ignoring-files-folders-code
+
+# Alembic revision DDL uses sqlalchemy.text with module-level constant
+# identifiers (table/index names), never request input. The avoid-sqlalchemy-text
+# rule is for application query construction; migrations are trusted schema ops.
+backend/app/db/migrations/
+
+# Test-only helpers: DROP/CREATE DATABASE and EXPLAIN wrappers use sqlalchemy.text
+# with fixture-controlled names, not request input.
+backend/tests/ops_metrics_fixtures.py
+backend/tests/test_draft_classification_indexes.py
+
+# Deploy-dev checks out the CI-verified SHA on protected `dev` pushes only, and
+# refuses workflow-file changes before any AWS/SSM steps (see deploy-dev.yml).
+.github/workflows/deploy-dev.yml

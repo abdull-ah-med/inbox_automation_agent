@@ -33,3 +33,13 @@ export const REJECT_REASON_CODES: RejectReasonCode[] = [
   "recipients",
   "other",
 ]
+
+export const REJECT_REASON_LABELS: Record<RejectReasonCode, string> = {
+  tone: "Tone off",
+  factual: "Factual error",
+  wrong_action: "Wrong action / no reply needed",
+  incomplete: "Incomplete",
+  policy: "Policy conflict",
+  recipients: "Wrong recipients",
+  other: "Other",
+}

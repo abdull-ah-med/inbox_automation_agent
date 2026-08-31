@@ -1,5 +1,5 @@
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Any, cast
 from urllib.parse import urlparse
 
 import structlog
@@ -65,7 +65,7 @@ async def get_redis() -> Redis:
             connect_kwargs["ssl_cert_reqs"] = "required"
             connect_kwargs["ssl_ca_certs"] = ca_certs
             connect_kwargs["ssl_check_hostname"] = True
-        _redis_client = Redis.from_url(settings.redis_url, **connect_kwargs)
+        _redis_client = Redis.from_url(settings.redis_url, **cast(Any, connect_kwargs))
     return _redis_client
 
 

@@ -144,3 +144,38 @@ async def find_negative_constraints(
             routing_category=category,
         )
         return []
+
+
+async def list_memories(
+    session: AsyncSession,
+    *,
+    mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
+    limit: int = 100,
+) -> list[rejection_memory_repo.RejectionMemoryListItem]:
+    """List stored rejection memories for the settings UI."""
+    if mailbox:
+        return await rejection_memory_repo.list_for_mailbox(
+            session,
+            mailbox=mailbox,
+            limit=limit,
+        )
+    return await rejection_memory_repo.list_all_for_mailboxes(
+        session,
+        mailboxes=list(mailboxes or []),
+        limit=limit,
+    )
+
+
+async def set_excluded(
+    session: AsyncSession,
+    memory_id: uuid.UUID,
+    *,
+    is_excluded: bool,
+) -> rejection_memory_repo.RejectionMemoryListItem | None:
+    """Toggle exclusion for a rejection memory row."""
+    return await rejection_memory_repo.set_excluded(
+        session,
+        memory_id,
+        is_excluded=is_excluded,
+    )

@@ -3,15 +3,91 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import Select, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import Settings, get_settings
 from app.models.db.email_embedding import EmailEmbedding
+from app.models.db.message import Message
+from app.models.db.thread import Thread
 from app.models.schemas.embedding import EmbeddingMatchSchema
+from app.models.schemas.search import SearchColumnFilters
 from app.repositories import message_repo
+from app.repositories._vector_common import set_hnsw_session_defaults
+
+
+def _apply_mailbox_scope(
+    stmt: Select[Any],
+    *,
+    mailbox: str | None,
+    mailboxes: Sequence[str] | None,
+) -> Select[Any] | None:
+    """Apply mailbox equality or IN. ``None`` means skip the query (empty allowlist)."""
+    if mailbox is not None:
+        return stmt.where(EmailEmbedding.mailbox == mailbox)
+    if mailboxes is not None:
+        if not mailboxes:
+            return None
+        return stmt.where(EmailEmbedding.mailbox.in_(list(mailboxes)))
+    return stmt
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _apply_column_filters(
+    stmt: Select[Any],
+    filters: SearchColumnFilters | None,
+) -> Select[Any]:
+    if filters is None or not filters.active():
+        return stmt
+    if filters.directions:
+        stmt = stmt.join(Message, Message.id == EmailEmbedding.message_id)
+    if filters.subjects:
+        stmt = stmt.join(
+            Thread,
+            (Thread.mailbox == EmailEmbedding.mailbox)
+            & (Thread.conversation_id == EmailEmbedding.conversation_id),
+        )
+    if filters.senders:
+        stmt = stmt.where(
+            or_(
+                *[
+                    EmailEmbedding.sender_email.ilike(f"%{_escape_like(sender)}%", escape="\\")
+                    for sender in filters.senders
+                ]
+            )
+        )
+    for term in filters.contains:
+        stmt = stmt.where(
+            or_(
+                EmailEmbedding.body_preview.ilike(f"%{_escape_like(term)}%", escape="\\"),
+                EmailEmbedding.search_document.ilike(f"%{_escape_like(term)}%", escape="\\"),
+            )
+        )
+    for term in filters.subjects:
+        stmt = stmt.where(Thread.subject.ilike(f"%{_escape_like(term)}%", escape="\\"))
+    if filters.directions:
+        stmt = stmt.where(Message.direction.in_(list(filters.directions)))
+    return stmt
+
+
+def _match_from_row(row: EmailEmbedding, score: float) -> EmbeddingMatchSchema:
+    return EmbeddingMatchSchema(
+        id=row.id,
+        conversation_id=row.conversation_id,
+        similarity_score=score,
+        message_id=row.message_id,
+        mailbox=row.mailbox,
+        body_preview=row.body_preview,
+        sender_email=row.sender_email,
+    )
 
 
 async def insert_embedding(
@@ -137,12 +213,16 @@ async def search_similar(
     min_similarity: float,
     top_k: int,
     mailbox: str | None = None,
+    mailboxes: Sequence[str] | None = None,
     exclude_conversation_id: str | None = None,
+    filters: SearchColumnFilters | None = None,
+    settings: Settings | None = None,
 ) -> list[EmbeddingMatchSchema]:
     """Return top-K cosine matches at or above ``min_similarity``.
 
     When ``mailbox`` is set, results are scoped to that mailbox so draft/context
-    retrieval cannot leak content across TARGET_MAILBOXES.
+    retrieval cannot leak content across TARGET_MAILBOXES. ``mailboxes`` applies
+    the same isolation to an allowlist (empty list → no query).
     """
     max_distance = 1.0 - min_similarity
     distance = EmailEmbedding.embedding.cosine_distance(embedding)
@@ -153,22 +233,19 @@ async def search_similar(
         .order_by(distance)
         .limit(top_k)
     )
-    if mailbox is not None:
-        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
+    scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
+    if scoped is None:
+        return []
+    cfg = settings if settings is not None else get_settings()
+    await set_hnsw_session_defaults(session, cfg)
+    stmt = _apply_column_filters(scoped, filters)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
     result = await session.execute(stmt)
     matches: list[EmbeddingMatchSchema] = []
     for row, score in result.all():
-        matches.append(
-            EmbeddingMatchSchema(
-                id=row.id,
-                conversation_id=row.conversation_id,
-                similarity_score=float(score),
-                message_id=row.message_id,
-            )
-        )
+        matches.append(_match_from_row(row, float(score)))
     return matches
 
 
@@ -178,46 +255,56 @@ async def search_fts(
     query_text: str,
     top_k: int,
     mailbox: str | None = None,
+    mailboxes: Sequence[str] | None = None,
     exclude_conversation_id: str | None = None,
+    use_prefix: bool = False,
+    filters: SearchColumnFilters | None = None,
+    allow_empty: bool = False,
 ) -> list[EmbeddingMatchSchema]:
     """Return top-K full-text matches by ``ts_rank_cd`` on ``search_vector``.
 
     When ``mailbox`` is set, results are scoped to that mailbox (same isolation
-    as ``search_similar``).
+    as ``search_similar``). ``mailboxes`` applies the same isolation to an
+    allowlist (empty list → no query). Column filters (from/subject/direction)
+    AND with the tsquery. Filter-only queries skip FTS and rank by recency.
+    Pass ``allow_empty=True`` for Discord ``mailbox:``-only listings (no free
+    text and no column filters) so an explicit mailbox allowlist still returns
+    recent rows.
     """
-    from sqlalchemy import column, func, literal_column
+    from sqlalchemy import column, func, literal, literal_column
 
     cleaned = (query_text or "").strip()
-    if not cleaned:
+    has_filters = filters is not None and filters.active()
+    if not cleaned and not has_filters and not allow_empty:
         return []
 
-    # Generated ``search_vector`` is not an ORM attribute; reference by name.
-    search_vector: object = column("search_vector")
-    tsquery = func.websearch_to_tsquery("english", cleaned)
-    rank = func.ts_rank_cd(search_vector, tsquery).label("rank")
-    stmt = (
-        select(EmailEmbedding, rank)
-        .where(literal_column("search_vector").op("@@")(tsquery))
-        .order_by(rank.desc())
-        .limit(top_k)
-    )
-    if mailbox is not None:
-        stmt = stmt.where(EmailEmbedding.mailbox == mailbox)
+    if cleaned:
+        search_vector: object = column("search_vector")
+        tsquery = (
+            func.to_tsquery("english", cleaned)
+            if use_prefix
+            else func.websearch_to_tsquery("english", cleaned)
+        )
+        rank = func.ts_rank_cd(search_vector, tsquery).label("rank")
+        stmt = (
+            select(EmailEmbedding, rank)
+            .where(literal_column("search_vector").op("@@")(tsquery))
+            .order_by(rank.desc())
+            .limit(top_k)
+        )
+    else:
+        rank = literal(1.0).label("rank")
+        stmt = select(EmailEmbedding, rank).order_by(EmailEmbedding.sent_at.desc()).limit(top_k)
+    scoped = _apply_mailbox_scope(stmt, mailbox=mailbox, mailboxes=mailboxes)
+    if scoped is None:
+        return []
+    stmt = _apply_column_filters(scoped, filters)
     if exclude_conversation_id is not None:
         stmt = stmt.where(EmailEmbedding.conversation_id != exclude_conversation_id)
 
     result = await session.execute(stmt)
     matches: list[EmbeddingMatchSchema] = []
     for row, score in result.all():
-        # Normalize FTS rank into [0, 1] soft range for schema validation; RRF
-        # uses ranks not raw scores so absolute magnitude is unused downstream.
         raw = float(score) if score is not None else 0.0
-        matches.append(
-            EmbeddingMatchSchema(
-                id=row.id,
-                conversation_id=row.conversation_id,
-                similarity_score=min(1.0, max(0.0, raw)),
-                message_id=row.message_id,
-            )
-        )
+        matches.append(_match_from_row(row, min(1.0, max(0.0, raw))))
     return matches

@@ -19,13 +19,15 @@ from sqlalchemy import or_, select
 
 from app.core.config import get_settings
 from app.core.dependencies import close_openai_client, openai_client_from_settings
+from app.core.tenant_scope import TenantScope
 from app.db.session import dispose_engine, get_session_factory
-from app.llm.email_clean import CLEAN_VERSION, clean_email_body
+from app.llm.email_clean import clean_email_body
 from app.models.db.email_embedding import EmailEmbedding
 from app.models.db.message import Message
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
 from app.repositories import embedding_repo, message_repo, thread_repo
 from app.services import embedding_service
+from app.utils.email_quotes import EMBED_CLEAN_VERSION
 
 logger = structlog.get_logger(__name__)
 
@@ -40,9 +42,7 @@ async def _load_stale_embeddings() -> list[EmailEmbedding]:
                 or_(
                     EmailEmbedding.search_document == "",
                     EmailEmbedding.embed_clean_version.is_(None),
-                    Message.body_clean_version.is_(None),
-                    EmailEmbedding.embed_clean_version != Message.body_clean_version,
-                    EmailEmbedding.embed_clean_version != CLEAN_VERSION,
+                    EmailEmbedding.embed_clean_version != EMBED_CLEAN_VERSION,
                 )
             )
         )
@@ -67,9 +67,17 @@ async def _reembed_one(
     email: EmailMessageSchema | None = None
     async with factory() as session:
         if row.message_id is not None:
-            msg = await message_repo.get_by_id(session, row.message_id)
+            msg = await message_repo.get_by_id(
+                session,
+                row.message_id,
+                TenantScope.from_settings(get_settings()),
+            )
             if msg is not None:
-                thread = await thread_repo.get_by_id(session, msg.thread_id)
+                thread = await thread_repo.get_by_id(
+                    session,
+                    msg.thread_id,
+                    TenantScope.from_settings(get_settings()),
+                )
                 subject = thread.subject if thread is not None else "(no subject)"
                 body_clean = msg.body_clean
                 if not body_clean:
@@ -132,10 +140,10 @@ async def _reembed_one(
                 embedding=vector,
                 search_document=doc,
                 body_preview=preview or "(empty)",
-                embed_clean_version=CLEAN_VERSION,
+                embed_clean_version=EMBED_CLEAN_VERSION,
             )
         return f"done:{row.id}"
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         logger.exception("reembed_failed", embedding_id=str(row.id))
         return f"failed:{type(exc).__name__}"
 
@@ -176,7 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return asyncio.run(_run(args.apply))
-    except Exception as exc:  # noqa: BLE001 — CLI surface
+    except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 

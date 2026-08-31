@@ -16,7 +16,11 @@ FROM base AS local
 
 RUN pip install -r requirements.lock \
     && pip install -e . \
-    && chmod +x /app/scripts/docker-entrypoint.sh
+    && chmod +x /app/scripts/docker-entrypoint.sh \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app
+
+USER appuser
 
 EXPOSE 8000
 

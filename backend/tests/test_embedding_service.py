@@ -143,8 +143,7 @@ async def test_build_embed_text_truncates_by_tokens() -> None:
         max_tokens=settings.embedding_max_input_tokens,
     )
     assert (
-        len(embedding_service._get_encoding().encode(text))
-        <= settings.embedding_max_input_tokens
+        len(embedding_service._get_encoding().encode(text)) <= settings.embedding_max_input_tokens
     )
     assert text.startswith("From:")
     assert "Subject: Hi" in text
@@ -175,9 +174,7 @@ def test_body_preview_for_store_falls_back() -> None:
 
 def test_body_preview_for_store_truncates_long_preview() -> None:
     long_preview = "p" * 800
-    preview = embedding_service._body_preview_for_store(
-        _email(body_preview=long_preview)
-    )
+    preview = embedding_service._body_preview_for_store(_email(body_preview=long_preview))
     assert len(preview) == embedding_service._PREVIEW_CHARS
     assert preview == long_preview[: embedding_service._PREVIEW_CHARS]
 

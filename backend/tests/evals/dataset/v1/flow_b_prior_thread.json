@@ -1,0 +1,44 @@
+{
+  "id": "flow-b-prior-thread",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["A", "B"],
+  "subject": "RE: Following up — John Martinez drug screen clearance",
+  "body": "Any update on John Martinez's drug screen clearance from last week? The clinic is waiting on our confirmation.",
+  "mailbox": "inquiries@example.com",
+  "sender": "clinic@lab.example.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "needs_context": true,
+    "routing_category": "general",
+    "action_items_summary": "Confirm drug screen clearance status for John Martinez"
+  },
+  "use_samplelab_skill": false,
+  "flow_b": {
+    "matched_conversation_id": "prior-conv-martinez-1",
+    "similarity_score": 0.91,
+    "messages": [
+      {
+        "direction": "inbound",
+        "sender": "clinic@lab.example.com",
+        "subject": "John Martinez drug screen clearance",
+        "body": "Please confirm when John Martinez completes the clinic drug screen so we can clear him for the site visit."
+      },
+      {
+        "direction": "outbound",
+        "sender": "inquiries@example.com",
+        "subject": "RE: John Martinez drug screen clearance",
+        "body": "Thanks — we will follow up with the clinic and confirm clearance once results are posted."
+      },
+      {
+        "direction": "inbound",
+        "sender": "clinic@lab.example.com",
+        "subject": "RE: John Martinez drug screen clearance",
+        "body": "Results are in: John Martinez is cleared. Please send confirmation to the site coordinator."
+      }
+    ]
+  },
+  "expected_output": "Hi,\n\nThank you for following up on John Martinez's drug screen clearance. The clinic results are in and John Martinez is cleared. We will send confirmation to the site coordinator.\n\nBest regards",
+  "expected_facts": ["John Martinez", "cleared"],
+  "geval_criteria": "The draft should use the prior-thread context about John Martinez being cleared and should not invent unrelated billing or scheduling details."
+}

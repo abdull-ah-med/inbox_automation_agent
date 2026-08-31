@@ -48,10 +48,15 @@ _DUMMY_PASSWORD_HASH = hash_password("timing-pad-unused-not-a-real-password")
 
 @dataclass(frozen=True, slots=True)
 class AuthResult:
-    """Access token payload plus the opaque refresh plaintext for the cookie."""
+    """Access token payload plus the opaque refresh plaintext for the cookie.
+
+    ``rotated_from_hash`` is set only after a successful refresh rotation.
+    Callers must store Redis grace *after* the DB transaction commits.
+    """
 
     response: TokenResponse
     refresh_plaintext: str
+    rotated_from_hash: str | None = None
 
 
 async def create_user(
@@ -96,10 +101,9 @@ async def login(
         raise InvalidCredentialsError("Invalid email or password")
 
     if needs_rehash(user.password_hash):
-        await user_repo.update_password(session, user.id, hash_password(password))
-        refreshed = await user_repo.get_by_id(session, user.id)
-        if refreshed is not None:
-            user = refreshed
+        # Hash-only upgrade: do not bump password_updated_at / token_version
+        # (those invalidate refresh sessions as if the password changed).
+        await user_repo.update_password_hash_only(session, user.id, hash_password(password))
 
     return await _issue_tokens(
         session,
@@ -193,9 +197,22 @@ async def refresh(
         expires_in=expires_in,
         user=UserMe.model_validate(user),
     )
-    result = AuthResult(response=response, refresh_plaintext=new_plaintext)
-    await _store_refresh_grace(redis, settings, token_hash, result)
-    return result
+    # Grace is stored by the route after session.begin() commits successfully.
+    return AuthResult(
+        response=response,
+        refresh_plaintext=new_plaintext,
+        rotated_from_hash=token_hash,
+    )
+
+
+async def store_refresh_grace(
+    redis: Redis,
+    settings: Settings,
+    old_token_hash: str,
+    result: AuthResult,
+) -> None:
+    """Public wrapper: persist rotation grace after the DB commit succeeds."""
+    await _store_refresh_grace(redis, settings, old_token_hash, result)
 
 
 async def logout(session: AsyncSession, *, refresh_plaintext: str) -> None:
@@ -283,19 +300,20 @@ def _encode_refresh_grace(settings: Settings, payload_json: str) -> str:
 
 
 def _decode_refresh_grace(settings: Settings, raw: str) -> str | None:
-    """Decrypt grace payload; fall back to plaintext for pre-encryption entries."""
+    """Decrypt grace payload. No plaintext fallback when encryption is configured.
+
+    Pre-encryption grace entries expire within ``refresh_rotation_grace_seconds``
+    (≤60s). Accepting InvalidToken as plaintext would let a Redis writer forge
+    grace payloads during rotation.
+    """
     key = _grace_encryption_key(settings)
     if key is None:
         return raw
     try:
-        decrypted = decrypt_cache_blob(raw, key)
+        return decrypt_cache_blob(raw, key)
     except CacheEncryptionError:
         logger.exception("refresh_grace_encryption_key_invalid")
         return None
-    if decrypted is not None:
-        return decrypted
-    logger.warning("refresh_grace_plaintext_fallback")
-    return raw
 
 
 async def _store_refresh_grace(
@@ -329,7 +347,8 @@ async def _load_refresh_grace(
     if not raw:
         return None
     try:
-        decoded = _decode_refresh_grace(settings, raw)
+        payload = raw.decode() if isinstance(raw, (bytes, bytearray)) else str(raw)
+        decoded = _decode_refresh_grace(settings, payload)
         if decoded is None:
             return None
         data = json.loads(decoded)

@@ -46,16 +46,12 @@ def test_aggregate_worked_example_corroboration_beats_single() -> None:
 
 def test_select_related_conversations_hard_cap_one() -> None:
     ranked = [("c1", 0.02), ("c2", 0.019)]
-    assert select_related_conversations(
-        ranked, max_conversations=1, margin=0.85
-    ) == ["c1"]
+    assert select_related_conversations(ranked, max_conversations=1, margin=0.85) == ["c1"]
 
 
 def test_select_related_conversations_soft_margin() -> None:
     ranked = [("c1", 1.0), ("c2", 0.90), ("c3", 0.50)]
-    selected = select_related_conversations(
-        ranked, max_conversations=3, margin=0.85
-    )
+    selected = select_related_conversations(ranked, max_conversations=3, margin=0.85)
     assert selected == ["c1", "c2"]
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from app.core.config import Settings
 from app.core.exceptions import ClassificationError
 from app.llm import skill_selector
 from app.llm.email_clean import effective_body_text
+from app.llm.pii_redact import scrub_text
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.draft import AppliedSkillSchema
 from app.models.schemas.email import EmailMessageSchema
@@ -36,6 +38,9 @@ class SelectedSkills:
     blocks: list[str] = field(default_factory=list)
     skill_ids: list[uuid.UUID] = field(default_factory=list)
     applied: list[AppliedSkillSchema] = field(default_factory=list)
+    candidate_ids: list[uuid.UUID] = field(default_factory=list)
+    selected_pool_ids: list[uuid.UUID] = field(default_factory=list)
+    always_ids: list[uuid.UUID] = field(default_factory=list)
 
 
 def format_skill_block(skill: SkillSelectionRow) -> str:
@@ -69,15 +74,34 @@ def _to_selector_schema(row: SkillSelectionRow) -> SkillResponseSchema:
     )
 
 
+def _cosine_distance(query: list[float], candidate: list[float]) -> float:
+    """Cosine distance (1 - similarity). Matches pgvector ``cosine_distance`` ordering."""
+    if len(query) != len(candidate) or not query:
+        return float("inf")
+    dot = 0.0
+    q_norm = 0.0
+    c_norm = 0.0
+    for q, c in zip(query, candidate, strict=True):
+        dot += q * c
+        q_norm += q * q
+        c_norm += c * c
+    if q_norm <= 0.0 or c_norm <= 0.0:
+        return float("inf")
+    return 1.0 - (dot / (math.sqrt(q_norm) * math.sqrt(c_norm)))
+
+
 async def _narrow_pool_by_embedding(
-    session: AsyncSession,
     *,
     openai_client: AsyncOpenAI | None,
     settings: Settings,
     email_text: str,
     pool: list[SkillSelectionRow],
 ) -> list[SkillSelectionRow]:
-    """Top-8 by cosine among skills with embeddings; fill with name-sorted nulls."""
+    """Top-8 by cosine among skills with embeddings; fill with name-sorted nulls.
+
+    Ranks in memory from embeddings already loaded on ``SkillSelectionRow`` so
+    callers can release the DB session before OpenAI / Haiku calls.
+    """
     if len(pool) <= _POOL_EMBED_THRESHOLD:
         return pool
 
@@ -96,12 +120,10 @@ async def _narrow_pool_by_embedding(
             client=openai_client,
             settings=settings,
         )
-        ranked = await skill_repo.rank_by_cosine(
-            session,
-            query_embedding=vector,
-            skill_ids=[s.id for s in with_embed],
-            limit=_POOL_EMBED_THRESHOLD,
-        )
+        ranked = sorted(
+            with_embed,
+            key=lambda s: _cosine_distance(vector, s.embedding or []),
+        )[:_POOL_EMBED_THRESHOLD]
         ranked_ids = {s.id for s in ranked}
         candidates = list(ranked)
         for skill in without:
@@ -115,28 +137,19 @@ async def _narrow_pool_by_embedding(
         return sorted(pool, key=lambda s: s.name.lower())[:_POOL_EMBED_THRESHOLD]
 
 
-async def select_skills(
-    session: AsyncSession,
+async def select_from_active(
+    active: list[SkillSelectionRow],
     *,
     client: AsyncAnthropic,
     settings: Settings,
     openai_client: AsyncOpenAI | None,
     email: EmailMessageSchema,
     triage: TriageResultSchema,
-    conversation_id: str | None = None,
 ) -> SelectedSkills:
-    """Return skill blocks + IDs for the draft user turn and tool loop.
+    """Run pool narrow + Haiku selection without holding a DB session.
 
-    Locked algorithm:
-    always_apply + Haiku selection over category/general pool (embed narrow if >8).
-    On Haiku failure → always_apply only.
+    Subject/body sent to Claude are PII-scrubbed (same as triage/draft/embed).
     """
-    try:
-        active = await skill_repo.list_active_for_selection(session)
-    except Exception:
-        logger.exception("skill_load_failed")
-        return SelectedSkills()
-
     always = [s for s in active if s.always_apply]
     category = triage.routing_category or "general"
     pool = [
@@ -145,21 +158,20 @@ async def select_skills(
         if not s.always_apply and (s.category or "general") in {category, "general"}
     ]
 
-    always_ids = [s.id for s in always]
-    candidate_ids: list[uuid.UUID] = []
-    selected_ids: list[uuid.UUID] = []
-
     body = effective_body_text(
         body_clean=email.body_clean,
         body_text=email.body_text,
         body_content_type=email.body_content_type,
     )
     email_text = f"{email.subject}\n\n{body}"
+    scrubbed_subject = scrub_text(email.subject)
+    scrubbed_body = scrub_text(body)
 
     selected_from_pool: list[SkillSelectionRow] = []
+    candidate_ids: list[uuid.UUID] = []
+    selected_ids: list[uuid.UUID] = []
     if pool:
         candidates = await _narrow_pool_by_embedding(
-            session,
             openai_client=openai_client,
             settings=settings,
             email_text=email_text,
@@ -170,8 +182,8 @@ async def select_skills(
             chosen = await skill_selector.select_skills(
                 client=client,
                 settings=settings,
-                subject=email.subject,
-                body_preview=body,
+                subject=scrubbed_subject,
+                body_preview=scrubbed_body,
                 triage=triage,
                 candidates=[_to_selector_schema(s) for s in candidates],
             )
@@ -195,6 +207,24 @@ async def select_skills(
         seen.add(skill.id)
         merged.append(skill)
 
+    return SelectedSkills(
+        blocks=[format_skill_block(s) for s in merged],
+        skill_ids=[s.id for s in merged],
+        applied=[AppliedSkillSchema(id=s.id, name=s.name) for s in merged],
+        candidate_ids=candidate_ids,
+        selected_pool_ids=selected_ids,
+        always_ids=[s.id for s in always],
+    )
+
+
+async def log_skills_selected(
+    session: AsyncSession,
+    *,
+    email: EmailMessageSchema,
+    conversation_id: str | None,
+    selected: SelectedSkills,
+) -> None:
+    """Persist skills.selected audit from a short write transaction."""
     try:
         await audit_service.log_event(
             session,
@@ -202,9 +232,9 @@ async def select_skills(
             conversation_id=conversation_id or email.conversation_id,
             mailbox=email.mailbox,
             payload={
-                "candidate_ids": [str(i) for i in candidate_ids],
-                "selected_ids": [str(i) for i in selected_ids],
-                "always_ids": [str(i) for i in always_ids],
+                "candidate_ids": [str(i) for i in selected.candidate_ids],
+                "selected_ids": [str(i) for i in selected.selected_pool_ids],
+                "always_ids": [str(i) for i in selected.always_ids],
             },
             actor="system",
         )
@@ -215,11 +245,49 @@ async def select_skills(
             message_id=email.message_id,
         )
 
-    return SelectedSkills(
-        blocks=[format_skill_block(s) for s in merged],
-        skill_ids=[s.id for s in merged],
-        applied=[AppliedSkillSchema(id=s.id, name=s.name) for s in merged],
+
+async def select_skills(
+    session: AsyncSession,
+    *,
+    client: AsyncAnthropic,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+    email: EmailMessageSchema,
+    triage: TriageResultSchema,
+    conversation_id: str | None = None,
+) -> SelectedSkills:
+    """Return skill blocks + IDs for the draft user turn and tool loop.
+
+    Loads active skills from ``session``, then runs embed/Haiku without further
+    DB reads. Prefer the phased pipeline path (load → commit →
+    ``select_from_active`` → short audit txn) so the connection is not held
+    across network I/O.
+
+    Locked algorithm:
+    always_apply + Haiku selection over category/general pool (embed narrow if >8).
+    On Haiku failure → always_apply only.
+    """
+    try:
+        active = await skill_repo.list_active_for_selection(session)
+    except Exception:
+        logger.exception("skill_load_failed")
+        return SelectedSkills()
+
+    selected = await select_from_active(
+        active,
+        client=client,
+        settings=settings,
+        openai_client=openai_client,
+        email=email,
+        triage=triage,
     )
+    await log_skills_selected(
+        session,
+        email=email,
+        conversation_id=conversation_id,
+        selected=selected,
+    )
+    return selected
 
 
 async def select_skill_contents(

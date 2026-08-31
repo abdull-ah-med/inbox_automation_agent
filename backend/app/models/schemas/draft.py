@@ -42,6 +42,16 @@ class DraftSchema(BaseModel):
     suggested_actions: list[SuggestedActionSchema] = Field(default_factory=list)
 
 
+class BriefingSchema(BaseModel):
+    """Sonnet output when Haiku says action exists but no email reply is needed."""
+
+    subject_line: str
+    teaching_note: str
+    urgency: Literal["CRITICAL", "HIGH", "NORMAL", "LOW"]
+    urgency_reason: str
+    suggested_actions: list[SuggestedActionSchema] = Field(default_factory=list)
+
+
 class DraftResponseSchema(DraftSchema):
     id: UUID
     thread_id: UUID
@@ -55,5 +65,7 @@ class DraftResponseSchema(DraftSchema):
     feedback_action: str | None = None
     feedback_reason_code: str | None = None
     routing_category: str | None = None
+    approval_note: str | None = None
+    approval_scope: str | None = None
     applied_skills: list[AppliedSkillSchema] = Field(default_factory=list)
     tool_calls: list[DraftToolCallSchema] | None = None

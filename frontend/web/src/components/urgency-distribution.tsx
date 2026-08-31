@@ -1,31 +1,22 @@
-"use client";
+"use client"
 
-import { inboxColor, inboxLabel } from "@/lib/design-tokens";
-import type { MailboxOverview } from "@/lib/types";
+import { inboxColor, inboxLabel } from "@/lib/design-tokens"
+import type { MailboxOverview } from "@/lib/types"
 
-const LEVELS = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const;
+const LEVELS = ["CRITICAL", "HIGH", "NORMAL", "LOW"] as const
 
-export function UrgencyDistribution({
-  mailboxes,
-}: {
-  mailboxes: MailboxOverview[];
-}) {
+export function UrgencyDistribution({ mailboxes }: { mailboxes: MailboxOverview[] }) {
   return (
     <div className="space-y-4">
       {mailboxes.map((m) => {
-        const total = LEVELS.reduce(
-          (sum, level) => sum + (m.urgency_breakdown[level] ?? 0),
-          0,
-        );
-        const label = m.label || inboxLabel(m.mailbox);
-        const accent = inboxColor(m.mailbox);
+        const total = LEVELS.reduce((sum, level) => sum + (m.urgency_breakdown[level] ?? 0), 0)
+        const label = m.label || inboxLabel(m.mailbox)
+        const accent = inboxColor(m.mailbox)
         return (
           <div key={m.mailbox}>
             <div className="mb-1 flex items-center justify-between text-xs">
-              <span className="font-medium text-gray-700 dark:text-gray-300">
-                {label}
-              </span>
-              <span className="text-gray-400">{total}</span>
+              <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
+              <span className="text-muted-foreground">{total}</span>
             </div>
             {total > 0 ? (
               <div
@@ -34,16 +25,20 @@ export function UrgencyDistribution({
                 aria-label={`${label}: ${LEVELS.map((level) => `${level} ${m.urgency_breakdown[level] ?? 0}`).join(", ")}`}
               >
                 {LEVELS.map((level) => {
-                  const count = m.urgency_breakdown[level] ?? 0;
-                  if (!count) return null;
+                  const count = m.urgency_breakdown[level] ?? 0
+                  if (!count) return null
+                  if (level === "LOW") {
+                    return (
+                      <div
+                        key={level}
+                        className="bg-gray-400 dark:bg-gray-300"
+                        style={{ width: `${(count / total) * 100}%` }}
+                        title={`${level}: ${count}`}
+                      />
+                    )
+                  }
                   const color =
-                    level === "CRITICAL"
-                      ? "#dc2626"
-                      : level === "HIGH"
-                        ? accent
-                        : level === "NORMAL"
-                          ? "#9ca3af"
-                          : "#d1d5db";
+                    level === "CRITICAL" ? "#dc2626" : level === "HIGH" ? accent : "#9ca3af"
                   return (
                     <div
                       key={level}
@@ -53,17 +48,15 @@ export function UrgencyDistribution({
                       }}
                       title={`${level}: ${count}`}
                     />
-                  );
+                  )
                 })}
               </div>
             ) : (
-              <p className="text-xs text-gray-400 italic">
-                No urgent threads right now.
-              </p>
+              <p className="text-muted-foreground text-xs italic">No urgent threads right now.</p>
             )}
           </div>
-        );
+        )
       })}
     </div>
-  );
+  )
 }

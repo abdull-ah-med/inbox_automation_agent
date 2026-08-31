@@ -20,6 +20,7 @@ from app.services import (
     rejection_memory_service,
     skill_selection_service,
     tone_profile_service,
+    urgency_feedback_service,
 )
 
 logger = structlog.get_logger(__name__)
@@ -127,11 +128,39 @@ async def run_draft(
             limit=3,
         )
 
+    urgency_hints = await urgency_feedback_service.find_urgency_hints(
+        session,
+        openai_client=openai_client,
+        settings=settings,
+        email_text=email_text,
+        mailbox=email.mailbox,
+        routing_category=category,
+        limit=3,
+    )
+
     reference_loader = None
     if skill_ids:
         from app.services.skill_reference_service import make_reference_loader
 
         reference_loader, _ = make_reference_loader(active_skill_ids=set(skill_ids))
+
+    from app.services import related_thread_service
+
+    confirmed_associations = await related_thread_service.load_confirmed_contexts(
+        session,
+        thread_id,
+    )
+
+    directory: dict[str, str] | None = None
+    if settings.salute_directory_enabled:
+        from app.services import directory_lookup_service
+
+        directory = await directory_lookup_service.build_directory(
+            session,
+            state.original_email.mailbox,
+            state.thread_context,
+            current=state.original_email,
+        )
 
     try:
         result = await draft_llm.generate_draft(
@@ -145,7 +174,10 @@ async def run_draft(
             tone_profile=resolved_profile,
             skills=skill_contents,
             negative_constraints=resolved_constraints,
+            urgency_hints=urgency_hints,
             reference_loader=reference_loader,
+            confirmed_associations=confirmed_associations,
+            directory=directory,
         )
     except DraftGenerationError as exc:
         logger.warning(

@@ -1,7 +1,7 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { ChevronDown, ChevronRight, Download, FileText } from "lucide-react"
 
 import { EmailBody } from "@/components/email-body"
@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog"
 import { api } from "@/lib/api-client"
 import type { SkillFileMeta, SkillResponse } from "@/lib/types"
+import { cn, textLinkClass } from "@/lib/utils"
 
 const isInlineText = (file: SkillFileMeta): boolean => {
   const path = file.relative_path.toLowerCase()
@@ -35,13 +36,7 @@ const isInlineText = (file: SkillFileMeta): boolean => {
   )
 }
 
-const SkillFileRow = ({
-  skillId,
-  file,
-}: {
-  skillId: string
-  file: SkillFileMeta
-}) => {
+const SkillFileRow = ({ skillId, file }: { skillId: string; file: SkillFileMeta }) => {
   const [open, setOpen] = useState(false)
   const canInline = isInlineText(file)
 
@@ -59,15 +54,23 @@ const SkillFileRow = ({
       }
     },
     enabled: open,
+    gcTime: 0,
   })
+
+  useEffect(() => {
+    if (!open) return
+    const url = contentQuery.data?.kind === "blob" ? contentQuery.data.url : null
+    if (!url) return
+    return () => {
+      URL.revokeObjectURL(url)
+    }
+  }, [open, contentQuery.data])
 
   const handleToggle = () => {
     setOpen((value) => !value)
   }
 
-  const handleToggleKeyDown = (
-    event: React.KeyboardEvent<HTMLButtonElement>,
-  ) => {
+  const handleToggleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault()
       handleToggle()
@@ -75,7 +78,7 @@ const SkillFileRow = ({
   }
 
   return (
-    <li className="rounded border border-gray-100 dark:border-gray-800">
+    <li className="bg-card ring-foreground/10 overflow-hidden rounded-xl ring-1">
       <button
         type="button"
         tabIndex={0}
@@ -90,34 +93,34 @@ const SkillFileRow = ({
         ) : (
           <ChevronRight className="size-4 shrink-0" aria-hidden="true" />
         )}
-        <FileText className="size-4 shrink-0 text-gray-400" aria-hidden="true" />
+        <FileText className="text-muted-foreground size-4 shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{file.relative_path}</span>
-        <span className="shrink-0 text-xs text-gray-400">
+        <span className="text-muted-foreground shrink-0 text-xs">
           {file.kind} · {(file.size_bytes / 1024).toFixed(1)} KB
         </span>
       </button>
       {open ? (
         <div className="border-t border-gray-100 px-3 py-3 dark:border-gray-800">
-          {contentQuery.isLoading ? (
-            <p className="text-sm text-gray-500">Loading…</p>
-          ) : null}
+          {contentQuery.isLoading ? <p className="text-sm text-gray-500">Loading…</p> : null}
           {contentQuery.isError ? (
             <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-              {(contentQuery.error as Error).message}
+              {contentQuery.error instanceof Error
+                ? contentQuery.error.message
+                : "Could not load file."}
             </p>
           ) : null}
           {contentQuery.data?.kind === "text" ? (
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded bg-gray-50 p-3 text-xs text-gray-800 dark:bg-gray-950 dark:text-gray-200">
+            <pre className="max-h-64 overflow-auto rounded bg-gray-50 p-3 text-xs whitespace-pre-wrap text-gray-800 dark:bg-gray-950 dark:text-gray-200">
               {contentQuery.data.text}
             </pre>
           ) : null}
-          {contentQuery.data?.kind === "blob" ? (
+          {contentQuery.data?.kind === "blob" && open ? (
             <a
               href={contentQuery.data.url}
               download={file.relative_path.split("/").pop()}
               tabIndex={0}
               aria-label={`Download ${file.relative_path}`}
-              className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:underline dark:text-blue-400"
+              className={cn(textLinkClass, "gap-1.5 text-sm")}
             >
               <Download className="size-4" aria-hidden="true" />
               Download file
@@ -135,11 +138,7 @@ type ImportedSkillViewerProps = {
   onOpenChange: (open: boolean) => void
 }
 
-export const ImportedSkillViewer = ({
-  skill,
-  open,
-  onOpenChange,
-}: ImportedSkillViewerProps) => {
+export const ImportedSkillViewer = ({ skill, open, onOpenChange }: ImportedSkillViewerProps) => {
   const filesQuery = useQuery({
     queryKey: ["skill-files", skill?.id],
     queryFn: () => api.skills.listFiles(skill!.id),
@@ -150,7 +149,7 @@ export const ImportedSkillViewer = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent size="lg">
         <DialogHeader>
           <DialogTitle>{skill.name}</DialogTitle>
           <DialogDescription>
@@ -163,7 +162,7 @@ export const ImportedSkillViewer = ({
             <p className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">
               SKILL.md
             </p>
-            <div className="max-h-72 overflow-auto rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-950">
+            <div className="bg-muted/40 ring-foreground/10 max-h-72 overflow-auto rounded-xl p-3 ring-1">
               <EmailBody text={skill.content} />
             </div>
           </div>
@@ -172,12 +171,12 @@ export const ImportedSkillViewer = ({
             <p className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">
               Bundled files
             </p>
-            {filesQuery.isLoading ? (
-              <p className="text-sm text-gray-500">Loading files…</p>
-            ) : null}
+            {filesQuery.isLoading ? <p className="text-sm text-gray-500">Loading files…</p> : null}
             {filesQuery.isError ? (
               <p className="text-sm text-red-600 dark:text-red-400" role="alert">
-                {(filesQuery.error as Error).message}
+                {filesQuery.error instanceof Error
+                  ? filesQuery.error.message
+                  : "Could not load files."}
               </p>
             ) : null}
             {filesQuery.data && filesQuery.data.length === 0 ? (
@@ -186,11 +185,7 @@ export const ImportedSkillViewer = ({
             {filesQuery.data && filesQuery.data.length > 0 ? (
               <ul className="space-y-2">
                 {filesQuery.data.map((file) => (
-                  <SkillFileRow
-                    key={file.id}
-                    skillId={skill.id}
-                    file={file}
-                  />
+                  <SkillFileRow key={file.id} skillId={skill.id} file={file} />
                 ))}
               </ul>
             ) : null}

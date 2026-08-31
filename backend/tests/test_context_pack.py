@@ -51,10 +51,7 @@ def test_pack_short_thread_uses_full_bodies() -> None:
 
 
 def test_pack_long_thread_summarizes_older() -> None:
-    msgs = [
-        _msg(f"m{i}", body=f"body-{i}", summary=f"sum-{i}", minutes=i)
-        for i in range(8)
-    ]
+    msgs = [_msg(f"m{i}", body=f"body-{i}", summary=f"sum-{i}", minutes=i) for i in range(8)]
     packed = pack_same_thread(
         ThreadContextSchema(
             conversation_id="c1",
