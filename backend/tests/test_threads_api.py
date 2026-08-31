@@ -82,6 +82,39 @@ async def test_regenerate_draft_route_is_loadable(local_settings: Settings, db_s
 
 @pytest.mark.db
 @pytest.mark.asyncio
+async def test_generate_draft_route_is_loadable(local_settings: Settings, db_session) -> None:
+    get_settings.cache_clear()
+    application = create_app()
+    application.dependency_overrides[get_settings] = lambda: local_settings
+
+    async def fake_user() -> UserMe:
+        return UserMe(
+            id=uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+            email="elise@sample-site.example.com",
+            role="user",
+            created_at=datetime.now(UTC),
+        )
+
+    application.dependency_overrides[get_current_user] = fake_user
+    application.dependency_overrides[get_db] = lambda: db_session
+    application.dependency_overrides[get_redis] = lambda: None
+    application.dependency_overrides[get_anthropic_client] = lambda: None
+    application.dependency_overrides[get_openai_client] = lambda: None
+
+    async with AsyncClient(
+        transport=ASGITransport(app=application),
+        base_url="http://test",
+    ) as client:
+        resp = await client.post(f"/api/threads/{UNKNOWN_THREAD_ID}/generate-draft")
+
+    application.dependency_overrides.clear()
+    get_settings.cache_clear()
+
+    assert resp.status_code == 404, resp.text
+
+
+@pytest.mark.db
+@pytest.mark.asyncio
 async def test_thread_header_returns_subject_and_mailbox(
     local_settings: Settings, db_session
 ) -> None:

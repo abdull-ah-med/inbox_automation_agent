@@ -68,6 +68,7 @@ Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overla
    - Install Docker Engine + Compose plugin ([official install script](https://docs.docker.com/engine/install/ubuntu/)), then `sudo systemctl enable --now docker` so the stack (all services run `restart: unless-stopped`) comes back up automatically after an instance stop/reboot
    - Install nginx and certbot: `sudo apt install -y nginx certbot python3-certbot-nginx`
    - Clone this repo onto the instance
+   - Configure **read-only git credentials** on the host so `git fetch` works without passing tokens through SSM (recommended: [deploy key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys) for `ssm-user`, or a credential helper). CI deploy never embeds `GITHUB_TOKEN` in SSM command parameters.
 
 1. **Generate the Redis TLS cert + password** (once):
 
@@ -156,7 +157,7 @@ Open http://localhost:3000 — sign in with the seeded user.
 
 - **Login** — invite-only email/password with short-lived access tokens and rotating refresh cookies
 - **Home** — overview of all four mailboxes (counts, urgency mix, recent activity)
-- **Mailbox** — actionable thread list (spam / no-action filtered by default)
+- **Mailbox** — thread list with optional UTC date range (`from` / `to`), state, and urgency filters (spam / no-action included unless filtered by state)
 - **Thread** — conversation plus teaching note, state, urgency, classification, draft, and audit
 
 ## Configuration

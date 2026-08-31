@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useCallback, useEffect, useMemo, useRef } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, type ChangeEvent } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
 
@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/empty-state"
 import { ErrorPage } from "@/components/error-page"
 import { ThreadCard } from "@/components/thread-card"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -77,17 +78,25 @@ function MailboxPageContent() {
   // Filters live in the URL so they're shareable and survive back/forward nav.
   const state = searchParams.get("state") ?? ""
   const urgency = searchParams.get("urgency") ?? ""
+  const dateFrom = searchParams.get("from") ?? ""
+  const dateTo = searchParams.get("to") ?? ""
 
   const updateFilters = useCallback(
-    (patch: { state?: string; urgency?: string }) => {
+    (patch: { state?: string; urgency?: string; from?: string; to?: string }) => {
       const next = new URLSearchParams(searchParams.toString())
       const nextState = patch.state ?? state
       const nextUrgency = patch.urgency ?? urgency
+      const nextFrom = patch.from ?? dateFrom
+      const nextTo = patch.to ?? dateTo
 
       if (nextState) next.set("state", nextState)
       else next.delete("state")
       if (nextUrgency) next.set("urgency", nextUrgency)
       else next.delete("urgency")
+      if (nextFrom) next.set("from", nextFrom)
+      else next.delete("from")
+      if (nextTo) next.set("to", nextTo)
+      else next.delete("to")
       // Drop legacy toggle params if present in a shared URL.
       next.delete("stale")
       next.delete("filtered")
@@ -95,7 +104,7 @@ function MailboxPageContent() {
       const query = next.toString()
       router.replace(query ? `${pathname}?${query}` : pathname)
     },
-    [pathname, router, searchParams, state, urgency],
+    [pathname, router, searchParams, state, urgency, dateFrom, dateTo],
   )
 
   const {
@@ -108,11 +117,13 @@ function MailboxPageContent() {
     error,
     refetch,
   } = useInfiniteQuery({
-    queryKey: ["mailbox", mailbox, "threads", state, urgency],
+    queryKey: ["mailbox", mailbox, "threads", state, urgency, dateFrom, dateTo],
     queryFn: ({ pageParam }) =>
       api.mailboxes.threads(mailbox, {
         state: state || undefined,
         urgency: urgency || undefined,
+        from: dateFrom || undefined,
+        to: dateTo || undefined,
         cursor: pageParam,
         limit: 25,
       }),
@@ -138,7 +149,15 @@ function MailboxPageContent() {
   }, [fetchNextPage, hasNextPage, isFetchingNextPage])
 
   const label = inboxLabel(mailbox)
-  const filtersActive = Boolean(state || urgency)
+  const filtersActive = Boolean(state || urgency || dateFrom || dateTo)
+
+  const handleDateFromChange = (event: ChangeEvent<HTMLInputElement>) => {
+    updateFilters({ from: event.target.value })
+  }
+
+  const handleDateToChange = (event: ChangeEvent<HTMLInputElement>) => {
+    updateFilters({ to: event.target.value })
+  }
 
   const handleResetFilters = () => {
     router.replace(pathname)
@@ -191,6 +210,30 @@ function MailboxPageContent() {
             </SelectGroup>
           </SelectContent>
         </Select>
+        <label className="text-muted-foreground flex min-h-10 items-center gap-1.5 text-sm">
+          <span className="sr-only">From date (UTC)</span>
+          <span aria-hidden="true">From (UTC)</span>
+          <Input
+            type="date"
+            aria-label="From date (UTC)"
+            title="Inclusive start of day in UTC"
+            value={dateFrom}
+            className="w-auto min-w-38"
+            onChange={handleDateFromChange}
+          />
+        </label>
+        <label className="text-muted-foreground flex min-h-10 items-center gap-1.5 text-sm">
+          <span className="sr-only">To date (UTC)</span>
+          <span aria-hidden="true">To (UTC)</span>
+          <Input
+            type="date"
+            aria-label="To date (UTC)"
+            title="Inclusive end of day in UTC"
+            value={dateTo}
+            className="w-auto min-w-38"
+            onChange={handleDateToChange}
+          />
+        </label>
         <Button
           type="button"
           variant="ghost"

@@ -151,14 +151,16 @@ describe("DraftSection salute chip", () => {
 })
 
 describe("DraftSection briefing (no email reply)", () => {
-  it("hides Approve and salute and shows that no email reply is needed", () => {
+  const briefingDraft = { ...draft, body: "", subject: "Invitation: IDME's Demo - 2nd Week" }
+
+  const renderBriefing = (overrides?: Partial<React.ComponentProps<typeof DraftSection>>) => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     })
-    render(
+    return render(
       <QueryClientProvider client={client}>
         <DraftSection
-          draft={{ ...draft, body: "", subject: "Invitation: IDME's Demo - 2nd Week" }}
+          draft={briefingDraft}
           badge={null}
           actionError={null}
           feedbackDone={false}
@@ -175,12 +177,55 @@ describe("DraftSection briefing (no email reply)", () => {
           onApproveKeyDown={() => undefined}
           onReject={() => undefined}
           onRejectKeyDown={() => undefined}
+          {...overrides}
         />
       </QueryClientProvider>,
     )
+  }
+
+  it("hides Approve and salute and shows that no email reply is needed", () => {
+    renderBriefing()
     expect(screen.getByText("No email reply needed")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Approve draft" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Salute:/ })).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Reject draft" })).toBeInTheDocument()
+  })
+
+  it("shows Generate draft on briefing threads when handler is provided", () => {
+    renderBriefing({ onGenerateDraft: () => undefined })
+    expect(screen.getByRole("button", { name: "Generate draft" })).toBeInTheDocument()
+  })
+
+  it("calls generate handler and disables while pending", async () => {
+    const user = userEvent.setup()
+    const onGenerateDraft = vi.fn()
+    const { rerender } = renderBriefing({ onGenerateDraft })
+    await user.click(screen.getByRole("button", { name: "Generate draft" }))
+    expect(onGenerateDraft).toHaveBeenCalledTimes(1)
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    rerender(
+      <QueryClientProvider client={client}>
+        <DraftSection
+          draft={briefingDraft}
+          badge={null}
+          actionError={null}
+          feedbackDone={false}
+          busy={false}
+          generatePending
+          mailboxKey="sales"
+          replyAddressee={null}
+          onApprove={() => undefined}
+          onApproveKeyDown={() => undefined}
+          onReject={() => undefined}
+          onRejectKeyDown={() => undefined}
+          onGenerateDraft={onGenerateDraft}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.getByRole("button", { name: "Generate draft" })).toBeDisabled()
+    expect(screen.getByText("Generating…")).toBeInTheDocument()
   })
 })

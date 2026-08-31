@@ -134,6 +134,7 @@ async def _regenerate_one(
                 instruction=instruction,
                 actor="script",
                 openai_client=openai_client,
+                force_letter=True,
             )
     except ThreadNotFoundError as exc:
         return f"skipped:not_found:{exc}"

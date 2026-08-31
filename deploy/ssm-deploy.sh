@@ -11,21 +11,36 @@
 set -euo pipefail
 
 REPO_DIR="/home/ssm-user/inbox-triage-automation"
+GITHUB_REPO="abdull-ah-med/inbox_automation_agent"
 BRANCH="${BRANCH:-dev}"
 SHA="${DEPLOY_SHA:?DEPLOY_SHA required}"
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 
-git config --global --add safe.directory "$REPO_DIR"
+# SSM RunShellScript runs as root without HOME; avoid `git config --global`.
+GIT=(git -c "safe.directory=${REPO_DIR}")
 cd "$REPO_DIR"
 
-# Job-scoped Actions token (no PAT). Token is passed by the workflow for this fetch only.
-git -c http.extraHeader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch origin "$BRANCH"
+# Job-scoped Actions token (no PAT). Embed in HTTPS URL — extraHeader alone fails
+# when origin uses SSH or git prompts for credentials on headless SSM shells.
+AUTH_FETCH_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
+"${GIT[@]}" fetch "$AUTH_FETCH_URL" "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
 # Ensure the CI-tested SHA is on the deploy branch tip history.
-if ! git merge-base --is-ancestor "$SHA" "origin/$BRANCH"; then
+if ! "${GIT[@]}" merge-base --is-ancestor "$SHA" "origin/$BRANCH"; then
   echo "DEPLOY_SHA $SHA is not an ancestor of origin/$BRANCH" >&2
   exit 1
 fi
-git checkout --detach "$SHA"
+"${GIT[@]}" checkout --detach "$SHA"
 
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml)
+
+# Data safety: deploy must not wipe or recreate Postgres/Redis data stores.
+# - Never `docker compose down -v` or `docker volume prune`.
+# - Rebuild/restart app containers only; leave postgres/redis containers as-is.
+# - Abort if the existing postgres_data volume is missing (no accidental fresh DB).
+if ! docker volume ls -q --filter "name=postgres_data" | grep -q .; then
+  echo "postgres_data volume not found — aborting (refusing fresh database)" >&2
+  exit 1
+fi
+
+"${COMPOSE[@]}" up --build -d backend frontend
 docker image prune -f

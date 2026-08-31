@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-28.6"
+PROMPT_VERSION = "2026-08-31.1"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -165,10 +165,15 @@ Determine has_action_items and draft_needed from the sender, recipients, and CC 
   (send a file, present, confirm a number, answer a question) → both true.
 - Client question → both true.
 - Automated confirmations, newsletters, and FYI forwards typically have no action items.
-- Acknowledgment or courtesy close is not an action item: "sounds good", "thanks",
-  or "let me know if you're unable" with no new ask. Conditional courtesy
+- Acknowledgment or courtesy close from the sender is not an action item: "sounds good",
+  "thanks", or "let me know if you're unable" with no new ask. Conditional courtesy
   ("if you can't, tell me") is not a task for the PoI unless they were asked to
   do something now. draft_needed is false; a briefing still records the close.
+- Named human operational status/FYI to this mailbox where a short courtesy reply
+  is normal (e.g. "drug screens completed", "invoice paid on our side", "packet sent",
+  "we updated both screens") → has_action_items true and draft_needed true. Keep
+  the reply short — acknowledge receipt, do not invent new asks. This does NOT apply
+  to automated/noreply/listserv/receipts, newsletters, or their courtesy closes.
 - If the ball is already in the other party's court, has_action_items is false
   and draft_needed is false.
 

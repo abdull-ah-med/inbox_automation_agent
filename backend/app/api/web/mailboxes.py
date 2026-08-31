@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -53,7 +54,12 @@ async def list_mailbox_threads(
     state: Annotated[str | None, Query()] = None,
     urgency: Annotated[str | None, Query()] = None,
     stale_only: Annotated[bool, Query()] = False,
-    include_filtered: Annotated[bool, Query()] = False,
+    date_from: Annotated[
+        date | None, Query(alias="from", description="Inclusive start (UTC calendar day)")
+    ] = None,
+    date_to: Annotated[
+        date | None, Query(alias="to", description="Inclusive end (UTC calendar day)")
+    ] = None,
     cursor: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 25,
 ) -> ThreadList:
@@ -65,7 +71,8 @@ async def list_mailbox_threads(
         state=state,
         urgency=urgency,
         stale_only=stale_only,
-        include_filtered=include_filtered,
+        date_from=date_from,
+        date_to=date_to,
         cursor=cursor,
         limit=limit,
     )

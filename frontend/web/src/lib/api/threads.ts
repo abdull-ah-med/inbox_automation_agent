@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/api/client"
-import type { MarkNotSpamResponse, RelatedThreadList, ThreadDetail } from "@/lib/types"
+import type { MarkNotSpamResponse, RelatedThreadList, ThreadDetail, DraftView } from "@/lib/types"
 
 export type MessageHtmlBody = {
   content_type: "html" | "text"
@@ -61,6 +61,11 @@ export const threadsApi = {
     return apiFetch<{ state: string }>(`/api/threads/${id}/resolve`, {
       method: "POST",
       body: JSON.stringify(body ?? {}),
+    })
+  },
+  generateDraft(id: string) {
+    return apiFetch<DraftView>(`/api/threads/${id}/generate-draft`, {
+      method: "POST",
     })
   },
   resolutionFeedback(id: string, body: { action: "reopen" | "wrong_reason"; note?: string }) {
