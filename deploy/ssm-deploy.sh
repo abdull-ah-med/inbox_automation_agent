@@ -13,11 +13,13 @@ set -euo pipefail
 REPO_DIR="/home/ssm-user/inbox-triage-automation"
 BRANCH="${BRANCH:-dev}"
 SHA="${DEPLOY_SHA:?DEPLOY_SHA required}"
+GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 
 git config --global --add safe.directory "$REPO_DIR"
 cd "$REPO_DIR"
 
-git fetch origin "$BRANCH"
+# Job-scoped Actions token (no PAT). Token is passed by the workflow for this fetch only.
+git -c http.extraHeader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch origin "$BRANCH"
 # Ensure the CI-tested SHA is on the deploy branch tip history.
 if ! git merge-base --is-ancestor "$SHA" "origin/$BRANCH"; then
   echo "DEPLOY_SHA $SHA is not an ancestor of origin/$BRANCH" >&2
