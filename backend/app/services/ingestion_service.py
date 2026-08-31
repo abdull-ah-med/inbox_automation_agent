@@ -871,9 +871,7 @@ async def _heal_completed_outbound(
         return None
 
     sent = await sent_reply_repo.get_by_thread(session, thread.id)
-    already_replied = await sent_reply_service.thread_tip_already_replied(
-        session, thread.id
-    )
+    already_replied = await sent_reply_service.thread_tip_already_replied(session, thread.id)
     if already_replied and thread.state == ThreadStateEnum.RESOLVED.value:
         return None
     if already_replied:

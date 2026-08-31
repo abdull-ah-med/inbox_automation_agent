@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 
 from app.core.reply_addressee import resolve_reply_addressee
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
+
+
 def test_resolve_does_not_salute_graph_display_name() -> None:
     """Calendar From 'Abu Bakkar Siddiq' is not a signature. No contact → Hi,."""
     mailbox = "sampleagent@sample-site.example.com"

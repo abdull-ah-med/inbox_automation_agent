@@ -144,10 +144,7 @@ def enrich_triage_flags(
     internal = is_internal_sender(sender, mailbox, extra_domains=domains)
     computed = is_automated_mail(sender=sender, subject=subject, headers=headers)
     prior = bool(flags.is_automated) if flags is not None else False
-    if is_automated is not None:
-        automated = bool(is_automated)
-    else:
-        automated = computed or prior
+    automated = bool(is_automated) if is_automated is not None else computed or prior
     if flags is None:
         if not internal and not automated:
             return None

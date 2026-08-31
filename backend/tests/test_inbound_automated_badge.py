@@ -70,9 +70,7 @@ async def test_inbound_automated_follows_latest_inbound_not_historical_ooo(
     )
     await db_session.commit()
 
-    flags = await message_repo.inbound_automated_by_threads(
-        db_session, [thread.id, other.id]
-    )
+    flags = await message_repo.inbound_automated_by_threads(db_session, [thread.id, other.id])
     assert flags[thread.id] is False
     assert flags[other.id] is True
 
