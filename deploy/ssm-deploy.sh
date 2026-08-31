@@ -11,6 +11,7 @@
 set -euo pipefail
 
 REPO_DIR="/home/ssm-user/inbox-triage-automation"
+GITHUB_REPO="abdull-ah-med/inbox_automation_agent"
 BRANCH="${BRANCH:-dev}"
 SHA="${DEPLOY_SHA:?DEPLOY_SHA required}"
 GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN required}"
@@ -19,8 +20,10 @@ GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 GIT=(git -c "safe.directory=${REPO_DIR}")
 cd "$REPO_DIR"
 
-# Job-scoped Actions token (no PAT). Token is passed by the workflow for this fetch only.
-"${GIT[@]}" -c http.extraHeader="AUTHORIZATION: bearer ${GITHUB_TOKEN}" fetch origin "$BRANCH"
+# Job-scoped Actions token (no PAT). Embed in HTTPS URL — extraHeader alone fails
+# when origin uses SSH or git prompts for credentials on headless SSM shells.
+AUTH_FETCH_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPO}.git"
+"${GIT[@]}" fetch "$AUTH_FETCH_URL" "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
 # Ensure the CI-tested SHA is on the deploy branch tip history.
 if ! "${GIT[@]}" merge-base --is-ancestor "$SHA" "origin/$BRANCH"; then
   echo "DEPLOY_SHA $SHA is not an ancestor of origin/$BRANCH" >&2

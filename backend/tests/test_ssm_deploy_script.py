@@ -54,3 +54,4 @@ def test_ssm_deploy_preserves_database_and_only_restarts_app_services() -> None:
     assert not any("volume prune" in line for line in executable_lines)
     assert any("up --build -d backend frontend" in line for line in executable_lines)
     assert any("postgres_data volume not found" in line for line in executable_lines)
+    assert any("x-access-token:${GITHUB_TOKEN}@github.com/" in line for line in executable_lines)
