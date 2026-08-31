@@ -157,7 +157,7 @@ Open http://localhost:3000 — sign in with the seeded user.
 
 - **Login** — invite-only email/password with short-lived access tokens and rotating refresh cookies
 - **Home** — overview of all four mailboxes (counts, urgency mix, recent activity)
-- **Mailbox** — thread list with optional UTC date range (`from` / `to`), state, and urgency filters (spam / no-action included unless filtered by state)
+- **Mailbox** — thread list with optional US Eastern date range (`from` / `to`), state, and urgency filters (spam / no-action included unless filtered by state)
 - **Thread** — conversation plus teaching note, state, urgency, classification, draft, and audit
 
 ## Configuration

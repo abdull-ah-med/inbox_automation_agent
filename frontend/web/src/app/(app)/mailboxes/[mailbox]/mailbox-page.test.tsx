@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -94,17 +94,19 @@ describe("Mailbox page filters", () => {
     expect(params).not.toHaveProperty("include_filtered")
   })
 
-  it("writes from date onto the mailbox URL", async () => {
+  it("renders ReportDatePicker controls for from and to", async () => {
     renderPage()
-    const fromInput = await screen.findByLabelText("From date (UTC)")
-    fireEvent.change(fromInput, { target: { value: "2026-08-01" } })
-    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?from=2026-08-01")
+    expect(await screen.findByRole("button", { name: "From date" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "To date" })).toBeInTheDocument()
+    expect(screen.getByText("From", { selector: "label" })).toBeInTheDocument()
+    expect(screen.getByText("To", { selector: "label" })).toBeInTheDocument()
   })
 
-  it("labels date filters with UTC semantics", async () => {
+  it("opens the from date calendar popover", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderPage()
-    expect(await screen.findByText("From (UTC)")).toBeInTheDocument()
-    expect(screen.getByText("To (UTC)")).toBeInTheDocument()
+    await user.click(await screen.findByRole("button", { name: "From date" }))
+    expect(screen.getByRole("grid")).toBeInTheDocument()
   })
 })
 
@@ -141,8 +143,10 @@ describe("Mailbox page — useSearchParams Suspense boundary", () => {
   it("applies date range from the URL", async () => {
     searchParamsString.mockReturnValue("from=2026-08-01&to=2026-08-28")
     renderPage()
-    expect(await screen.findByLabelText("From date (UTC)")).toHaveValue("2026-08-01")
-    expect(screen.getByLabelText("To date (UTC)")).toHaveValue("2026-08-28")
+    expect(await screen.findByRole("button", { name: "From date" })).toHaveTextContent(
+      /August 1.*2026/i,
+    )
+    expect(screen.getByRole("button", { name: "To date" })).toHaveTextContent(/August 28.*2026/i)
     expect(listThreads).toHaveBeenCalledWith(
       "sales",
       expect.objectContaining({ from: "2026-08-01", to: "2026-08-28" }),

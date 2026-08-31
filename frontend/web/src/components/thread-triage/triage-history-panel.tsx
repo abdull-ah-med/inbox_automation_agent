@@ -20,7 +20,7 @@ const TriageFlagBadges = ({ triage, history }: { triage: TriageFlags; history: T
     {triage.is_spam != null ? (
       <StatusBadge
         label={triage.is_spam ? "Spam" : "Not spam"}
-        tone={triage.is_spam ? "red" : "green"}
+        tone={triage.is_spam ? "orange" : "green"}
       />
     ) : null}
     {(history?.has_action_items ?? triage.has_action_items) != null ? (

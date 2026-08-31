@@ -61,7 +61,7 @@ describe("ThreadCard internal tag", () => {
       />,
     )
     expect(screen.queryByText("Internal")).toBeNull()
-    expect(screen.getByText("Spam")).toBeInTheDocument()
+    expect(screen.getByText("Spam")).toHaveClass("text-[#F97316]")
   })
 
   it("shows Automated on noreply mail", () => {
