@@ -46,6 +46,10 @@ def looks_like_closing_mail(body: str | None) -> bool:
     remainder = _THANKS_LINE_RE.sub("", text).strip()
     if not remainder:
         return True
+    # A real question mark means an open ask — "Thank you for any advice?"
+    # must not collapse into a courtesy close via CLOSE_RE alone.
+    if "?" in remainder:
+        return False
     if _ASK_RE.search(remainder):
         return False
     return bool(_CLOSE_RE.search(remainder) or _CONDITIONAL_RE.search(remainder))

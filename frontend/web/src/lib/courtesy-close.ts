@@ -45,6 +45,9 @@ export const looksLikeCourtesyClose = (body: string): boolean => {
     .join("\n")
     .trim()
   if (!remainder) return true
+  // A real question mark means an open ask — "Thank you for any advice?"
+  // must not collapse into a courtesy close via CLOSE_RE alone.
+  if (remainder.includes("?")) return false
   if (ASK_RE.test(remainder)) return false
   return CLOSE_RE.test(remainder) || CONDITIONAL_RE.test(remainder)
 }

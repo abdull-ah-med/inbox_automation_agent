@@ -78,4 +78,17 @@ describe("looksLikeCourtesyClose", () => {
       ),
     ).toBe(false)
   })
+
+  it("does not treat Jennifer's Bonita Springs check ask as a courtesy close", () => {
+    expect(
+      looksLikeCourtesyClose(
+        "Do all the checks go to Bonita Springs? We are looking for the payment " +
+          "for Trinity Electrical. It looks as though it is a check for $65? " +
+          "Thank you for any advice on this.\n" +
+          "\n" +
+          "Jennifer Chance\n" +
+          "SamplSampleLabing, LLC\n",
+      ),
+    ).toBe(false)
+  })
 })

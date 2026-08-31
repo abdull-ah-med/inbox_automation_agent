@@ -91,3 +91,21 @@ _KAROL_CALENDAR_FOLLOW_UP = (
 
 def test_follow_up_that_ends_with_thank_you_is_not_closing() -> None:
     assert not looks_like_closing_mail(_KAROL_CALENDAR_FOLLOW_UP)
+
+
+# Worked example: Jennifer Chance / SamplSampleLabing 8/31 billing ask
+# (thread shown in Needs Attention as Drafted). Two questions about check
+# routing + a $65 Trinity Electrical payment; polite "Thank you for any
+# advice" is a soft ask, not a courtesy close.
+_JENNIFER_CHECK_ASK = (
+    "Do all the checks go to Bonita Springs? We are looking for the payment "
+    "for Trinity Electrical. It looks as though it is a check for $65? "
+    "Thank you for any advice on this.\n"
+    "\n"
+    "Jennifer Chance\n"
+    "SamplSampleLabing, LLC\n"
+)
+
+
+def test_billing_ask_with_thank_you_for_advice_is_not_closing() -> None:
+    assert not looks_like_closing_mail(_JENNIFER_CHECK_ASK)
