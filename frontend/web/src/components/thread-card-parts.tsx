@@ -21,7 +21,7 @@ export const ThreadCardBadges = ({ thread }: { thread: ThreadSummary }) => {
       {thread.category ? <StatusBadge label={thread.category} tone="purple" /> : null}
       {triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
       {triage?.is_automated ? <StatusBadge label="Automated" tone="neutral" /> : null}
-      {triage?.is_spam ? <StatusBadge label="Spam" tone="red" /> : null}
+      {triage?.is_spam ? <StatusBadge label="Spam" tone="orange" /> : null}
     </>
   )
 }

@@ -1,0 +1,20 @@
+{
+  "id": "operational-fyi-screens-done",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "Invoice screens updated",
+  "body": "Hi Elise,\n\nI have updated both invoice screens on our side. Let me know if you need anything else.\n\nThanks,\nDivyansh",
+  "mailbox": "sampleagent@sample-site.example.com",
+  "sender": "Dev@sample-site.example.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "draft_needed": true,
+    "needs_context": false,
+    "routing_category": "vendor",
+    "action_items_summary": "Acknowledge invoice screen update"
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "A short courtesy reply acknowledging the screen update is appropriate; draft_needed should be true, not a briefing-only FYI."
+}

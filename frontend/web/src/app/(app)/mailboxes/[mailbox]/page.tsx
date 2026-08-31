@@ -1,15 +1,16 @@
 "use client"
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, type ChangeEvent } from "react"
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useInfiniteQuery } from "@tanstack/react-query"
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation"
+import type { Matcher } from "react-day-picker"
 
 import { Breadcrumbs } from "@/components/breadcrumbs"
 import { EmptyState } from "@/components/empty-state"
 import { ErrorPage } from "@/components/error-page"
+import { ReportDatePicker } from "@/components/ops-report-download"
 import { ThreadCard } from "@/components/thread-card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -20,6 +21,12 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
+import {
+  REPORT_TIMEZONE,
+  formatYmdInTimezone,
+  formatYmdLocal,
+  parseYmdLocal,
+} from "@/lib/calendar-dates"
 import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-tokens"
 
 const STATE_ITEMS = [
@@ -74,6 +81,11 @@ function MailboxPageContent() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const [fromOpen, setFromOpen] = useState(false)
+  const [toOpen, setToOpen] = useState(false)
+  const todayNy = formatYmdInTimezone(new Date(), REPORT_TIMEZONE)
+  const todayDate = parseYmdLocal(todayNy)
+  const futureDisabled: Matcher[] = [{ after: todayDate }]
 
   // Filters live in the URL so they're shareable and survive back/forward nav.
   const state = searchParams.get("state") ?? ""
@@ -150,14 +162,31 @@ function MailboxPageContent() {
 
   const label = inboxLabel(mailbox)
   const filtersActive = Boolean(state || urgency || dateFrom || dateTo)
+  const inverted = Boolean(dateFrom && dateTo && dateFrom > dateTo)
 
-  const handleDateFromChange = (event: ChangeEvent<HTMLInputElement>) => {
-    updateFilters({ from: event.target.value })
-  }
+  const handleFromOpenChange = useCallback((nextOpen: boolean) => {
+    setFromOpen(nextOpen)
+    if (nextOpen) setToOpen(false)
+  }, [])
 
-  const handleDateToChange = (event: ChangeEvent<HTMLInputElement>) => {
-    updateFilters({ to: event.target.value })
-  }
+  const handleToOpenChange = useCallback((nextOpen: boolean) => {
+    setToOpen(nextOpen)
+    if (nextOpen) setFromOpen(false)
+  }, [])
+
+  const handleFromSelect = useCallback(
+    (date: Date | undefined) => {
+      updateFilters({ from: date ? formatYmdLocal(date) : "" })
+    },
+    [updateFilters],
+  )
+
+  const handleToSelect = useCallback(
+    (date: Date | undefined) => {
+      updateFilters({ to: date ? formatYmdLocal(date) : "" })
+    },
+    [updateFilters],
+  )
 
   const handleResetFilters = () => {
     router.replace(pathname)
@@ -210,30 +239,30 @@ function MailboxPageContent() {
             </SelectGroup>
           </SelectContent>
         </Select>
-        <label className="text-muted-foreground flex min-h-10 items-center gap-1.5 text-sm">
-          <span className="sr-only">From date (UTC)</span>
-          <span aria-hidden="true">From (UTC)</span>
-          <Input
-            type="date"
-            aria-label="From date (UTC)"
-            title="Inclusive start of day in UTC"
-            value={dateFrom}
-            className="w-auto min-w-38"
-            onChange={handleDateFromChange}
-          />
-        </label>
-        <label className="text-muted-foreground flex min-h-10 items-center gap-1.5 text-sm">
-          <span className="sr-only">To date (UTC)</span>
-          <span aria-hidden="true">To (UTC)</span>
-          <Input
-            type="date"
-            aria-label="To date (UTC)"
-            title="Inclusive end of day in UTC"
-            value={dateTo}
-            className="w-auto min-w-38"
-            onChange={handleDateToChange}
-          />
-        </label>
+        <ReportDatePicker
+          id="mailbox-from"
+          label="From"
+          ariaLabel="From date"
+          value={dateFrom}
+          invalid={inverted}
+          disabled={futureDisabled}
+          todayDate={todayDate}
+          open={fromOpen}
+          onOpenChange={handleFromOpenChange}
+          onSelect={handleFromSelect}
+        />
+        <ReportDatePicker
+          id="mailbox-to"
+          label="To"
+          ariaLabel="To date"
+          value={dateTo}
+          invalid={inverted}
+          disabled={futureDisabled}
+          todayDate={todayDate}
+          open={toOpen}
+          onOpenChange={handleToOpenChange}
+          onSelect={handleToSelect}
+        />
         <Button
           type="button"
           variant="ghost"

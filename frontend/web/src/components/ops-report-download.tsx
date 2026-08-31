@@ -19,45 +19,19 @@ import {
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { api } from "@/lib/api-client"
+import {
+  REPORT_TIMEZONE,
+  addCalendarDays,
+  addLocalDays,
+  formatYmdInTimezone,
+  formatYmdLocal,
+  parseYmdLocal,
+} from "@/lib/calendar-dates"
 import { getErrorMessage } from "@/lib/error-messages"
 
-const REPORT_TIMEZONE = "America/New_York"
 const MAX_WINDOW_DAYS = 93
 const DEFAULT_ROLLING_DAYS = 7
 const PRESET_DAYS = [7, 14, 30, 60] as const
-
-const formatYmdInTimezone = (date: Date, timeZone: string): string => {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date)
-}
-
-const formatYmdLocal = (date: Date): string => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${year}-${month}-${day}`
-}
-
-const parseYmdLocal = (ymd: string): Date => {
-  const [year, month, day] = ymd.split("-").map(Number)
-  return new Date(year, month - 1, day)
-}
-
-const addLocalDays = (date: Date, days: number): Date => {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
-const addCalendarDays = (ymd: string, days: number): string => {
-  const [year, month, day] = ymd.split("-").map(Number)
-  const utc = new Date(Date.UTC(year, month - 1, day + days))
-  return utc.toISOString().slice(0, 10)
-}
 
 const inclusiveDayCount = (fromYmd: string, toYmd: string): number => {
   const fromMs = Date.parse(`${fromYmd}T00:00:00Z`)
@@ -87,7 +61,7 @@ type ReportDatePickerProps = {
   onSelect: (date: Date | undefined) => void
 }
 
-const ReportDatePicker = ({
+export const ReportDatePicker = ({
   id,
   label,
   ariaLabel,
@@ -120,7 +94,7 @@ const ReportDatePicker = ({
               data-empty={!selected}
               data-invalid={invalid || undefined}
               aria-label={ariaLabel}
-              className="data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive w-full justify-start text-left font-normal"
+              className="data-[empty=true]:text-muted-foreground data-[invalid=true]:border-destructive min-h-10 w-full justify-start text-left font-normal"
             />
           }
         >

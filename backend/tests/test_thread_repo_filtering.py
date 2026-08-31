@@ -74,7 +74,7 @@ async def test_list_by_mailbox_date_from_bounds_last_message_at() -> None:
     )
 
     sql = _compiled(session.statements[0])
-    assert "threads.last_message_at >= '2026-08-01" in sql
+    assert "threads.last_message_at >= '2026-08-01 00:00:00-04:00'" in sql
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_list_by_mailbox_date_to_is_exclusive_end_of_day() -> None:
     )
 
     sql = _compiled(session.statements[0])
-    assert "threads.last_message_at < '2026-08-29" in sql
+    assert "threads.last_message_at < '2026-08-29 00:00:00-04:00'" in sql
 
 
 def _fake_thread_row(thread_id: uuid.UUID, *, state: str, urgency: str | None) -> SimpleNamespace:

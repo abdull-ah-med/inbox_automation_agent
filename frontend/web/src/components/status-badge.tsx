@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple"
+type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple" | "orange"
 
 const TONE_CLASS: Record<BadgeTone, string> = {
   neutral: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
@@ -10,6 +10,7 @@ const TONE_CLASS: Record<BadgeTone, string> = {
   amber: "bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300",
   red: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300",
   purple: "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300",
+  orange: "bg-[#F97316]/15 text-[#F97316] dark:bg-[#F97316]/20 dark:text-[#F97316]",
 }
 
 export const StatusBadge = ({
@@ -49,7 +50,7 @@ export const stateTone = (state: string | null | undefined): BadgeTone => {
     case "REQUIRES_HUMAN":
       return "red"
     case "SPAM":
-      return "neutral"
+      return "orange"
     case "NO_ACTION":
       return "neutral"
     case "AWAITING_CLIENT":
@@ -63,6 +64,23 @@ export const stateTone = (state: string | null | undefined): BadgeTone => {
     default:
       return "neutral"
   }
+}
+
+const PRESENTATION_STATE_LABEL_TO_CODE: Record<string, string> = {
+  New: "NEW",
+  Spam: "SPAM",
+  "No action": "NO_ACTION",
+  "Needs human": "REQUIRES_HUMAN",
+  Drafted: "DRAFTED",
+  "Awaiting client": "AWAITING_CLIENT",
+  "Awaiting vendor": "AWAITING_VENDOR",
+  "Awaiting partner": "AWAITING_PARTNER",
+  Resolved: "RESOLVED",
+}
+
+export const stateToneFromLabel = (label: string): BadgeTone => {
+  const code = PRESENTATION_STATE_LABEL_TO_CODE[label]
+  return code ? stateTone(code) : "neutral"
 }
 
 export const stateLabel = (state: string | null | undefined): string => {

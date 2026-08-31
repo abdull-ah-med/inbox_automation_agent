@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Select, and_, case, exists, func, or_, select, tuple_, update
@@ -65,6 +66,9 @@ _FILTERED_STATES = (
     ThreadStateEnum.SPAM.value,
     ThreadStateEnum.NO_ACTION.value,
 )
+
+# Mailbox date filters use US Eastern calendar days (matches ops reports).
+_MAILBOX_LIST_TZ = ZoneInfo("America/New_York")
 
 
 def _enriched_triage(
@@ -623,18 +627,28 @@ def _staleness_hours(last_message_at: datetime | None, now: datetime) -> float:
     return max(0.0, (now - aware).total_seconds() / 3600.0)
 
 
-def _utc_inclusive_day_bounds(
+def _mailbox_inclusive_day_bounds(
     day_from: date | None,
     day_to: date | None,
 ) -> tuple[datetime | None, datetime | None]:
-    """Inclusive calendar days in UTC: ``>= from 00:00Z``, ``< to+1 day 00:00Z``."""
+    """Inclusive US Eastern calendar days on ``last_message_at``."""
     start: datetime | None = None
     end_exclusive: datetime | None = None
     if day_from is not None:
-        start = datetime(day_from.year, day_from.month, day_from.day, tzinfo=UTC)
+        start = datetime(
+            day_from.year,
+            day_from.month,
+            day_from.day,
+            tzinfo=_MAILBOX_LIST_TZ,
+        )
     if day_to is not None:
         next_day = day_to + timedelta(days=1)
-        end_exclusive = datetime(next_day.year, next_day.month, next_day.day, tzinfo=UTC)
+        end_exclusive = datetime(
+            next_day.year,
+            next_day.month,
+            next_day.day,
+            tzinfo=_MAILBOX_LIST_TZ,
+        )
     return start, end_exclusive
 
 
@@ -689,7 +703,7 @@ async def list_by_mailbox(
         stmt = stmt.where(Thread.state == state)
     if urgency:
         stmt = stmt.where(Thread.urgency == urgency)
-    range_start, range_end = _utc_inclusive_day_bounds(date_from, date_to)
+    range_start, range_end = _mailbox_inclusive_day_bounds(date_from, date_to)
     if range_start is not None:
         stmt = stmt.where(
             Thread.last_message_at.is_not(None), Thread.last_message_at >= range_start
