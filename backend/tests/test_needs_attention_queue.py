@@ -19,7 +19,7 @@ Isolation
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -236,6 +236,127 @@ async def test_needs_attention_is_the_four_threads_elise_must_act_on(db_session)
     got = [row.id for row in rows]
 
     assert got == [ids["human"], ids["open"], ids["tone"], ids["reopen"]]
+
+
+@pytest.mark.asyncio
+async def test_list_by_mailbox_awaiting_action_is_needs_attention_grain(db_session) -> None:
+    """Mailbox `state=AWAITING_ACTION` is the same four sales threads as Needs Attention.
+
+    Newest-first list order (not urgency rank): reopen 13:00, tone 12:00,
+    open 11:00, human 10:00. Waiting-on-client, approved, wrong-action,
+    resolved, no-action, and the other mailbox are out.
+    """
+    ids = await _seed(db_session)
+
+    items, _ = await thread_repo.list_by_mailbox(
+        db_session, SALES, state="AWAITING_ACTION", limit=25
+    )
+    got = [row.id for row in items]
+
+    assert got == [ids["reopen"], ids["tone"], ids["open"], ids["human"]]
+
+
+@pytest.mark.asyncio
+async def test_list_by_mailbox_stale_is_old_needs_attention_only(db_session) -> None:
+    """`state=STALE` is awaiting-action threads whose last mail is older than 24h.
+
+    Fresh open draft is out. Approved/wrong/client-waiting/other-mailbox
+    stale rows are out even when last_message_at is old.
+    """
+    now = datetime.now(UTC)
+    stale_at = now - timedelta(hours=48)
+    fresh_at = now - timedelta(hours=2)
+
+    t_stale = _thread(
+        mailbox=SALES,
+        conversation_id="t-stale-open",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=stale_at,
+    )
+    t_fresh = _thread(
+        mailbox=SALES,
+        conversation_id="t-fresh-open",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=fresh_at,
+    )
+    t_approved = _thread(
+        mailbox=SALES,
+        conversation_id="t-stale-approved",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=stale_at,
+    )
+    t_client = _thread(
+        mailbox=SALES,
+        conversation_id="t-stale-client",
+        state=ThreadStateEnum.AWAITING_CLIENT.value,
+        urgency="HIGH",
+        last_message_at=stale_at,
+    )
+    t_other = _thread(
+        mailbox=OTHER,
+        conversation_id="t-stale-other",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="CRITICAL",
+        last_message_at=stale_at,
+    )
+    db_session.add_all([t_stale, t_fresh, t_approved, t_client, t_other])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            _draft(t_stale, created_at=stale_at),
+            _draft(t_fresh, created_at=fresh_at),
+            _draft(t_approved, created_at=stale_at, approved_at=stale_at),
+            _draft(t_other, created_at=stale_at),
+        ]
+    )
+    await db_session.commit()
+
+    items, _ = await thread_repo.list_by_mailbox(db_session, SALES, state="STALE", limit=25)
+
+    assert [row.id for row in items] == [t_stale.id]
+
+
+@pytest.mark.asyncio
+async def test_list_by_mailbox_filtered_is_spam_and_no_action(db_session) -> None:
+    """`state=FILTERED` is the dashboard spam/no-action bucket, not a stored state."""
+    now = datetime.now(UTC)
+    t_spam = _thread(
+        mailbox=SALES,
+        conversation_id="t-spam",
+        state=ThreadStateEnum.SPAM.value,
+        urgency=None,
+        last_message_at=now,
+    )
+    t_no_action = _thread(
+        mailbox=SALES,
+        conversation_id="t-filtered-no-action",
+        state=ThreadStateEnum.NO_ACTION.value,
+        urgency=None,
+        last_message_at=now - timedelta(hours=1),
+    )
+    t_drafted = _thread(
+        mailbox=SALES,
+        conversation_id="t-still-open",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=now,
+    )
+    t_other = _thread(
+        mailbox=OTHER,
+        conversation_id="t-other-spam",
+        state=ThreadStateEnum.SPAM.value,
+        urgency=None,
+        last_message_at=now,
+    )
+    db_session.add_all([t_spam, t_no_action, t_drafted, t_other])
+    await db_session.commit()
+
+    items, _ = await thread_repo.list_by_mailbox(db_session, SALES, state="FILTERED", limit=25)
+
+    assert [row.id for row in items] == [t_spam.id, t_no_action.id]
 
 
 @pytest.mark.asyncio

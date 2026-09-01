@@ -32,12 +32,12 @@ import { inboxAccentStyle, inboxChipClassName, inboxLabel } from "@/lib/design-t
 const STATE_ITEMS = [
   { label: "All actionable states", value: null },
   { label: "New — not yet triaged", value: "NEW" },
-  { label: "Awaiting client", value: "AWAITING_CLIENT" },
-  { label: "Awaiting vendor", value: "AWAITING_VENDOR" },
-  { label: "Awaiting partner", value: "AWAITING_PARTNER" },
+  { label: "Awaiting action", value: "AWAITING_ACTION" },
+  { label: "Stale", value: "STALE" },
   { label: "Draft ready", value: "DRAFTED" },
   { label: "Needs human review", value: "REQUIRES_HUMAN" },
   { label: "Resolved", value: "RESOLVED" },
+  { label: "Spam / no action", value: "FILTERED" },
   { label: "No action needed", value: "NO_ACTION" },
   { label: "Spam", value: "SPAM" },
 ] as const
