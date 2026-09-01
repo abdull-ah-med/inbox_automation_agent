@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import { usePathname } from "next/navigation"
 import { Moon, Settings, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
@@ -8,6 +9,7 @@ import { InboxSearch } from "@/components/inbox-search"
 import { Button } from "@/components/ui/button"
 import { useAuthState, useLogout } from "@/features/auth/use-auth"
 import { useIsClient } from "@/hooks/use-is-client"
+import { cn } from "@/lib/utils"
 
 export function AppHeader() {
   const auth = useAuthState()
@@ -15,6 +17,8 @@ export function AppHeader() {
   const { resolvedTheme, setTheme } = useTheme()
   const isClient = useIsClient()
   const isDark = resolvedTheme === "dark"
+  const pathname = usePathname()
+  const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/")
 
   const handleToggleTheme = () => {
     setTheme(isDark ? "light" : "dark")
@@ -48,7 +52,11 @@ export function AppHeader() {
             href="/settings"
             tabIndex={0}
             aria-label="Open settings"
-            className="border-border hover:bg-muted focus-visible:ring-ring inline-flex size-10 items-center justify-center rounded-lg border text-gray-700 outline-none focus-visible:ring-2 dark:text-gray-200"
+            aria-current={settingsActive ? "page" : undefined}
+            className={cn(
+              "border-border hover:bg-muted focus-visible:ring-ring inline-flex size-10 cursor-pointer items-center justify-center rounded-lg border text-gray-700 outline-none focus-visible:ring-2 dark:text-gray-200",
+              settingsActive && "bg-muted text-foreground",
+            )}
           >
             <Settings className="size-4" aria-hidden="true" />
           </Link>

@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 const searchThreads = vi.fn()
+const nav = { pathname: "/dashboard" }
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn(), back: vi.fn() }),
-  usePathname: () => "/dashboard",
+  usePathname: () => nav.pathname,
 }))
 
 vi.mock("@/lib/api-client", () => ({
@@ -39,6 +40,7 @@ const renderHeader = () => renderWithProviders(<AppHeader />)
 
 describe("AppHeader search", () => {
   beforeEach(() => {
+    nav.pathname = "/dashboard"
     searchThreads.mockReset()
     searchThreads.mockResolvedValue({ query: "", mailbox: null, hits: [] })
   })
@@ -73,5 +75,36 @@ describe("AppHeader search", () => {
     // overflow-x:hidden on the sticky header computes overflow-y to auto and
     // clips the absolutely positioned list where the overview begins.
     expect(screen.getByRole("banner").className.split(/\s+/)).not.toContain("overflow-x-hidden")
+  })
+})
+
+describe("AppHeader settings and click cursors", () => {
+  beforeEach(() => {
+    nav.pathname = "/dashboard"
+    searchThreads.mockReset()
+    searchThreads.mockResolvedValue({ query: "", mailbox: null, hits: [] })
+  })
+
+  it("marks settings as the current page on /settings", () => {
+    nav.pathname = "/settings"
+    renderHeader()
+    expect(screen.getByRole("link", { name: "Open settings" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    )
+  })
+
+  it("does not mark settings current on the dashboard", () => {
+    renderHeader()
+    expect(screen.getByRole("link", { name: "Open settings" })).not.toHaveAttribute("aria-current")
+  })
+
+  it("uses a pointer cursor on settings, theme toggle, and sign out", () => {
+    renderHeader()
+    expect(screen.getByRole("link", { name: "Open settings" })).toHaveClass("cursor-pointer")
+    expect(screen.getByRole("button", { name: /switch to dark mode/i })).toHaveClass(
+      "cursor-pointer",
+    )
+    expect(screen.getByRole("button", { name: "Sign out" })).toHaveClass("cursor-pointer")
   })
 })
