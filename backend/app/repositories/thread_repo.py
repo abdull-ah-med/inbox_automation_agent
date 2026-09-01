@@ -67,6 +67,13 @@ _FILTERED_STATES = (
     ThreadStateEnum.NO_ACTION.value,
 )
 
+#: Mailbox list filter aliases — not stored ``threads.state`` values.
+#: ``AWAITING_ACTION`` / ``STALE`` match dashboard ``awaiting_action_count`` /
+#: ``stale_count``. ``FILTERED`` matches ``filtered_count`` (SPAM + NO_ACTION).
+_AWAITING_ACTION_FILTER = "AWAITING_ACTION"
+_STALE_FILTER = "STALE"
+_FILTERED_FILTER = "FILTERED"
+
 # Mailbox date filters use US Eastern calendar days (matches ops reports).
 _MAILBOX_LIST_TZ = ZoneInfo("America/New_York")
 
@@ -652,6 +659,68 @@ def _mailbox_inclusive_day_bounds(
     return start, end_exclusive
 
 
+def _apply_mailbox_list_filters(
+    stmt: Select[
+        tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]
+    ],
+    *,
+    state: str | None,
+    urgency: str | None,
+    stale_only: bool,
+    stale_after_hours: int,
+    date_from: date | None,
+    date_to: date | None,
+    cursor: str | None,
+    now: datetime,
+) -> Select[tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]]:
+    if state in {_AWAITING_ACTION_FILTER, _STALE_FILTER}:
+        latest_draft = _latest_draft_ranked()
+        stmt = stmt.outerjoin(
+            latest_draft,
+            (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
+        )
+        needs_elise = _needs_elise_action(latest_draft)
+        if state == _STALE_FILTER:
+            cutoff = now - timedelta(hours=stale_after_hours)
+            stmt = stmt.where(
+                needs_elise,
+                Thread.last_message_at.is_not(None),
+                Thread.last_message_at < cutoff,
+            )
+        else:
+            stmt = stmt.where(needs_elise)
+    elif state == _FILTERED_FILTER:
+        stmt = stmt.where(Thread.state.in_(_FILTERED_STATES))
+    elif state:
+        stmt = stmt.where(Thread.state == state)
+    if urgency:
+        stmt = stmt.where(Thread.urgency == urgency)
+    range_start, range_end = _mailbox_inclusive_day_bounds(date_from, date_to)
+    if range_start is not None:
+        stmt = stmt.where(
+            Thread.last_message_at.is_not(None), Thread.last_message_at >= range_start
+        )
+    if range_end is not None:
+        stmt = stmt.where(Thread.last_message_at.is_not(None), Thread.last_message_at < range_end)
+    if stale_only:
+        cutoff = now - timedelta(hours=stale_after_hours)
+        stmt = stmt.where(
+            Thread.last_message_at.is_not(None),
+            Thread.last_message_at < cutoff,
+            Thread.state.in_(_AWAITING_STATES),
+        )
+    if cursor:
+        cursor_ts, cursor_id = _decode_cursor(cursor)
+        if cursor_ts is not None:
+            stmt = stmt.where(
+                (Thread.last_message_at < cursor_ts)
+                | ((Thread.last_message_at == cursor_ts) & (Thread.id < cursor_id))
+            )
+        else:
+            stmt = stmt.where(Thread.id < cursor_id)
+    return stmt
+
+
 async def list_by_mailbox(
     session: AsyncSession,
     mailbox_email: str,
@@ -699,33 +768,17 @@ async def list_by_mailbox(
         .order_by(Thread.last_message_at.desc().nullslast(), Thread.id.desc())
         .limit(limit + 1)
     )
-    if state:
-        stmt = stmt.where(Thread.state == state)
-    if urgency:
-        stmt = stmt.where(Thread.urgency == urgency)
-    range_start, range_end = _mailbox_inclusive_day_bounds(date_from, date_to)
-    if range_start is not None:
-        stmt = stmt.where(
-            Thread.last_message_at.is_not(None), Thread.last_message_at >= range_start
-        )
-    if range_end is not None:
-        stmt = stmt.where(Thread.last_message_at.is_not(None), Thread.last_message_at < range_end)
-    if stale_only:
-        cutoff = now - timedelta(hours=stale_after_hours)
-        stmt = stmt.where(
-            Thread.last_message_at.is_not(None),
-            Thread.last_message_at < cutoff,
-            Thread.state.in_(_AWAITING_STATES),
-        )
-    if cursor:
-        cursor_ts, cursor_id = _decode_cursor(cursor)
-        if cursor_ts is not None:
-            stmt = stmt.where(
-                (Thread.last_message_at < cursor_ts)
-                | ((Thread.last_message_at == cursor_ts) & (Thread.id < cursor_id))
-            )
-        else:
-            stmt = stmt.where(Thread.id < cursor_id)
+    stmt = _apply_mailbox_list_filters(
+        stmt,
+        state=state,
+        urgency=urgency,
+        stale_only=stale_only,
+        stale_after_hours=stale_after_hours,
+        date_from=date_from,
+        date_to=date_to,
+        cursor=cursor,
+        now=now,
+    )
 
     result = await session.execute(stmt)
     rows = result.all()

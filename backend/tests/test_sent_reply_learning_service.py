@@ -550,6 +550,115 @@ async def test_run_catchup_noop_when_not_needed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_catchup_skips_when_graph_has_newer_inbound() -> None:
+    """Graph conversation tip is a follow-up local DB lacks — do not catchup-resolve."""
+    from app.models.schemas.graph import GraphMessageSchema
+    from app.repositories.message_repo import MessageSchema
+
+    thread_id = uuid.uuid4()
+    inbound_row = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="inbound-1",
+        direction="inbound",
+        sender="client@vendor.example",
+        body_text="Please send the packet",
+        received_at=datetime(2026, 8, 27, 14, 0, tzinfo=UTC),
+        to_recipients=["inquiries@example.com"],
+        cc_recipients=[],
+    )
+    outbound_row = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="outbound-1",
+        direction="outbound",
+        sender="elise@example.com",
+        body_text=SENT_BODY,
+        received_at=datetime(2026, 8, 27, 14, 5, tzinfo=UTC),
+        to_recipients=["client@vendor.example"],
+        cc_recipients=[],
+    )
+    graph_client = MagicMock()
+    graph_client.list_thread_messages = AsyncMock(
+        return_value=[
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "inbound-1",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "client@vendor.example"}},
+                    "receivedDateTime": "2026-08-27T14:00:00Z",
+                    "conversationId": "conv-1",
+                }
+            ),
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "outbound-1",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "elise@example.com"}},
+                    "receivedDateTime": "2026-08-27T14:05:00Z",
+                    "conversationId": "conv-1",
+                }
+            ),
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-followup",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "client@vendor.example"}},
+                    "receivedDateTime": "2026-08-27T15:00:00Z",
+                    "conversationId": "conv-1",
+                }
+            ),
+        ]
+    )
+    factory = MagicMock()
+    session = MagicMock()
+    session.in_transaction = MagicMock(return_value=False)
+    session_cm = MagicMock()
+    session_cm.__aenter__ = AsyncMock(return_value=session)
+    session_cm.__aexit__ = AsyncMock(return_value=None)
+    factory.return_value = session_cm
+
+    with (
+        patch(
+            "app.services.sent_reply_learning_service.thread_repo.get_by_id_trusted",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    id=thread_id,
+                    mailbox="inquiries@example.com",
+                    conversation_id="conv-1",
+                )
+            ),
+        ),
+        patch(
+            "app.services.sent_reply_learning_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound_row, outbound_row]),
+        ),
+        patch(
+            "app.services.sent_reply_learning_service.thread_needs_catchup_triage",
+            AsyncMock(return_value=True),
+        ) as needs,
+        patch(
+            "app.services.sent_reply_learning_service.promote_sent_reply_as_approved",
+            AsyncMock(),
+        ) as promote,
+    ):
+        state = await sent_reply_learning_service.run_catchup_after_outbound(
+            redis=AsyncMock(),
+            settings=_settings(),
+            thread_id=thread_id,
+            mailbox="inquiries@example.com",
+            conversation_id="conv-1",
+            outbound_graph_message_id="outbound-1",
+            session_factory=factory,
+            graph_client=graph_client,
+        )
+
+    assert state is None
+    needs.assert_not_awaited()
+    promote.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_phased_pipeline_skips_sonnet_when_sent_reply_already_exists() -> None:
     """Inbound arrives after Elise replied: triage yes, draft LLM no, stay out of DRAFTED."""
     from app.services import pipeline_service

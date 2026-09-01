@@ -16,7 +16,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.config import Settings, get_settings
-from app.core.dependencies import get_anthropic_client, get_db, get_openai_client, get_redis
+from app.core.dependencies import (
+    get_anthropic_client,
+    get_db,
+    get_graph_client,
+    get_openai_client,
+    get_redis,
+)
 from app.core.dependencies_auth import get_current_user
 from app.main import create_app
 from app.models.schemas.auth import UserMe
@@ -64,6 +70,7 @@ async def test_regenerate_draft_route_is_loadable(local_settings: Settings, db_s
     application.dependency_overrides[get_redis] = lambda: None
     application.dependency_overrides[get_anthropic_client] = lambda: None
     application.dependency_overrides[get_openai_client] = lambda: None
+    application.dependency_overrides[get_graph_client] = lambda: None
 
     async with AsyncClient(
         transport=ASGITransport(app=application),
@@ -100,6 +107,7 @@ async def test_generate_draft_route_is_loadable(local_settings: Settings, db_ses
     application.dependency_overrides[get_redis] = lambda: None
     application.dependency_overrides[get_anthropic_client] = lambda: None
     application.dependency_overrides[get_openai_client] = lambda: None
+    application.dependency_overrides[get_graph_client] = lambda: None
 
     async with AsyncClient(
         transport=ASGITransport(app=application),

@@ -179,6 +179,7 @@ async def regenerate_draft(
     settings: AppSettings,
     client: AnthropicClientDep,
     openai_client: OpenAIClientDep,
+    graph_client: GraphClientDep,
     user: CurrentUser,
 ) -> DraftView:
     """Regenerate a draft with a reviewer instruction. Creates a new draft row."""
@@ -192,6 +193,7 @@ async def regenerate_draft(
         instruction=body.instruction,
         actor=user.email,
         openai_client=openai_client,
+        graph_client=graph_client,
     )
     return thread_view_service.draft_response_to_view(persisted)
 
@@ -210,6 +212,7 @@ async def generate_draft(
     settings: AppSettings,
     client: AnthropicClientDep,
     openai_client: OpenAIClientDep,
+    graph_client: GraphClientDep,
     user: CurrentUser,
 ) -> DraftView:
     """Generate a letter draft on a briefing thread. Creates a new draft row."""
@@ -221,6 +224,7 @@ async def generate_draft(
         thread_id=thread_id,
         actor=user.email,
         openai_client=openai_client,
+        graph_client=graph_client,
     )
     return thread_view_service.draft_response_to_view(persisted)
 

@@ -208,7 +208,6 @@ async def run_catchup_after_outbound(
     catch-up is not needed or inputs are insufficient.
     """
     _ = redis
-    _ = graph_client
     try:
         from app.core.dependencies import (
             anthropic_client_from_settings,
@@ -218,10 +217,22 @@ async def run_catchup_after_outbound(
         from app.services import ingestion_service
         from app.services.pipeline import already_replied
         from app.services.pipeline import service as pipeline_service
+        from app.services.sent_reply_service import fetch_graph_newest_message_id
 
         async with session_factory() as session:
             thread = await thread_repo.get_by_id_trusted(session, thread_id)
             thread_mailbox = thread.mailbox if thread is not None else mailbox
+            if graph_client is not None:
+                rows = await message_repo.list_by_thread(session, thread_id)
+                tip = max(rows, key=lambda row: row.received_at) if rows else None
+                newest_id = await fetch_graph_newest_message_id(
+                    graph_client,
+                    mailbox=thread_mailbox,
+                    conversation_id=conversation_id,
+                    trigger_graph_message_id=outbound_graph_message_id,
+                )
+                if newest_id is not None and tip is not None and newest_id != tip.graph_message_id:
+                    return None
             needs = await thread_needs_catchup_triage(
                 session,
                 thread_id=thread_id,

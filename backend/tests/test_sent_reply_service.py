@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models.schemas.draft import DraftResponseSchema
+from app.models.schemas.graph import GraphMessageSchema
 from app.repositories.message_repo import MessageSchema
 from app.repositories.sent_reply_repo import SentReplySchema
 from app.services import sent_reply_service
@@ -721,3 +722,277 @@ async def test_thread_tip_already_replied_false_when_newer_inbound_after_send() 
         ),
     ):
         assert await sent_reply_service.thread_tip_already_replied(session, thread_id) is False
+
+
+def _tip_message(
+    *,
+    thread_id: uuid.UUID,
+    graph_message_id: str,
+    direction: str,
+    received_at: datetime,
+    sender: str,
+) -> MessageSchema:
+    return MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id=graph_message_id,
+        direction=direction,
+        sender=sender,
+        body_text="body",
+        received_at=received_at,
+        to_recipients=["other@example.com"],
+        cc_recipients=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_thread_tip_is_outbound_true_after_inbound_then_send() -> None:
+    """Newest received_at is outbound even when sent_replies was never written."""
+    thread_id = uuid.uuid4()
+    t1 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 9, 1, 13, 0, tzinfo=UTC)
+    messages = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-in",
+            direction="inbound",
+            received_at=t1,
+            sender="client@example.com",
+        ),
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=t2,
+            sender="elise@example.com",
+        ),
+    ]
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=messages),
+        ),
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        assert await sent_reply_service.thread_tip_is_outbound(session, thread_id) is True
+        assert await sent_reply_service.thread_tip_already_replied(session, thread_id) is False
+
+
+@pytest.mark.asyncio
+async def test_thread_tip_is_outbound_false_when_newer_inbound() -> None:
+    thread_id = uuid.uuid4()
+    t1 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 9, 1, 13, 0, tzinfo=UTC)
+    messages = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=t1,
+            sender="elise@example.com",
+        ),
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-in",
+            direction="inbound",
+            received_at=t2,
+            sender="client@example.com",
+        ),
+    ]
+    session = AsyncMock()
+    with patch(
+        "app.services.sent_reply_service.message_repo.list_by_thread",
+        AsyncMock(return_value=messages),
+    ):
+        assert await sent_reply_service.thread_tip_is_outbound(session, thread_id) is False
+
+
+@pytest.mark.asyncio
+async def test_thread_tip_is_outbound_true_with_no_sent_replies_row() -> None:
+    """The live gap: Elise sent, ingest never wrote sent_replies."""
+    thread_id = uuid.uuid4()
+    messages = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=datetime(2026, 9, 1, 15, 0, tzinfo=UTC),
+            sender="elise@example.com",
+        ),
+    ]
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=messages),
+        ),
+        patch(
+            "app.services.sent_reply_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        assert await sent_reply_service.thread_tip_is_outbound(session, thread_id) is True
+        assert await sent_reply_service.thread_tip_already_replied(session, thread_id) is False
+
+
+def _graph_msg(message_id: str, received: str, sender: str) -> GraphMessageSchema:
+    return GraphMessageSchema.model_validate(
+        {
+            "id": message_id,
+            "subject": "Thread",
+            "bodyPreview": "x",
+            "body": {"contentType": "text", "content": "x"},
+            "from": {"emailAddress": {"address": sender}},
+            "receivedDateTime": received,
+            "conversationId": "conv-1",
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_outbound_tip_in_sync_when_newest_ids_match() -> None:
+    thread_id = uuid.uuid4()
+    t1 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 9, 1, 13, 0, tzinfo=UTC)
+    local = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-in",
+            direction="inbound",
+            received_at=t1,
+            sender="client@example.com",
+        ),
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=t2,
+            sender="elise@example.com",
+        ),
+    ]
+    graph_client = AsyncMock()
+    graph_client.list_thread_messages = AsyncMock(
+        return_value=[
+            _graph_msg("msg-in", "2026-09-01T12:00:00Z", "client@example.com"),
+            _graph_msg("msg-out", "2026-09-01T13:00:00Z", "elise@example.com"),
+        ]
+    )
+    session = AsyncMock()
+    with patch(
+        "app.services.sent_reply_service.message_repo.list_by_thread",
+        AsyncMock(return_value=local),
+    ):
+        assert (
+            await sent_reply_service.graph_outbound_tip_in_sync(
+                session,
+                graph_client,
+                mailbox="elise@example.com",
+                conversation_id="conv-1",
+                thread_id=thread_id,
+                trigger_graph_message_id="msg-out",
+            )
+            is True
+        )
+    newest_graph = graph_client.list_thread_messages.return_value[-1]
+    assert newest_graph.id == "msg-out"
+    assert local[-1].graph_message_id == newest_graph.id
+
+
+@pytest.mark.asyncio
+async def test_graph_outbound_tip_not_in_sync_when_graph_has_newer_inbound() -> None:
+    thread_id = uuid.uuid4()
+    t1 = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    t2 = datetime(2026, 9, 1, 13, 0, tzinfo=UTC)
+    local = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-in",
+            direction="inbound",
+            received_at=t1,
+            sender="client@example.com",
+        ),
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=t2,
+            sender="elise@example.com",
+        ),
+    ]
+    graph_client = AsyncMock()
+    graph_client.list_thread_messages = AsyncMock(
+        return_value=[
+            _graph_msg("msg-in", "2026-09-01T12:00:00Z", "client@example.com"),
+            _graph_msg("msg-out", "2026-09-01T13:00:00Z", "elise@example.com"),
+            _graph_msg("msg-followup", "2026-09-01T14:00:00Z", "client@example.com"),
+        ]
+    )
+    session = AsyncMock()
+    with patch(
+        "app.services.sent_reply_service.message_repo.list_by_thread",
+        AsyncMock(return_value=local),
+    ):
+        assert (
+            await sent_reply_service.graph_outbound_tip_in_sync(
+                session,
+                graph_client,
+                mailbox="elise@example.com",
+                conversation_id="conv-1",
+                thread_id=thread_id,
+                trigger_graph_message_id="msg-out",
+            )
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_graph_outbound_tip_in_sync_false_on_graph_error() -> None:
+    from app.core.exceptions import GraphClientError
+
+    thread_id = uuid.uuid4()
+    local = [
+        _tip_message(
+            thread_id=thread_id,
+            graph_message_id="msg-out",
+            direction="outbound",
+            received_at=datetime(2026, 9, 1, 13, 0, tzinfo=UTC),
+            sender="elise@example.com",
+        ),
+    ]
+    graph_client = AsyncMock()
+    graph_client.list_thread_messages = AsyncMock(side_effect=GraphClientError("timeout"))
+    session = AsyncMock()
+    with patch(
+        "app.services.sent_reply_service.message_repo.list_by_thread",
+        AsyncMock(return_value=local),
+    ):
+        assert (
+            await sent_reply_service.graph_outbound_tip_in_sync(
+                session,
+                graph_client,
+                mailbox="elise@example.com",
+                conversation_id="conv-1",
+                thread_id=thread_id,
+            )
+            is False
+        )
+
+
+@pytest.mark.asyncio
+async def test_graph_outbound_tip_in_sync_false_without_client() -> None:
+    thread_id = uuid.uuid4()
+    session = AsyncMock()
+    assert (
+        await sent_reply_service.graph_outbound_tip_in_sync(
+            session,
+            None,
+            mailbox="elise@example.com",
+            conversation_id="conv-1",
+            thread_id=thread_id,
+        )
+        is False
+    )

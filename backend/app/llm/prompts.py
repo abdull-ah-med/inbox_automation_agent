@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-08-31.1"
+PROMPT_VERSION = "2026-09-01.1"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -259,6 +259,8 @@ suggested_actions is the recommended sequence the reviewer should take
 (e.g. "Accept or decline in Calendar", "File the listserv notice",
 "Forward internally on another channel"). Each step is ONE concrete action.
 Order steps chronologically. Minimum 1 step, maximum 5 steps.
+If the newest message in the thread is already an outbound send from this
+mailbox, do not suggest sending a reply or writing mail that was already sent.
 
 The teaching_note is REQUIRED: explain in plain English what this email is,
 what the PoI should do, and why no outbound email is needed.

@@ -179,7 +179,11 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
     ):
         state = await pipeline_service._run_phased_post_ingest(
             redis=AsyncMock(),
-            settings=Settings(environment="local", openai_api_key=""),
+            settings=Settings(
+                environment="local",
+                openai_api_key="",
+                salute_directory_enabled=False,
+            ),
             client=AsyncMock(),
             openai_client=None,
             ingest_result=_ingest(),

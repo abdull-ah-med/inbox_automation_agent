@@ -10,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.models.schemas.email_triage_state import EmailTriageState
-from app.repositories import draft_repo, sent_reply_repo, thread_repo
-from app.services import sent_reply_learning_service
+from app.repositories import draft_repo, message_repo, sent_reply_repo, thread_repo
+from app.services import sent_reply_learning_service, sent_reply_service
 
 
 async def latest_proposed_has_teaching_note(
@@ -38,6 +38,19 @@ async def promote_and_resolve_sent_tip(
     approved = None
     async with session_factory() as session, session.begin():
         sent = await sent_reply_repo.get_by_thread(session, thread_id)
+        if sent is None:
+            rows = await message_repo.list_by_thread(session, thread_id)
+            tip = max(rows, key=lambda row: row.received_at) if rows else None
+            if tip is not None and tip.direction == "outbound":
+                mailbox = state.original_email.mailbox
+                conversation_id = state.original_email.conversation_id
+                sent = await sent_reply_service.resolve_thread_from_outbound(
+                    session,
+                    thread_id=thread_id,
+                    message=tip,
+                    conversation_id=conversation_id,
+                    mailbox=mailbox,
+                )
         if sent is not None:
             approved = await sent_reply_learning_service.promote_sent_reply_as_approved(
                 session,

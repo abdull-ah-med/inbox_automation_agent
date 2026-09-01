@@ -358,3 +358,235 @@ async def test_regenerate_no_messages() -> None:
             thread_id=thread.id,
             instruction="acknowledge",
         )
+
+
+def _outbound_message(thread_id: uuid.UUID) -> MessageSchema:
+    return MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="msg-out",
+        direction="outbound",
+        sender="elise@example.com",
+        body_text="Already sent",
+        body_preview="Already sent",
+        received_at=datetime(2026, 9, 1, 13, 0, tzinfo=UTC),
+        to_recipients=["client@example.com"],
+        cc_recipients=[],
+        has_attachments=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_regenerate_refuses_letter_when_outbound_tip_in_sync() -> None:
+    from app.core.exceptions import ThreadStateError
+    from app.models.schemas.graph import GraphMessageSchema
+
+    thread = _thread()
+    outbound = _outbound_message(thread.id)
+    inbound = _message(thread.id)
+    inbound.graph_message_id = "msg-in"
+    inbound.direction = "inbound"
+    inbound.received_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    graph_client = AsyncMock()
+    graph_client.list_thread_messages = AsyncMock(
+        return_value=[
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-in",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "vendor@example.com"}},
+                    "receivedDateTime": "2026-09-01T12:00:00Z",
+                    "conversationId": "c1",
+                }
+            ),
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-out",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "elise@example.com"}},
+                    "receivedDateTime": "2026-09-01T13:00:00Z",
+                    "conversationId": "c1",
+                }
+            ),
+        ]
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound, outbound]),
+        ),
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound, outbound]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_llm.generate_draft",
+            AsyncMock(),
+        ) as gen_mock,
+        pytest.raises(ThreadStateError),
+    ):
+        await draft_regeneration_service.regenerate_draft(
+            session,
+            client=AsyncMock(),
+            settings=_settings(),
+            thread_id=thread.id,
+            instruction="write a letter",
+            force_letter=True,
+            graph_client=graph_client,
+        )
+    gen_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_letter_when_graph_has_newer_inbound() -> None:
+    from app.models.schemas.graph import GraphMessageSchema
+
+    thread = _thread()
+    outbound = _outbound_message(thread.id)
+    inbound = _message(thread.id)
+    inbound.graph_message_id = "msg-in"
+    inbound.direction = "inbound"
+    inbound.received_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    graph_client = AsyncMock()
+    graph_client.list_thread_messages = AsyncMock(
+        return_value=[
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-in",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "vendor@example.com"}},
+                    "receivedDateTime": "2026-09-01T12:00:00Z",
+                    "conversationId": "c1",
+                }
+            ),
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-out",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "elise@example.com"}},
+                    "receivedDateTime": "2026-09-01T13:00:00Z",
+                    "conversationId": "c1",
+                }
+            ),
+            GraphMessageSchema.model_validate(
+                {
+                    "id": "msg-followup",
+                    "subject": "Need docs",
+                    "from": {"emailAddress": {"address": "vendor@example.com"}},
+                    "receivedDateTime": "2026-09-01T14:00:00Z",
+                    "conversationId": "c1",
+                }
+            ),
+        ]
+    )
+    persisted = DraftResponseSchema(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        created_at=datetime.now(UTC),
+        subject_line="Re: Need docs",
+        reply_body="Dear client, here is a draft.",
+        teaching_note="Follow up",
+        urgency="NORMAL",
+        urgency_reason="Routine",
+        suggested_actions=[],
+    )
+    session = AsyncMock()
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
+    session.in_transaction = MagicMock(return_value=False)
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound, outbound]),
+        ),
+        patch(
+            "app.services.sent_reply_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound, outbound]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(
+                return_value=TriageFlags(
+                    is_spam=False,
+                    has_action_items=True,
+                    draft_needed=True,
+                    needs_context=False,
+                    routing_category="general",
+                )
+            ),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.skill_selection_service.select_skills",
+            AsyncMock(return_value=MagicMock(blocks=[], skill_ids=[], applied=[])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",
+            AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.urgency_feedback_service.find_urgency_hints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_llm.generate_draft",
+            AsyncMock(
+                return_value=DraftCallResult(
+                    draft=DraftSchema(
+                        subject_line="Re: Need docs",
+                        reply_body="Dear client, here is a draft.",
+                        teaching_note="Follow up",
+                        urgency="NORMAL",
+                        urgency_reason="Routine",
+                        suggested_actions=[],
+                    ),
+                    prompt_version="v1",
+                    model="claude-sonnet-4-6",
+                    input_tokens=10,
+                    output_tokens=20,
+                    latency_ms=10,
+                )
+            ),
+        ) as gen_mock,
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.create_regenerated_draft",
+            AsyncMock(return_value=persisted),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+    ):
+        result = await draft_regeneration_service.regenerate_draft(
+            session,
+            client=AsyncMock(),
+            settings=_settings(),
+            thread_id=thread.id,
+            instruction="write a letter",
+            force_letter=True,
+            graph_client=graph_client,
+        )
+    assert result.reply_body == "Dear client, here is a draft."
+    gen_mock.assert_awaited()

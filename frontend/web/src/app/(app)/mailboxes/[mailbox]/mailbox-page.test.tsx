@@ -78,6 +78,42 @@ describe("Mailbox page filters", () => {
     expect(screen.queryByRole("button", { name: "Showing spam/no-action" })).toBeNull()
   })
 
+  it("offers Awaiting action and drops awaiting client, vendor, and partner", async () => {
+    // Bug this catches: mailbox state filter still listed waiting-on-others
+    // states instead of the dashboard "awaiting action" queue.
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    expect(await screen.findByRole("option", { name: "Awaiting action" })).toBeInTheDocument()
+    expect(screen.queryByRole("option", { name: "Awaiting client" })).toBeNull()
+    expect(screen.queryByRole("option", { name: "Awaiting vendor" })).toBeNull()
+    expect(screen.queryByRole("option", { name: "Awaiting partner" })).toBeNull()
+  })
+
+  it("writes Awaiting action onto the mailbox URL as AWAITING_ACTION", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    await user.click(await screen.findByRole("option", { name: "Awaiting action" }))
+    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=AWAITING_ACTION")
+  })
+
+  it("offers Stale and Spam / no action in the state filter", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    expect(await screen.findByRole("option", { name: "Stale" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Spam / no action" })).toBeInTheDocument()
+  })
+
+  it("writes Stale onto the mailbox URL as STALE", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    await user.click(await screen.findByRole("option", { name: "Stale" }))
+    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=STALE")
+  })
+
   it("writes the chosen state onto the mailbox URL", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderPage()
