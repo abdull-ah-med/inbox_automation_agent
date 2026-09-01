@@ -56,6 +56,31 @@ def test_ops_report_settings_defaults() -> None:
     assert settings.ops_report_cron_hour == 8
 
 
+def test_heal_threads_cron_fires_at_6am_and_2pm_eastern() -> None:
+    """Safety-net healer: twice a day, US Eastern wall clock — not hourly."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.workers.heal_threads_worker import heal_threads_cron_trigger
+
+    settings = Settings(environment="local", _env_file=None)
+    assert settings.heal_threads_enabled is False
+    assert settings.heal_threads_cron_hours == "6,14"
+    assert settings.heal_threads_cron_minute == 0
+    assert settings.heal_threads_timezone == "America/New_York"
+
+    tz = ZoneInfo("America/New_York")
+    trigger = heal_threads_cron_trigger(settings)
+    midnight = datetime(2026, 9, 2, 0, 0, tzinfo=tz)
+    six = trigger.get_next_fire_time(None, midnight)
+    two_pm = trigger.get_next_fire_time(six, six)
+    next_dawn = trigger.get_next_fire_time(two_pm, datetime(2026, 9, 2, 14, 1, tzinfo=tz))
+
+    assert six == datetime(2026, 9, 2, 6, 0, tzinfo=tz)
+    assert two_pm == datetime(2026, 9, 2, 14, 0, tzinfo=tz)
+    assert next_dawn == datetime(2026, 9, 3, 6, 0, tzinfo=tz)
+
+
 def test_create_app_production_omits_local_routers_and_docs() -> None:
     """Fail-closed: production must not mount simulate/debug or expose OpenAPI."""
     settings = Settings(environment="production")

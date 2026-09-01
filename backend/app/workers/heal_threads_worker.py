@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
+from apscheduler.triggers.cron import CronTrigger
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -38,6 +39,16 @@ from app.services import (
 logger = structlog.get_logger(__name__)
 
 HEAL_THREADS_MAX_PER_RUN = 50
+
+
+def heal_threads_cron_trigger(settings: Settings) -> CronTrigger:
+    """6:00 and 14:00 in ``heal_threads_timezone`` (default US Eastern)."""
+    return CronTrigger(
+        hour=settings.heal_threads_cron_hours,
+        minute=settings.heal_threads_cron_minute,
+        timezone=settings.heal_threads_timezone,
+    )
+
 
 _OPEN_STATES = frozenset(
     {
