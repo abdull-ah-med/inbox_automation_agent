@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Interval poller — primary ingest when graph_webhooks_enabled is false.
     poll_enabled: bool = True
     poll_interval_seconds: int = Field(default=300, ge=60)
+    # Stuck NEW + open outbound-tip healer. Default off. Mail.Read only.
+    heal_threads_enabled: bool = False
+    heal_threads_interval_minutes: int = Field(default=60, ge=5, le=1440)
+    heal_threads_max_per_run: int = Field(default=50, ge=1, le=500)
     subscription_renew_interval_hours: int = Field(default=48, ge=1)
     db_pool_size: int = Field(default=10, ge=1, le=50)
     db_max_overflow: int = Field(default=5, ge=0, le=50)
@@ -162,6 +166,7 @@ class Settings(BaseSettings):
         "salute_directory_enabled",
         "graph_webhooks_enabled",
         "poll_enabled",
+        "heal_threads_enabled",
         mode="before",
     )
     @classmethod
