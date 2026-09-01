@@ -101,7 +101,7 @@ const ContactFormFields = ({
       })
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["mailbox", mailbox, "contacts"] })
+      await queryClient.invalidateQueries({ queryKey: ["contacts"] })
       await queryClient.invalidateQueries({ queryKey: ["thread"] })
       setError(null)
       onOpenChange(false)
@@ -234,7 +234,7 @@ export const ContactFormDialog = ({
   const canLookup = open && EMAIL_RE.test(emailKey)
 
   const { data: existing } = useQuery({
-    queryKey: ["mailbox", mailbox, "contacts", "by-email", emailKey],
+    queryKey: ["contacts", "by-email", emailKey],
     queryFn: () => api.mailboxContacts.getOne(mailbox, emailKey),
     enabled: canLookup,
     retry: false,

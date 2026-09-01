@@ -1,8 +1,11 @@
-"""Per-mailbox recipient alias for draft salutations.
+"""Global recipient aliases for draft salutations.
 
 PII policy: emails and names are stored in cleartext (same as threads.subject).
 Logging redaction covers log events, not this application table — see
 backend/.cursor/rules/project-context.mdc Data Privacy & Logging.
+
+``mailbox`` is last-touch metadata (where the name was last saved). Lookups
+and uniqueness are by email alone so every shared mailbox shares one directory.
 """
 
 from __future__ import annotations
@@ -18,12 +21,10 @@ from app.models.db.base import Base, uuid_pk
 
 
 class MailboxContact(Base):
-    """Reviewer-taught first/full name for a recipient email in one mailbox."""
+    """Reviewer-taught first/full name for a recipient email (global)."""
 
     __tablename__ = "mailbox_contacts"
-    __table_args__ = (
-        UniqueConstraint("mailbox", "email", name="uq_mailbox_contacts_mailbox_email"),
-    )
+    __table_args__ = (UniqueConstraint("email", name="uq_mailbox_contacts_email"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     mailbox: Mapped[str] = mapped_column(String(320), nullable=False)

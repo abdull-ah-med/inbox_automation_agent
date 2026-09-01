@@ -1,4 +1,4 @@
-"""Prefetch per-mailbox contact aliases for draft salutations."""
+"""Prefetch global contact greeting names for draft salutations."""
 
 from __future__ import annotations
 
@@ -53,5 +53,5 @@ async def build_directory(
     candidates = _candidate_emails(mailbox, thread_context, current)
     if not candidates:
         return {}
-    rows = await mailbox_contact_repo.get_many(session, mailbox, candidates)
+    rows = await mailbox_contact_repo.get_many(session, candidates)
     return {email: row.first_name for email, row in rows.items()}

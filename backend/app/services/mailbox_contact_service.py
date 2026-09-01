@@ -1,4 +1,4 @@
-"""Mailbox contact service — resolve mailbox + CRUD for salutation aliases."""
+"""Mailbox contact service — global greeting-name CRUD (mailbox path is auth)."""
 
 from __future__ import annotations
 
@@ -44,10 +44,10 @@ async def list_contacts(
     limit: int = 50,
     offset: int = 0,
 ) -> MailboxContactListResponse:
-    mailbox = _resolve_mailbox(settings, mailbox_key)
-    rows, total = await mailbox_contact_repo.list_by_mailbox(
+    # Mailbox path validates the caller may use the console; directory is global.
+    _resolve_mailbox(settings, mailbox_key)
+    rows, total = await mailbox_contact_repo.list_contacts(
         session,
-        mailbox,
         q=q,
         limit=limit,
         offset=offset,
@@ -62,8 +62,8 @@ async def get_contact(
     mailbox_key: str,
     email: str,
 ) -> MailboxContactView:
-    mailbox = _resolve_mailbox(settings, mailbox_key)
-    row = await mailbox_contact_repo.get(session, mailbox, email)
+    _resolve_mailbox(settings, mailbox_key)
+    row = await mailbox_contact_repo.get(session, email)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")
     return _to_view(row)
@@ -106,11 +106,10 @@ async def patch_contact(
     full_name: str | None,
     notes: str | None,
 ) -> MailboxContactView:
-    mailbox = _resolve_mailbox(settings, mailbox_key)
+    _resolve_mailbox(settings, mailbox_key)
     try:
         row = await mailbox_contact_repo.update(
             session,
-            mailbox,
             email,
             first_name=first_name,
             full_name=full_name,
@@ -130,7 +129,7 @@ async def delete_contact(
     mailbox_key: str,
     email: str,
 ) -> None:
-    mailbox = _resolve_mailbox(settings, mailbox_key)
-    deleted = await mailbox_contact_repo.delete(session, mailbox, email)
+    _resolve_mailbox(settings, mailbox_key)
+    deleted = await mailbox_contact_repo.delete(session, email)
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contact not found")

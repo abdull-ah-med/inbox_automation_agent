@@ -1,4 +1,4 @@
-"""Mailbox contact repository — per-mailbox recipient aliases for salutations."""
+"""Mailbox contact repository — global recipient aliases for salutations."""
 
 from __future__ import annotations
 
@@ -58,17 +58,12 @@ def _to_row(model: MailboxContact) -> MailboxContactRow:
 
 async def get(
     session: AsyncSession,
-    mailbox: str,
     email: str,
 ) -> MailboxContactRow | None:
-    mailbox_key = _normalize_mailbox(mailbox)
     email_key = _normalize_email(email)
     if email_key is None:
         return None
-    stmt = select(MailboxContact).where(
-        MailboxContact.mailbox == mailbox_key,
-        MailboxContact.email == email_key,
-    )
+    stmt = select(MailboxContact).where(MailboxContact.email == email_key)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     return _to_row(row) if row is not None else None
@@ -76,11 +71,9 @@ async def get(
 
 async def get_many(
     session: AsyncSession,
-    mailbox: str,
     emails: Sequence[str],
 ) -> dict[str, MailboxContactRow]:
-    """Bulk lookup keyed by normalized lowercase email. One query."""
-    mailbox_key = _normalize_mailbox(mailbox)
+    """Bulk lookup keyed by normalized lowercase email. One query. Global."""
     keys: list[str] = []
     seen: set[str] = set()
     for raw in emails:
@@ -91,24 +84,19 @@ async def get_many(
         keys.append(email_key)
     if not keys:
         return {}
-    stmt = select(MailboxContact).where(
-        MailboxContact.mailbox == mailbox_key,
-        MailboxContact.email.in_(keys),
-    )
+    stmt = select(MailboxContact).where(MailboxContact.email.in_(keys))
     result = await session.execute(stmt)
     return {row.email: _to_row(row) for row in result.scalars().all()}
 
 
-async def list_by_mailbox(
+async def list_contacts(
     session: AsyncSession,
-    mailbox: str,
     *,
     q: str | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[MailboxContactRow], int]:
-    mailbox_key = _normalize_mailbox(mailbox)
-    filters = [MailboxContact.mailbox == mailbox_key]
+    filters: list[object] = []
     needle = (q or "").strip()
     if needle:
         pattern = f"%{needle}%"
@@ -119,15 +107,13 @@ async def list_by_mailbox(
                 MailboxContact.first_name.ilike(pattern),
             )
         )
-    count_stmt = select(func.count()).select_from(MailboxContact).where(*filters)
+    count_stmt = select(func.count()).select_from(MailboxContact)
+    if filters:
+        count_stmt = count_stmt.where(*filters)
     total = int((await session.execute(count_stmt)).scalar_one())
-    stmt = (
-        select(MailboxContact)
-        .where(*filters)
-        .order_by(MailboxContact.email.asc())
-        .limit(limit)
-        .offset(offset)
-    )
+    stmt = select(MailboxContact).order_by(MailboxContact.email.asc()).limit(limit).offset(offset)
+    if filters:
+        stmt = stmt.where(*filters)
     result = await session.execute(stmt)
     return [_to_row(row) for row in result.scalars().all()], total
 
@@ -142,7 +128,7 @@ async def upsert(
     notes: str | None = None,
     actor_user_id: uuid.UUID | None = None,
 ) -> tuple[MailboxContactRow, bool]:
-    """Insert or update. Returns ``(row, created)``."""
+    """Insert or update by email. ``mailbox`` is last-touch metadata."""
     mailbox_key = _normalize_mailbox(mailbox)
     email_key = _normalize_email(email)
     if email_key is None:
@@ -152,7 +138,7 @@ async def upsert(
     if not first:
         raise ValueError("first_name is required")
 
-    existing = await get(session, mailbox_key, email_key)
+    existing = await get(session, email_key)
     created = existing is None
     stmt = (
         insert(MailboxContact)
@@ -166,8 +152,9 @@ async def upsert(
             created_by_user_id=actor_user_id,
         )
         .on_conflict_do_update(
-            constraint="uq_mailbox_contacts_mailbox_email",
+            constraint="uq_mailbox_contacts_email",
             set_={
+                "mailbox": mailbox_key,
                 "full_name": full,
                 "first_name": first,
                 "notes": notes,
@@ -184,7 +171,6 @@ async def upsert(
 
 async def update(
     session: AsyncSession,
-    mailbox: str,
     email: str,
     *,
     first_name: str | None = None,
@@ -192,11 +178,10 @@ async def update(
     notes: str | None = None,
 ) -> MailboxContactRow | None:
     """Partial update. Returns None when the row does not exist (does not create)."""
-    mailbox_key = _normalize_mailbox(mailbox)
     email_key = _normalize_email(email)
     if email_key is None:
         return None
-    existing = await get(session, mailbox_key, email_key)
+    existing = await get(session, email_key)
     if existing is None:
         return None
     values: dict[str, object] = {"updated_at": func.now()}
@@ -211,10 +196,7 @@ async def update(
         values["notes"] = notes
     stmt = (
         sa_update(MailboxContact)
-        .where(
-            MailboxContact.mailbox == mailbox_key,
-            MailboxContact.email == email_key,
-        )
+        .where(MailboxContact.email == email_key)
         .values(**values)
         .returning(MailboxContact)
     )
@@ -224,18 +206,14 @@ async def update(
     return _to_row(row) if row is not None else None
 
 
-async def delete(session: AsyncSession, mailbox: str, email: str) -> bool:
-    mailbox_key = _normalize_mailbox(mailbox)
+async def delete(session: AsyncSession, email: str) -> bool:
     email_key = _normalize_email(email)
     if email_key is None:
         return False
-    existing = await get(session, mailbox_key, email_key)
+    existing = await get(session, email_key)
     if existing is None:
         return False
-    stmt = sa_delete(MailboxContact).where(
-        MailboxContact.mailbox == mailbox_key,
-        MailboxContact.email == email_key,
-    )
+    stmt = sa_delete(MailboxContact).where(MailboxContact.email == email_key)
     result = await session.execute(stmt)
     await session.flush()
     return bool(result.rowcount)

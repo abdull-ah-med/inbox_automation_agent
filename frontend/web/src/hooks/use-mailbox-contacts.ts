@@ -14,7 +14,7 @@ export const useMailboxContacts = (
   const limit = opts.limit ?? CONTACTS_PAGE_SIZE
   const offset = opts.offset ?? 0
   return useQuery({
-    queryKey: ["mailbox", mailbox, "contacts", q ?? "", offset, limit],
+    queryKey: ["contacts", q ?? "", offset, limit],
     queryFn: () =>
       api.mailboxContacts.list(mailbox!, {
         q,
@@ -25,11 +25,8 @@ export const useMailboxContacts = (
   })
 }
 
-const invalidateContactQueries = async (
-  queryClient: ReturnType<typeof useQueryClient>,
-  mailbox: string,
-) => {
-  await queryClient.invalidateQueries({ queryKey: ["mailbox", mailbox, "contacts"] })
+const invalidateContactQueries = async (queryClient: ReturnType<typeof useQueryClient>) => {
+  await queryClient.invalidateQueries({ queryKey: ["contacts"] })
   await queryClient.invalidateQueries({ queryKey: ["thread"] })
 }
 
@@ -38,7 +35,7 @@ export const useDeleteContact = (mailbox: string) => {
   return useMutation({
     mutationFn: (email: string) => api.mailboxContacts.remove(mailbox, email),
     onSuccess: async () => {
-      await invalidateContactQueries(queryClient, mailbox)
+      await invalidateContactQueries(queryClient)
     },
   })
 }

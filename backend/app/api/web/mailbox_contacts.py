@@ -1,8 +1,9 @@
-"""Per-mailbox contact aliases for draft salutations.
+"""Global contact greeting names for draft salutations.
 
-Authorization: any authenticated active user may read/write contacts for any
-configured TARGET_MAILBOXES (same posture as the rest of the ops console —
-per-user mailbox RBAC is out of scope).
+Authorization: any authenticated active user may read/write contacts via any
+configured TARGET_MAILBOXES path (same posture as the rest of the ops console —
+per-user mailbox RBAC is out of scope). Contacts are shared across mailboxes;
+the mailbox path segment only validates a known mailbox.
 """
 
 from __future__ import annotations

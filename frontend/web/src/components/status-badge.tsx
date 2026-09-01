@@ -58,7 +58,7 @@ export const stateTone = (state: string | null | undefined): BadgeTone => {
     case "AWAITING_PARTNER":
       return "blue"
     case "RESOLVED":
-      return "green"
+      return "blue"
     case "NEW":
       return "amber"
     default:

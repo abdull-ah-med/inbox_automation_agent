@@ -169,7 +169,7 @@ export const SentReplyPanel = ({ sentReply, draft, diff }: SentReplyPanelProps) 
         <div className="flex flex-row flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
             <CardTitle className="text-sm leading-none font-semibold">Sent reply</CardTitle>
-            <StatusBadge label="Resolved" tone="green" />
+            <StatusBadge label="Resolved" tone="blue" />
             <span className="text-muted-foreground text-xs leading-none">
               Matched by: {MATCHED_BY_LABEL[sentReply.matched_by]}
             </span>

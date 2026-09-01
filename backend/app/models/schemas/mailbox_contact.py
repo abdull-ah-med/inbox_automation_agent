@@ -1,4 +1,4 @@
-"""Schemas for per-mailbox recipient contact aliases."""
+"""Schemas for global recipient contact greeting names."""
 
 from __future__ import annotations
 

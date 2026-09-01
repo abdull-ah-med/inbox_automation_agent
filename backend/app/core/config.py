@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     chat_max_tokens: int = Field(default=1024, ge=256, le=4096)
     chat_groundedness_enabled: bool = False
     chat_semantic_cache_enabled: bool = True
-    # Per-mailbox contact aliases + bare "Hi," when no personal name is known.
+    # Global contact greeting names + bare "Hi," when no personal name is known.
     salute_directory_enabled: bool = False
     chat_semantic_cache_threshold: float = Field(default=0.92, ge=0.5, le=0.999)
     chat_semantic_cache_ttl_overview_sec: int = Field(default=300, ge=30, le=86_400)

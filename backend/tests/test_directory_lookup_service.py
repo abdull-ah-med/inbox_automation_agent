@@ -1,4 +1,4 @@
-"""directory_lookup_service.build_directory — bulk alias fetch."""
+"""directory_lookup_service.build_directory — bulk global contact fetch."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def _msg(
     )
 
 
-async def test_build_directory_one_query_and_isolation(db_session) -> None:
+async def test_build_directory_one_query_and_global_share(db_session) -> None:
     mailbox = "elise@example.com"
     for i in range(8):
         await mailbox_contact_repo.upsert(
@@ -46,13 +46,6 @@ async def test_build_directory_one_query_and_isolation(db_session) -> None:
             full_name=f"Person {i}",
             first_name=f"P{i}",
         )
-    await mailbox_contact_repo.upsert(
-        db_session,
-        "bob@example.com",
-        "person0@example.com",
-        full_name="Other",
-        first_name="Other",
-    )
     await db_session.commit()
 
     messages = [
@@ -95,6 +88,7 @@ async def test_build_directory_one_query_and_isolation(db_session) -> None:
     select_count = sum(1 for q in queries if "SELECT" in q.upper() and "mailbox_contacts" in q)
     assert select_count == 1
 
+    # Contact saved under Elise must greet the same person on Bob's mailbox.
     bob_dir = await directory_lookup_service.build_directory(
         db_session,
         "bob@example.com",
@@ -112,4 +106,4 @@ async def test_build_directory_one_query_and_isolation(db_session) -> None:
             ],
         ),
     )
-    assert bob_dir == {"person0@example.com": "Other"}
+    assert bob_dir == {"person0@example.com": "P0"}

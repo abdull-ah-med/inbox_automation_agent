@@ -75,7 +75,7 @@ describe("ContactsSection", () => {
     ])
   })
 
-  it("shows the mailbox label in the contacts filter, not the raw key", async () => {
+  it("shows one global contacts directory with no mailbox picker", async () => {
     mailboxesMock.mockResolvedValue([
       {
         mailbox: "sales",
@@ -104,9 +104,8 @@ describe("ContactsSection", () => {
     ])
     listMock.mockResolvedValue({ total: 0, items: [] })
     renderSection()
-    const mailboxFilter = await screen.findByRole("combobox", { name: "Mailbox for contacts" })
-    expect(mailboxFilter).toHaveTextContent("Sales Inbox")
-    expect(mailboxFilter).not.toHaveTextContent(/^sales$/i)
+    expect(await screen.findByText(/shared across all mailboxes/i)).toBeInTheDocument()
+    expect(screen.queryByRole("combobox", { name: "Mailbox for contacts" })).not.toBeInTheDocument()
   })
 
   it("renders visible rows for three contacts", async () => {
@@ -267,7 +266,7 @@ describe("ContactsSection", () => {
     await waitFor(() => {
       expect(screen.queryByText("a@example.com")).not.toBeInTheDocument()
     })
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["mailbox", "sales", "contacts"] })
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["contacts"] })
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["thread"] })
   })
 })

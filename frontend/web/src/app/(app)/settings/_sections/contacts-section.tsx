@@ -17,13 +17,6 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   CONTACTS_PAGE_SIZE,
@@ -32,23 +25,15 @@ import {
 } from "@/hooks/use-mailbox-contacts"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api-client"
-import type { MailboxContactView, MailboxOverview } from "@/lib/types"
+import type { MailboxContactView } from "@/lib/types"
 
 const CONTACTS_SEARCH_DEBOUNCE_MS = 200
 
 type ContactsPanelProps = {
-  mailboxes: MailboxOverview[]
-  selectedKey: string
-  selectedLabel: string
-  onMailboxChange: (value: string | null) => void
+  mailboxKey: string
 }
 
-const ContactsPanel = ({
-  mailboxes,
-  selectedKey,
-  selectedLabel,
-  onMailboxChange,
-}: ContactsPanelProps) => {
+const ContactsPanel = ({ mailboxKey }: ContactsPanelProps) => {
   const [search, setSearch] = useState("")
   const debouncedSearch = useDebouncedValue(search, CONTACTS_SEARCH_DEBOUNCE_MS)
   const [offset, setOffset] = useState(0)
@@ -56,12 +41,12 @@ const ContactsPanel = ({
   const [editing, setEditing] = useState<MailboxContactView | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<MailboxContactView | null>(null)
 
-  const { data, isLoading } = useMailboxContacts(selectedKey, {
+  const { data, isLoading } = useMailboxContacts(mailboxKey, {
     q: debouncedSearch,
     offset,
     limit: CONTACTS_PAGE_SIZE,
   })
-  const deleteMutation = useDeleteContact(selectedKey)
+  const deleteMutation = useDeleteContact(mailboxKey)
 
   const items = data?.items ?? []
   const total = data?.total ?? 0
@@ -71,18 +56,8 @@ const ContactsPanel = ({
     return "No saved contacts yet. Names you set on a draft appear here automatically."
   }, [debouncedSearch])
 
-  const mailboxItems = useMemo(
-    () => mailboxes.map((row) => ({ label: row.label, value: row.mailbox })),
-    [mailboxes],
-  )
-
   const handleSearchChange = (value: string) => {
     setSearch(value)
-    setOffset(0)
-  }
-
-  const handleMailboxChange = (value: string | null) => {
-    onMailboxChange(value)
     setOffset(0)
   }
 
@@ -105,8 +80,8 @@ const ContactsPanel = ({
           Contacts
         </CardTitle>
         <CardDescription>
-          Greeting names for {selectedLabel}. Aliases override guessed names from email addresses,
-          and updates on a draft apply instantly to that reply.
+          Greeting names shared across all mailboxes. Saved names override guessed names from email
+          addresses, and updates on a draft apply instantly to that reply.
         </CardDescription>
         <CardAction>
           <Button
@@ -123,20 +98,6 @@ const ContactsPanel = ({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          {mailboxes.length > 1 ? (
-            <Select items={mailboxItems} value={selectedKey} onValueChange={handleMailboxChange}>
-              <SelectTrigger className="w-[220px]" aria-label="Mailbox for contacts" tabIndex={0}>
-                <SelectValue placeholder="Select mailbox" />
-              </SelectTrigger>
-              <SelectContent>
-                {mailboxItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
           <Input
             type="search"
             value={search}
@@ -204,7 +165,7 @@ const ContactsPanel = ({
 
       <ContactFormDialog
         mode={editing ? "edit" : "create"}
-        mailbox={selectedKey}
+        mailbox={mailboxKey}
         open={dialogOpen}
         onOpenChange={(open) => {
           setDialogOpen(open)
@@ -231,11 +192,9 @@ export const ContactsSection = () => {
     queryKey: ["mailboxes"],
     queryFn: () => api.mailboxes.list(),
   })
-  const [mailboxKey, setMailboxKey] = useState("")
-  const selectedKey = mailboxKey || mailboxes[0]?.mailbox || ""
-  const selectedLabel = mailboxes.find((row) => row.mailbox === selectedKey)?.label ?? selectedKey
+  const mailboxKey = mailboxes[0]?.mailbox || ""
 
-  if (!selectedKey) {
+  if (!mailboxKey) {
     return (
       <Card className="mb-8" aria-labelledby="contacts-heading">
         <CardHeader>
@@ -248,14 +207,5 @@ export const ContactsSection = () => {
     )
   }
 
-  return (
-    <ContactsPanel
-      mailboxes={mailboxes}
-      selectedKey={selectedKey}
-      selectedLabel={selectedLabel}
-      onMailboxChange={(value) => {
-        if (value) setMailboxKey(value)
-      }}
-    />
-  )
+  return <ContactsPanel mailboxKey={mailboxKey} />
 }
