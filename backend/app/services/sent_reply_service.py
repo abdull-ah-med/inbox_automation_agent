@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import GraphClientError
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
+from app.models.schemas.graph import GraphMessageSchema
 from app.repositories import draft_repo, message_repo, sent_reply_repo, thread_repo
 from app.repositories.message_repo import MessageSchema
 from app.repositories.sent_reply_repo import MatchedBy, SentReplySchema
@@ -38,6 +41,22 @@ def is_meeting_message(message: MessageSchema) -> bool:
     return (message.meeting_message_type or "") in _MEETING_MESSAGE_TYPES
 
 
+def _newest_local_message(messages: list[MessageSchema]) -> MessageSchema | None:
+    if not messages:
+        return None
+    return max(messages, key=lambda m: m.received_at)
+
+
+async def thread_tip_is_outbound(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+) -> bool:
+    """True when the newest local message is outbound. No sent_replies required."""
+    messages = await message_repo.list_by_thread(session, thread_id)
+    tip = _newest_local_message(messages)
+    return tip is not None and tip.direction == "outbound"
+
+
 async def thread_tip_already_replied(
     session: AsyncSession,
     thread_id: uuid.UUID,
@@ -47,15 +66,83 @@ async def thread_tip_already_replied(
     A newer inbound after resolve must return False so drafting can reopen.
     """
     messages = await message_repo.list_by_thread(session, thread_id)
-    if not messages:
-        return False
-    tip = max(messages, key=lambda m: m.received_at)
-    if tip.direction != "outbound":
+    tip = _newest_local_message(messages)
+    if tip is None or tip.direction != "outbound":
         return False
     sent = await sent_reply_repo.get_by_thread(session, thread_id)
     if sent is None:
         return False
     return tip.id == sent.message_id
+
+
+def _graph_newest_id(graph_messages: list[GraphMessageSchema]) -> str | None:
+    dated = [m for m in graph_messages if m.received_date_time is not None]
+    if not dated:
+        return None
+    newest = max(dated, key=lambda m: m.received_date_time or datetime.min.replace(tzinfo=UTC))
+    return newest.id
+
+
+async def fetch_graph_newest_message_id(
+    graph_client: Any | None,
+    *,
+    mailbox: str,
+    conversation_id: str,
+    trigger_graph_message_id: str | None = None,
+) -> str | None:
+    """Newest Graph conversation message id, or None when GET cannot confirm."""
+    if graph_client is None:
+        return None
+    list_fn = getattr(graph_client, "list_thread_messages", None)
+    if list_fn is None:
+        return None
+    try:
+        graph_messages = await list_fn(mailbox, conversation_id)
+    except (GraphClientError, TypeError):
+        return None
+    if not isinstance(graph_messages, list):
+        return None
+    by_id = {m.id: m for m in graph_messages if isinstance(m, GraphMessageSchema)}
+    trigger = trigger_graph_message_id
+    if trigger and trigger not in by_id:
+        get_fn = getattr(graph_client, "get_message", None)
+        if get_fn is not None:
+            try:
+                fetched = await get_fn(mailbox, trigger)
+            except (GraphClientError, TypeError):
+                fetched = None
+            if isinstance(fetched, GraphMessageSchema):
+                by_id[fetched.id] = fetched
+    return _graph_newest_id(list(by_id.values()))
+
+
+async def graph_outbound_tip_in_sync(
+    session: AsyncSession,
+    graph_client: Any | None,
+    *,
+    mailbox: str,
+    conversation_id: str,
+    thread_id: uuid.UUID,
+    trigger_graph_message_id: str | None = None,
+) -> bool:
+    """True when Graph conversation newest id equals the local outbound tip.
+
+    Mail.Read ``list_thread_messages`` only. GET failure cannot confirm in-sync.
+    Always merge the ingest trigger (replication lag), same as ingest.
+    """
+    if graph_client is None:
+        return False
+    newest_id = await fetch_graph_newest_message_id(
+        graph_client,
+        mailbox=mailbox,
+        conversation_id=conversation_id,
+        trigger_graph_message_id=trigger_graph_message_id,
+    )
+    if newest_id is None:
+        return False
+    messages = await message_repo.list_by_thread(session, thread_id)
+    tip = _newest_local_message(messages)
+    return tip is not None and tip.direction == "outbound" and newest_id == tip.graph_message_id
 
 
 def _cap_body(body: str) -> str:

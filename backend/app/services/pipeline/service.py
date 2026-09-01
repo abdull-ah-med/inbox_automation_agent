@@ -23,6 +23,7 @@ from app.models.schemas.email_triage_state import CrossThreadContextSchema, Emai
 from app.models.schemas.graph import IngestResultSchema
 from app.repositories import (
     draft_repo,
+    message_repo,
     sent_reply_repo,
     skill_repo,
     thread_repo,
@@ -1114,19 +1115,37 @@ async def _run_phased_post_ingest(
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
 
     already_replied = False
+    skip_letter = False
     has_teaching_note = False
+    skip_briefing_extras = False
     if parsed_thread_id is not None:
         async with session_factory() as session:
             already_replied = await sent_reply_service.thread_tip_already_replied(
                 session,
                 parsed_thread_id,
             )
-            if already_replied:
+            skip_letter = already_replied
+            if not skip_letter:
+                skip_letter = await sent_reply_service.graph_outbound_tip_in_sync(
+                    session,
+                    graph_client,
+                    mailbox=context.mailbox,
+                    conversation_id=context.conversation_id,
+                    thread_id=parsed_thread_id,
+                    trigger_graph_message_id=ingest_result.message_id,
+                )
+            if skip_letter:
                 has_teaching_note = await latest_proposed_has_teaching_note(
                     session,
                     parsed_thread_id,
                 )
-            if not already_replied:
+                if not has_teaching_note:
+                    rows = await message_repo.list_by_thread(session, parsed_thread_id)
+                    has_inbound = any(row.direction == "inbound" for row in rows)
+                    tip = max(rows, key=lambda row: row.received_at) if rows else None
+                    is_meeting = tip is not None and sent_reply_service.is_meeting_message(tip)
+                    skip_briefing_extras = is_meeting or not has_inbound
+            if not skip_letter:
                 prior = await thread_repo.get_by_id_trusted(session, parsed_thread_id)
                 prior_sent = await sent_reply_repo.get_by_thread(session, parsed_thread_id)
                 if (
@@ -1158,11 +1177,13 @@ async def _run_phased_post_ingest(
         settings=settings,
         session_factory=session_factory,
         parsed_thread_id=parsed_thread_id,
-        apply_thread_state=not already_replied,
+        apply_thread_state=not skip_letter,
     )
 
-    skip_sonnet = already_replied and (
-        has_teaching_note or (state.triage is not None and state.triage.is_spam)
+    skip_sonnet = skip_letter and (
+        has_teaching_note
+        or skip_briefing_extras
+        or (state.triage is not None and state.triage.is_spam)
     )
     if skip_sonnet and parsed_thread_id is not None:
         return await _phased_already_replied_exit(
@@ -1174,7 +1195,7 @@ async def _run_phased_post_ingest(
             anthropic_client=client,
         )
 
-    if already_replied and state.triage is not None:
+    if skip_letter and state.triage is not None:
         state.triage.draft_needed = False
         if state.draft_status != "SKIPPED":
             state.draft_status = "PENDING"
@@ -1252,9 +1273,9 @@ async def _run_phased_post_ingest(
         redis=redis,
         settings=settings,
         session_factory=session_factory,
-        post_slack=post_slack and not already_replied,
+        post_slack=post_slack and not skip_letter,
     )
-    if already_replied:
+    if skip_letter:
         await promote_and_resolve_sent_tip(
             state=state,
             thread_id=thread_id,

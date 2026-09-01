@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import DraftGenerationError, ThreadNotFoundError
+from app.core.exceptions import DraftGenerationError, ThreadNotFoundError, ThreadStateError
 from app.core.tenant_scope import TenantScope
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.classification import TriageResultSchema
@@ -32,6 +32,7 @@ from app.repositories import (
 from app.services import (
     audit_service,
     rejection_memory_service,
+    sent_reply_service,
     skill_selection_service,
     tone_profile_service,
     urgency_feedback_service,
@@ -134,6 +135,7 @@ async def regenerate_draft(
     openai_client: AsyncOpenAI | None = None,
     force_letter: bool = False,
     audit_event: DraftAuditEvent = "draft.regenerated",
+    graph_client: object | None = None,
 ) -> DraftResponseSchema:
     """Create a NEW draft for a thread using optional reviewer instruction.
 
@@ -150,7 +152,18 @@ async def regenerate_draft(
     if not messages:
         raise DraftGenerationError("Cannot regenerate draft: thread has no messages")
 
-    latest = messages[-1]
+    latest = max(messages, key=lambda row: row.received_at)
+    if await sent_reply_service.graph_outbound_tip_in_sync(
+        session,
+        graph_client,
+        mailbox=thread.mailbox,
+        conversation_id=thread.conversation_id,
+        thread_id=thread_id,
+        trigger_graph_message_id=latest.graph_message_id,
+    ):
+        raise ThreadStateError(
+            "Cannot generate a letter: the newest message is an outbound send already in Graph"
+        )
     email = _message_to_email(
         latest,
         mailbox=thread.mailbox,
@@ -351,6 +364,7 @@ async def generate_draft(
     thread_id: uuid.UUID,
     actor: str = "user",
     openai_client: AsyncOpenAI | None = None,
+    graph_client: object | None = None,
 ) -> DraftResponseSchema:
     """Force a letter draft on a briefing thread (reviewer-initiated)."""
     return await regenerate_draft(
@@ -363,4 +377,5 @@ async def generate_draft(
         openai_client=openai_client,
         force_letter=True,
         audit_event="draft.generated",
+        graph_client=graph_client,
     )
