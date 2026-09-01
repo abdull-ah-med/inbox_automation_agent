@@ -61,8 +61,11 @@ class Settings(BaseSettings):
     poll_enabled: bool = True
     poll_interval_seconds: int = Field(default=300, ge=60)
     # Stuck NEW + open outbound-tip healer. Default off. Mail.Read only.
+    # Cron hours are US Eastern wall clock (same as ops report).
     heal_threads_enabled: bool = False
-    heal_threads_interval_minutes: int = Field(default=60, ge=5, le=1440)
+    heal_threads_cron_hours: str = "6,14"
+    heal_threads_cron_minute: int = Field(default=0, ge=0, le=59)
+    heal_threads_timezone: str = "America/New_York"
     heal_threads_max_per_run: int = Field(default=50, ge=1, le=500)
     subscription_renew_interval_hours: int = Field(default=48, ge=1)
     db_pool_size: int = Field(default=10, ge=1, le=50)

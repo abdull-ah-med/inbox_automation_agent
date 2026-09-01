@@ -78,7 +78,10 @@ from app.workers.graph_subscription_worker import (
     run_subscription_reconcile,
     run_subscription_renewal,
 )
-from app.workers.heal_threads_worker import run_scheduled_heal_threads
+from app.workers.heal_threads_worker import (
+    heal_threads_cron_trigger,
+    run_scheduled_heal_threads,
+)
 from app.workers.ops_report_worker import run_weekly_ops_report
 from app.workers.poll_fallback_worker import run_poll_all_mailboxes
 from app.workers.webhook_stream_worker import run_webhook_stream_worker
@@ -236,8 +239,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if settings.heal_threads_enabled:
         _scheduler.add_job(
             run_scheduled_heal_threads,
-            trigger="interval",
-            minutes=settings.heal_threads_interval_minutes,
+            trigger=heal_threads_cron_trigger(settings),
             id="heal_threads",
             replace_existing=True,
         )
@@ -247,6 +249,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         webhooks_enabled=settings.graph_webhooks_enabled,
         poll_enabled=settings.poll_enabled,
         heal_threads_enabled=settings.heal_threads_enabled,
+        heal_threads_cron=(
+            f"{settings.heal_threads_cron_hours} "
+            f"{settings.heal_threads_cron_minute:02d} "
+            f"{settings.heal_threads_timezone}"
+        ),
         renew_hours=settings.subscription_renew_interval_hours,
         poll_seconds=settings.poll_interval_seconds,
         ops_report_cron=(
