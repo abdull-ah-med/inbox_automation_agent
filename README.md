@@ -68,7 +68,7 @@ Uses `Dockerfile` target `production` (no reload, non-root) plus the prod overla
    - Install Docker Engine + Compose plugin ([official install script](https://docs.docker.com/engine/install/ubuntu/)), then `sudo systemctl enable --now docker` so the stack (all services run `restart: unless-stopped`) comes back up automatically after an instance stop/reboot
    - Install nginx and certbot: `sudo apt install -y nginx certbot python3-certbot-nginx`
    - Clone this repo onto the instance
-   - Configure **read-only git credentials** on the host so `git fetch` works without passing tokens through SSM (recommended: [deploy key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys) for `ssm-user`, or a credential helper). CI deploy never embeds `GITHUB_TOKEN` in SSM command parameters.
+   - CI deploy fetches the pinned `DEPLOY_SHA` with a job-scoped `GITHUB_TOKEN` passed into the SSM RunShellScript (`deploy/ssm-deploy.sh`). A host deploy key is optional, not required for CI-driven deploys.
 
 1. **Generate the Redis TLS cert + password** (once):
 
