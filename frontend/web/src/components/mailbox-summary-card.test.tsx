@@ -1,16 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import { screen } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
-
-const listThreads = vi.fn()
-
-vi.mock("@/lib/api-client", () => ({
-  api: {
-    mailboxes: {
-      threads: (...args: unknown[]) => listThreads(...args),
-    },
-  },
-}))
 
 import { MailboxSummaryCard } from "@/components/mailbox-summary-card"
 import type { MailboxOverview, ThreadSummary } from "@/lib/types"
@@ -60,33 +49,11 @@ const mailbox = (overrides: Partial<MailboxOverview>): MailboxOverview => ({
 })
 
 const awaitingPreview = thread("Applicant Brittany Edwards", { id: "awaiting-1" })
-const stalePreview = thread("Stale invoice follow-up", { id: "stale-1" })
-const filteredPreview = thread("Discount blast", { id: "filtered-1", state: "SPAM" })
-const totalPreview = thread("Newest ingested thread", { id: "total-1" })
 
 const renderCard = (overview: MailboxOverview = mailbox({ recent_threads: [awaitingPreview] })) =>
   renderWithProviders(<MailboxSummaryCard mailbox={overview} />)
 
 describe("MailboxSummaryCard", () => {
-  beforeEach(() => {
-    listThreads.mockReset()
-  })
-
-  it("highlights awaiting action as the default preview filter", () => {
-    renderCard()
-
-    expect(screen.getByRole("button", { name: "View 26 awaiting action in Info" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    )
-    expect(screen.getByText("awaiting action")).toHaveClass("text-foreground")
-    expect(screen.getByText("awaiting action")).not.toHaveClass("text-muted-foreground")
-    expect(screen.getByRole("button", { name: "View all 98 threads in Info" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    )
-  })
-
   it("opens the mailbox from anywhere on the card that is not a filter or thread", () => {
     renderCard()
 
@@ -190,8 +157,7 @@ describe("MailboxSummaryCard", () => {
 
   it("does not duplicate stale as a header chip when the stats row already shows it", () => {
     renderCard()
-    // Stale lives once in the stats row filter — no second header StatusBadge.
-    expect(screen.getAllByRole("button", { name: "View 22 stale threads in Info" })).toHaveLength(1)
+    expect(screen.getAllByRole("link", { name: "View 22 stale threads in Info" })).toHaveLength(1)
   })
 
   it("hides stored CRITICAL when presentation marks urgency inactive", () => {
@@ -239,101 +205,30 @@ describe("MailboxSummaryCard", () => {
     expect(screen.getByText("No threads awaiting action right now.")).toBeInTheDocument()
   })
 
-  it("swaps the card preview to stale threads without leaving the dashboard", async () => {
-    // Bug this catches: count clicks navigate to the mailbox page instead of
-    // replacing the three-thread preview on this card.
-    listThreads.mockImplementation(async (_key: string, params: { state?: string } = {}) => {
-      if (params.state === "STALE") return { items: [stalePreview], next_cursor: null }
-      return { items: [totalPreview], next_cursor: null }
-    })
-    const user = userEvent.setup()
+  it("sends count options to the mailbox list with that filter applied", () => {
+    // Bug this catches: stale / spam / total / awaiting stay on the card and
+    // only swap the three-thread preview instead of opening the filtered list.
     renderCard()
 
-    await user.click(screen.getByRole("button", { name: "View 22 stale threads in Info" }))
-
-    expect(await screen.findByText("Stale invoice follow-up")).toBeInTheDocument()
-    expect(screen.queryByText("Applicant Brittany Edwards")).toBeNull()
-    expect(screen.getByRole("link", { name: "Review Stale invoice follow-up" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "View 26 awaiting action in Info" })).toHaveAttribute(
       "href",
-      "/threads/stale-1",
+      "/mailboxes/info?state=AWAITING_ACTION",
     )
-    expect(screen.getByRole("link", { name: "Open Info inbox, stale threads" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "View all 98 threads in Info" })).toHaveAttribute(
+      "href",
+      "/mailboxes/info",
+    )
+    expect(screen.getByRole("link", { name: "View 22 stale threads in Info" })).toHaveAttribute(
       "href",
       "/mailboxes/info?state=STALE",
     )
-  })
-
-  it("does not claim the stale queue is empty when the header count is 22", async () => {
-    listThreads.mockResolvedValue({ items: [], next_cursor: null })
-    const user = userEvent.setup()
-    renderCard()
-
-    await user.click(screen.getByRole("button", { name: "View 22 stale threads in Info" }))
-
-    expect(screen.queryByText("No stale threads right now.")).toBeNull()
-    expect(
-      await screen.findByRole("link", { name: "Open Info inbox, stale threads" }),
-    ).toHaveAttribute("href", "/mailboxes/info?state=STALE")
-  })
-
-  it("swaps the card preview to all threads and spam/no-action from those counts", async () => {
-    listThreads.mockImplementation(async (_key: string, params: { state?: string } = {}) => {
-      if (params.state === "FILTERED") return { items: [filteredPreview], next_cursor: null }
-      if (!params.state) return { items: [totalPreview], next_cursor: null }
-      return { items: [], next_cursor: null }
-    })
-    const user = userEvent.setup()
-    renderCard()
-
-    await user.click(screen.getByRole("button", { name: "View all 98 threads in Info" }))
-    expect(await screen.findByText("Newest ingested thread")).toBeInTheDocument()
-
-    await user.click(screen.getByRole("button", { name: "View 37 filtered as spam in Info" }))
-    expect(await screen.findByText("Discount blast")).toBeInTheDocument()
-    expect(screen.queryByText("Newest ingested thread")).toBeNull()
-  })
-
-  it("restores awaiting-action previews when that count is clicked again", async () => {
-    listThreads.mockResolvedValue({ items: [stalePreview], next_cursor: null })
-    const user = userEvent.setup()
-    renderCard()
-
-    await user.click(screen.getByRole("button", { name: "View 22 stale threads in Info" }))
-    expect(await screen.findByText("Stale invoice follow-up")).toBeInTheDocument()
-
-    await user.click(screen.getByRole("button", { name: "View 26 awaiting action in Info" }))
-    expect(screen.getByText("Applicant Brittany Edwards")).toBeInTheDocument()
-    expect(screen.queryByText("Stale invoice follow-up")).toBeNull()
-  })
-
-  it("keeps another mailbox card on awaiting-action when this card filters to stale", async () => {
-    listThreads.mockImplementation(async (key: string, params: { state?: string } = {}) => {
-      if (key === "info" && params.state === "STALE") {
-        return { items: [stalePreview], next_cursor: null }
-      }
-      return { items: [], next_cursor: null }
-    })
-    const user = userEvent.setup()
-    renderWithProviders(
-      <>
-        <MailboxSummaryCard mailbox={mailbox({ recent_threads: [awaitingPreview] })} />
-        <MailboxSummaryCard
-          mailbox={mailbox({
-            mailbox: "sales",
-            label: "Sales",
-            recent_threads: [thread("Quote request", { id: "sales-1" })],
-          })}
-        />
-      </>,
+    expect(screen.getByRole("link", { name: "View 37 filtered as spam in Info" })).toHaveAttribute(
+      "href",
+      "/mailboxes/info?state=FILTERED",
     )
-
-    await user.click(screen.getByRole("button", { name: "View 22 stale threads in Info" }))
-    expect(await screen.findByText("Stale invoice follow-up")).toBeInTheDocument()
-    expect(screen.getByText("Quote request")).toBeInTheDocument()
-    expect(screen.queryByText("Applicant Brittany Edwards")).toBeNull()
   })
 
-  it("omits stale and spam/no-action filters when those counts are zero", () => {
+  it("omits stale and spam links when those counts are zero", () => {
     renderCard(
       mailbox({
         stale_count: 0,
@@ -342,8 +237,8 @@ describe("MailboxSummaryCard", () => {
       }),
     )
 
-    expect(screen.queryByRole("button", { name: /stale threads/i })).toBeNull()
-    expect(screen.queryByRole("button", { name: /filtered as spam/i })).toBeNull()
-    expect(screen.getByRole("button", { name: "View all 98 threads in Info" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /stale threads/i })).toBeNull()
+    expect(screen.queryByRole("link", { name: /filtered as spam/i })).toBeNull()
+    expect(screen.getByRole("link", { name: "View all 98 threads in Info" })).toBeInTheDocument()
   })
 })
