@@ -346,3 +346,99 @@ async def test_resolve_calls_workflow_extraction_with_learning_text(db_session) 
     assert "Daily Drivers changes update" in kwargs["email_text"]
     assert "Pending Driver Changes are 1" in kwargs["email_text"]
     assert kwargs["client"] is anthropic
+
+
+@pytest.mark.asyncio
+async def test_manual_resolve_stores_resolve_snapshot(db_session) -> None:
+    settings = _settings()
+    thread = Thread(
+        id=uuid.uuid4(),
+        mailbox=MAILBOX,
+        conversation_id="resolve-snapshot",
+        subject="Notice",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=datetime(2026, 8, 18, 11, 0, tzinfo=UTC),
+    )
+    db_session.add(thread)
+    await db_session.commit()
+
+    with patch(
+        "app.services.resolution_service.maybe_extract_workflow",
+        new=AsyncMock(),
+    ):
+        await resolution_service.resolve_thread_manual(
+            db_session,
+            settings,
+            thread.id,
+            actor="elise@example.com",
+            actions_taken="Logged in portal",
+            involved="accounting",
+        )
+    await db_session.commit()
+
+    payload = (
+        await db_session.execute(
+            select(AuditEvent).where(
+                AuditEvent.conversation_id == thread.conversation_id,
+                AuditEvent.event_type == "thread.resolved.reviewer",
+            )
+        )
+    ).scalar_one().payload
+    snapshot = payload["resolve_snapshot"]
+    assert snapshot["resolved_by"] == "elise"
+    assert snapshot["resolution_reason"] == "manual"
+    assert snapshot["had_draft"] is False
+    assert snapshot["actions_taken"] == "Logged in portal"
+    assert snapshot["involved"] == "accounting"
+
+
+@pytest.mark.asyncio
+async def test_reopen_courtesy_close_returns_to_needs_attention(db_session) -> None:
+    """Still open? on an DraftAssistant courtesy close must land in Needs Attention, not FYI."""
+    settings = _settings()
+    thread = Thread(
+        id=uuid.uuid4(),
+        mailbox=MAILBOX,
+        conversation_id="reopen-courtesy",
+        subject="Re: Friday walkthrough",
+        state=ThreadStateEnum.RESOLVED.value,
+        urgency="LOW",
+        last_message_at=datetime(2026, 8, 18, 11, 0, tzinfo=UTC),
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    db_session.add(
+        AuditEvent(
+            event_type="thread.resolved.draftassistant",
+            conversation_id=thread.conversation_id,
+            mailbox=MAILBOX,
+            payload={
+                "resolve_snapshot": {
+                    "resolved_by": "draftassistant",
+                    "resolution_reason": "courtesy_close",
+                    "disposition_at_resolve": "fyi_briefing",
+                    "had_draft": False,
+                    "has_action_items": False,
+                    "draft_needed": False,
+                }
+            },
+            actor="system",
+        )
+    )
+    await db_session.commit()
+
+    new_state = await resolution_service.apply_resolution_feedback(
+        db_session,
+        settings,
+        thread.id,
+        action="reopen",
+        actor="elise@example.com",
+    )
+    await db_session.commit()
+
+    assert new_state == ThreadStateEnum.DRAFTED.value
+    rows = await thread_repo.list_needs_attention(db_session, [MAILBOX], limit=20)
+    assert [row.id for row in rows] == [thread.id]
+    assert rows[0].presentation is not None
+    assert rows[0].presentation.disposition == "action_no_draft"

@@ -37,7 +37,6 @@ _AWAITING_STATES = (
 )
 _FILTERED_STATES = (
     ThreadStateEnum.SPAM.value,
-    ThreadStateEnum.NO_ACTION.value,
 )
 
 _SPAM_EVENTS: tuple[str, ...] = (

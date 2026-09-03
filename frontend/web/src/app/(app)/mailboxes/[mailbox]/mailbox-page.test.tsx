@@ -98,12 +98,27 @@ describe("Mailbox page filters", () => {
     expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=AWAITING_ACTION")
   })
 
-  it("offers Stale and Spam / no action in the state filter", async () => {
+  it("writes Reply ready onto the mailbox URL as REPLY_REVIEW", async () => {
+    // Bug this catches: label said Reply ready but URL still sent DRAFTED,
+    // so FYI / action-without-letter threads appeared in the list.
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    renderPage()
+    await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
+    await user.click(await screen.findByRole("option", { name: "Reply ready" }))
+    expect(replace).toHaveBeenCalledWith("/mailboxes/sales?state=REPLY_REVIEW")
+    expect(replace).not.toHaveBeenCalledWith("/mailboxes/sales?state=DRAFTED")
+  })
+
+  it("offers Stale, Spam, Open FYI, and Recently resolved by DraftAssistant", async () => {
     const user = userEvent.setup({ pointerEventsCheck: 0 })
     renderPage()
     await user.click(await screen.findByRole("combobox", { name: "Filter by state" }))
     expect(await screen.findByRole("option", { name: "Stale" })).toBeInTheDocument()
-    expect(screen.getByRole("option", { name: "Spam / no action" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Spam" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Open FYI" })).toBeInTheDocument()
+    expect(screen.getByRole("option", { name: "Recently resolved by DraftAssistant" })).toBeInTheDocument()
+    expect(screen.queryByRole("option", { name: "Spam / no action" })).toBeNull()
+    expect(screen.queryByRole("option", { name: "No action needed" })).toBeNull()
   })
 
   it("writes Stale onto the mailbox URL as STALE", async () => {

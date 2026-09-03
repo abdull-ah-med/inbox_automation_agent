@@ -40,7 +40,11 @@ from app.repositories import (
     thread_repo,
 )
 from app.services import related_thread_service, sent_reply_service
-from app.services.thread_narrative import build_activity, resolution_mode_from_events
+from app.services.thread_narrative import (
+    build_activity,
+    provenance_from_events,
+    resolution_mode_from_events,
+)
 
 # Meeting types hide the sent-vs-draft learning panel (calendar mail is not a letter).
 _MEETING_MESSAGE_TYPES = frozenset(
@@ -340,14 +344,20 @@ async def get_thread_detail(
     reason_corrected = any(
         str(ev.get("event_type") or "") == "thread.resolved.wrong_reason" for ev in raw_events
     )
+    chrono_events = list(reversed(raw_events))
+    prov = provenance_from_events(chrono_events)
     summary = thread_repo.with_presentation(
         summary,
         draft_review_finished=draft_finished,
         closing_signal=closing,
         resolution_reason_corrected=reason_corrected,
+        resolved_by=prov.get("resolved_by"),
+        resolution_reason=prov.get("resolution_reason"),
+        resolution_summary=prov.get("resolution_summary"),
+        forced_disposition=prov.get("forced_disposition"),
     )
     if summary.presentation is not None:
-        mode = resolution_mode_from_events(raw_events)
+        mode = resolution_mode_from_events(chrono_events)
         summary = summary.model_copy(
             update={
                 "presentation": summary.presentation.model_copy(update={"resolution_mode": mode})

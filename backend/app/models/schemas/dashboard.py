@@ -70,6 +70,10 @@ class ThreadPresentationView(BaseModel):
     suggest_resolve_default: bool = False
     show_resolution_banner: bool = False
     resolution_mode: Literal["auto", "manual"] | None = None
+    disposition: str | None = None
+    primary_badge: BadgeNowView | None = None
+    resolution_reason: str | None = None
+    resolution_summary: str | None = None
 
 
 class ActivityEntryView(BaseModel):
@@ -95,6 +99,7 @@ class ThreadSummary(BaseModel):
     staleness_hours: float = 0.0
     message_count: int = 0
     has_draft: bool = False
+    has_letter: bool = False
     teaching_note: str | None = None
     triage: TriageFlags | None = None
     outlook_url: str | None = None
@@ -110,6 +115,8 @@ class MailboxOverview(BaseModel):
     awaiting_action_count: int = 0
     filtered_count: int = 0
     stale_count: int = 0
+    open_fyi_count: int = 0
+    recently_resolved_draftassistant_count: int = 0
     urgency_breakdown: dict[str, int] = Field(default_factory=dict)
     recent_threads: list[ThreadSummary] = Field(default_factory=list)
 
@@ -120,6 +127,8 @@ class DashboardOverview(BaseModel):
     total_awaiting: int
     total_stale: int
     needs_attention: list[ThreadSummary] = Field(default_factory=list)
+    open_fyi: list[ThreadSummary] = Field(default_factory=list)
+    recently_resolved_by_draftassistant: list[ThreadSummary] = Field(default_factory=list)
     recent_activity: list[AuditEntry] = Field(default_factory=list)
     updated_at: datetime
 

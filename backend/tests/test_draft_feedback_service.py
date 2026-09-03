@@ -395,7 +395,7 @@ async def test_mark_wrong_audits_without_rejection_memory() -> None:
     assert result.feedback_action == "wrong"
     assert audit_mock.await_args_list[0].kwargs["event_type"] == "draft.marked_wrong"
     outcome_mock.assert_awaited_once()
-    assert outcome_mock.await_args.kwargs["state"] == ThreadStateEnum.NO_ACTION.value
+    assert outcome_mock.await_args.kwargs["state"] == ThreadStateEnum.RESOLVED.value
 
 
 @pytest.mark.asyncio

@@ -474,7 +474,7 @@ async def _apply_no_reply(
     await thread_repo.set_thread_outcome(
         session,
         thread_id,
-        state=ThreadStateEnum.NO_ACTION.value,
+        state=ThreadStateEnum.RESOLVED.value,
     )
 
 

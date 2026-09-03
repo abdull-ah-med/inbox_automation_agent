@@ -1,0 +1,22 @@
+{
+  "id": "cc-observer-birthday",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "Office birthday cake Friday",
+  "body": "Bringing cake Friday for Jordan's birthday. Feel free to stop by the kitchen around 3.",
+  "mailbox": "elise@example.com",
+  "sender": "sam@client.com",
+  "to_recipients": ["jordan@client.com"],
+  "cc_recipients": ["elise@example.com", "team@client.com"],
+  "triage": {
+    "is_spam": false,
+    "has_action_items": false,
+    "draft_needed": false,
+    "needs_context": false,
+    "routing_category": "general",
+    "action_items_summary": null
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "Elise is CC-only and not named in the body; this is an observer FYI, not a lead and not a reply."
+}

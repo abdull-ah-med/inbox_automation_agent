@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-09-01.1"
+PROMPT_VERSION = "2026-09-03.1"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
@@ -176,6 +176,14 @@ Determine has_action_items and draft_needed from the sender, recipients, and CC 
   to automated/noreply/listserv/receipts, newsletters, or their courtesy closes.
 - If the ball is already in the other party's court, has_action_items is false
   and draft_needed is false.
+- CC observer: the PoI mailbox is in CC only (not To), is not named in the body,
+  and this is not the inquiries/leads mailbox → has_action_items false and
+  draft_needed false. The PoI is copied for awareness; do not draft a reply.
+- Inquiries/leads mailbox CC is still a lead: has_action_items true and
+  draft_needed true even when the PoI is only in CC.
+- Automated operational alerts (Daily Drivers, portal pending-change notices,
+  noreply status that still requires a portal action) → has_action_items true
+  and draft_needed false.
 
 For needs_context: look for references to prior conversations, "as discussed",
 "following up on", "per our earlier email", or any indication the email is part of

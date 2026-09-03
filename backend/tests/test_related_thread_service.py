@@ -197,7 +197,7 @@ async def test_apply_no_reply_sets_sibling_no_action_and_leaves_invoice(db_sessi
         db_session, invoice.id, TenantScope.single(invoice.mailbox)
     )
     assert updated_sib is not None
-    assert updated_sib.state == ThreadStateEnum.NO_ACTION.value
+    assert updated_sib.state == ThreadStateEnum.RESOLVED.value
     assert updated_inv is not None
     assert updated_inv.state == ThreadStateEnum.DRAFTED.value
 

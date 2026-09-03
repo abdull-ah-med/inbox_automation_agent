@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import DraftNotFoundError
+from app.core.draftassistant_resolve import RESOLUTION_SUMMARIES, build_resolve_snapshot
 from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
@@ -385,7 +386,7 @@ async def mark_wrong(
         await thread_repo.set_thread_outcome(
             session,
             existing.thread_id,
-            state=ThreadStateEnum.NO_ACTION.value,
+            state=ThreadStateEnum.RESOLVED.value,
         )
 
     try:
@@ -409,16 +410,32 @@ async def mark_wrong(
         )
 
     if reason_code == "wrong_action":
+        snapshot = build_resolve_snapshot(
+            resolved_by="elise",
+            resolution_reason="wrong_action",
+            disposition_at_resolve="resolved_elise",
+            had_draft=True,
+            had_letter=bool((existing.reply_body or "").strip()),
+            actions_taken=feedback_note,
+        )
         try:
             await audit_service.log_event(
                 session,
-                event_type="thread.outcome.no_action",
+                event_type="thread.resolved.reviewer",
                 conversation_id=conversation_id,
                 mailbox=mailbox,
                 payload={
                     "draft_id": str(draft_id),
                     "thread_id": str(existing.thread_id),
                     "reason_code": reason_code,
+                    "resolution_reason": "wrong_action",
+                    "resolution_summary": RESOLUTION_SUMMARIES["wrong_action"],
+                    "resolve_snapshot": snapshot,
+                    "human": {
+                        "title": "Marked resolved",
+                        "body": RESOLUTION_SUMMARIES["wrong_action"],
+                        "actor_kind": "elise",
+                    },
                 },
                 actor=actor,
             )
@@ -426,7 +443,7 @@ async def mark_wrong(
             logger.warning(
                 "draft_feedback_audit_failed",
                 draft_id=str(draft_id),
-                event_type="thread.outcome.no_action",
+                event_type="thread.resolved.reviewer",
             )
 
     logger.info(

@@ -50,6 +50,10 @@ export interface ThreadPresentation {
   suggest_resolve_default: boolean
   show_resolution_banner: boolean
   resolution_mode?: "auto" | "manual" | null
+  disposition?: string | null
+  primary_badge?: BadgeNow | null
+  resolution_reason?: string | null
+  resolution_summary?: string | null
 }
 
 export interface ActivityEntry {
@@ -75,6 +79,7 @@ export interface ThreadSummary {
   staleness_hours: number
   message_count: number
   has_draft: boolean
+  has_letter?: boolean
   teaching_note: string | null
   triage: TriageFlags | null
   outlook_url: string | null
@@ -90,6 +95,8 @@ export interface MailboxOverview {
   awaiting_action_count: number
   filtered_count: number
   stale_count: number
+  open_fyi_count?: number
+  recently_resolved_draftassistant_count?: number
   urgency_breakdown: Record<string, number>
   recent_threads: ThreadSummary[]
 }
@@ -109,6 +116,8 @@ export interface DashboardOverview {
   total_awaiting: number
   total_stale: number
   needs_attention: ThreadSummary[]
+  open_fyi?: ThreadSummary[]
+  recently_resolved_by_draftassistant?: ThreadSummary[]
   recent_activity: AuditEntry[]
   updated_at: string
 }

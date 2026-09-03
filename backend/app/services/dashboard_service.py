@@ -45,6 +45,8 @@ async def _build_mailbox_overviews(
                 awaiting_action_count=int(row.get("awaiting_action_count", 0) or 0),
                 filtered_count=int(row.get("filtered_count", 0) or 0),
                 stale_count=int(row.get("stale_count", 0) or 0),
+                open_fyi_count=int(row.get("open_fyi_count", 0) or 0),
+                recently_resolved_draftassistant_count=int(row.get("recently_resolved_draftassistant_count", 0) or 0),
                 urgency_breakdown=dict(row.get("urgency_breakdown") or {}),
                 recent_threads=recent_by_email.get(email, []),
             )
@@ -66,6 +68,12 @@ async def get_overview(
         limit=15,
         sort=needs_attention_sort,
     )
+    open_fyi = await thread_repo.list_open_fyi(session, emails, limit=15)
+    recently_resolved_by_draftassistant = await thread_repo.list_recently_resolved_by_draftassistant(
+        session,
+        emails,
+        limit=15,
+    )
     recent_activity = await audit_repo.list_recent(
         session,
         mailboxes=emails,
@@ -77,6 +85,8 @@ async def get_overview(
         total_awaiting=sum(m.awaiting_action_count for m in mailboxes),
         total_stale=sum(m.stale_count for m in mailboxes),
         needs_attention=needs_attention,
+        open_fyi=open_fyi,
+        recently_resolved_by_draftassistant=recently_resolved_by_draftassistant,
         recent_activity=recent_activity,
         updated_at=datetime.now(UTC),
     )

@@ -108,6 +108,28 @@ const overviewPayload = {
         action_items_summary: "Send pricing",
         outcome: "triage.action_needed",
       },
+      presentation: {
+        is_finished: false,
+        open_work: true,
+        in_needs_attention: true,
+        urgency_active: true,
+        urgency_assessed: "HIGH",
+        suggest_resolve_default: false,
+        show_resolution_banner: false,
+        disposition: "processing",
+        primary_badge: { kind: "disposition", label: "Processing" },
+        badges_now: [
+          { kind: "disposition", label: "Processing" },
+          { kind: "urgency", label: "HIGH" },
+          { kind: "needs_context", label: "Needs context" },
+          { kind: "category", label: "CLIENT" },
+        ],
+        triage_history: {
+          has_action_items: true,
+          needs_context: true,
+          is_spam: false,
+        },
+      },
     },
   ],
   recent_activity: [],
@@ -141,6 +163,8 @@ describe("dashboard page", () => {
     expect(screen.getAllByText("Quote request").length).toBeGreaterThan(0)
     expect(screen.getByText("Needs context")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Download reports" })).toBeInTheDocument()
+    expect(screen.queryByText("Open FYI")).toBeNull()
+    expect(screen.queryByText("Recently resolved by DraftAssistant")).toBeNull()
   })
 
   it("shows the sort label in the trigger, not the raw value", async () => {

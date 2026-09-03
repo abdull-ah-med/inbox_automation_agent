@@ -1,0 +1,21 @@
+{
+  "id": "daily-drivers-action",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "Daily Drivers changes update",
+  "body": "Total customers with Pending Driver Changes are 1.\n\nPlease review SUMMITX in the portal and clear the pending change.",
+  "mailbox": "accounting@example.com",
+  "sender": "noreply@sample-services.example.com",
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "draft_needed": false,
+    "needs_context": false,
+    "is_automated": true,
+    "routing_category": "vendor",
+    "action_items_summary": "Clear pending driver change for SUMMITX in the portal"
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "Automated operational alert: Elise must act in the portal; no email reply. has_action_items true, draft_needed false."
+}

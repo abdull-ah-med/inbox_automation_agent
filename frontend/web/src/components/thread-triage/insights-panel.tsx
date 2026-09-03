@@ -1,10 +1,11 @@
 import { EmailBody } from "@/components/email-body"
 import { PresentationBadges } from "@/components/presentation-badges"
-import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
+import { StatusBadge, urgencyTone } from "@/components/status-badge"
 import { Field, Panel } from "@/components/thread-triage/panel"
 import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
 import { Button } from "@/components/ui/button"
 import { formatRelativeTime } from "@/lib/design-tokens"
+import { threadPrimaryBadge } from "@/lib/thread-primary-badge"
 import type { ActivityEntry, ThreadSummary } from "@/lib/types"
 
 type InsightsPanelProps = {
@@ -55,7 +56,9 @@ const UrgencyFieldValue = ({
           tone={presentation && !presentation.urgency_active ? "neutral" : urgencyTone(urgency)}
         />
         {presentation && !presentation.urgency_active ? (
-          <span className="text-muted-foreground text-xs">inactive</span>
+          <span className="text-muted-foreground text-xs">
+            inactive — no longer drives priority
+          </span>
         ) : null}
         {draftId && !feedbackDone && presentation?.urgency_active !== false ? (
           <UrgencyEditPopover
@@ -108,17 +111,7 @@ export const InsightsPanel = ({
         <div className="grid grid-cols-2 gap-3">
           <Field
             label="State"
-            value={
-              presentation?.badges_now?.length ? (
-                <div className="flex flex-wrap gap-1.5">
-                  <PresentationBadges
-                    badges={presentation.badges_now.filter((b) => b.kind === "state")}
-                  />
-                </div>
-              ) : (
-                <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
-              )
-            }
+            value={<PresentationBadges badges={[threadPrimaryBadge(thread)]} />}
           />
           <Field
             label="Urgency"

@@ -179,7 +179,7 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-09-01.1"
+    assert PROMPT_VERSION == "2026-09-03.1"
 
 
 def test_triage_prompt_allows_operational_fyi_ack() -> None:
@@ -188,9 +188,17 @@ def test_triage_prompt_allows_operational_fyi_ack() -> None:
     assert "courtesy close from the sender" in TRIAGE_SYSTEM_PROMPT.lower()
 
 
+def test_triage_prompt_documents_cc_observer_vs_inquiries_lead() -> None:
+    lowered = TRIAGE_SYSTEM_PROMPT.lower()
+    assert "cc observer" in lowered
+    assert "inquiries" in lowered
+    assert "daily drivers" in lowered or "pending-change" in lowered
+    assert PROMPT_VERSION == "2026-09-03.1"
+
+
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-09-01.1"
+    assert PROMPT_VERSION == "2026-09-03.1"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -254,4 +262,4 @@ def test_briefing_prompt_has_no_letter_fields() -> None:
     )
     assert "reply_body" not in BriefingSchema.model_fields
     assert "suggested_recipients" not in BriefingSchema.model_fields
-    assert PROMPT_VERSION == "2026-09-01.1"
+    assert PROMPT_VERSION == "2026-09-03.1"
