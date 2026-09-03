@@ -27,6 +27,10 @@ type UseThreadReviewMutationsArgs = {
   setRejectReason: Dispatch<SetStateAction<RejectReasonCode | "">>
   setActionError: Dispatch<SetStateAction<string | null>>
   setResolvePromptOpen: Dispatch<SetStateAction<boolean>>
+  resolveActionsTaken: string
+  resolveInvolved: string
+  setResolveActionsTaken: Dispatch<SetStateAction<string>>
+  setResolveInvolved: Dispatch<SetStateAction<string>>
   maybePromptResolve: () => void
   siblings: SiblingsApi
 }
@@ -48,6 +52,10 @@ export const useThreadReviewMutations = ({
   setRejectReason,
   setActionError,
   setResolvePromptOpen,
+  resolveActionsTaken,
+  resolveInvolved,
+  setResolveActionsTaken,
+  setResolveInvolved,
   maybePromptResolve,
   siblings,
 }: UseThreadReviewMutationsArgs) => {
@@ -114,9 +122,12 @@ export const useThreadReviewMutations = ({
   })
 
   const resolveMutation = useMutation({
-    mutationFn: () => api.threads.resolve(threadId),
+    mutationFn: (body: { actions_taken: string; involved?: string | null }) =>
+      api.threads.resolve(threadId, body),
     onSuccess: async () => {
       setResolvePromptOpen(false)
+      setResolveActionsTaken("")
+      setResolveInvolved("")
       await invalidateReviewQueues()
     },
     onError: (error: Error) => {
@@ -158,11 +169,22 @@ export const useThreadReviewMutations = ({
     })
   }
 
+  const handleConfirmResolve = () => {
+    const actionsTaken = resolveActionsTaken.trim()
+    if (!actionsTaken) return
+    const involved = resolveInvolved.trim()
+    resolveMutation.mutate({
+      actions_taken: actionsTaken,
+      involved: involved || null,
+    })
+  }
+
   return {
     approveMutation,
     rejectMutation,
     resolveMutation,
     handleConfirmApprove,
     handleReject,
+    handleConfirmResolve,
   }
 }

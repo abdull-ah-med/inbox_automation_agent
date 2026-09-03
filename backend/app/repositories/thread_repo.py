@@ -137,6 +137,7 @@ def _to_presentation_view(
         ),
         suggest_resolve_default=derived.suggest_resolve_default,
         show_resolution_banner=derived.show_resolution_banner,
+        resolution_mode=derived.resolution_mode,
     )
 
 
@@ -169,7 +170,9 @@ def _latest_message_ranked() -> Any:
             Message.sender.label("sender"),
             Message.direction.label("direction"),
             Message.to_recipients.label("to_recipients"),
-            Message.body_preview.label("preview"),
+            Message.body_preview.label("body_preview"),
+            Message.body_text.label("body_text"),
+            Message.unique_body_text.label("unique_body_text"),
             Message.graph_message_id.label("graph_message_id"),
             func.row_number()
             .over(
@@ -179,6 +182,16 @@ def _latest_message_ranked() -> Any:
             .label("rn"),
         )
     ).subquery()
+
+
+def _card_preview(
+    body_text: str | None, unique_body_text: str | None, body_preview: str | None
+) -> str | None:
+    from app.services.thread_view_service import preview_text_for_message
+
+    return preview_text_for_message(
+        body_text=body_text or "", unique_body_text=unique_body_text, body_preview=body_preview
+    )
 
 
 def _party_sender(
@@ -739,16 +752,16 @@ async def list_by_mailbox(
     msg_count = func.count(Message.id).label("message_count")
     latest_msg = _latest_message_ranked()
 
-    stmt: Select[
-        tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]
-    ] = (
+    stmt = (
         select(
             Thread,
             msg_count,
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .outerjoin(Message, Message.thread_id == Thread.id)
@@ -762,7 +775,9 @@ async def list_by_mailbox(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .order_by(Thread.last_message_at.desc().nullslast(), Thread.id.desc())
@@ -788,7 +803,17 @@ async def list_by_mailbox(
     items: list[ThreadSummary] = []
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         pairs.append((thread.mailbox, thread.conversation_id))
         thread_ids.append(thread.id)
         party = _party_sender(thread.mailbox, sender, direction, to_recipients)
@@ -804,7 +829,7 @@ async def list_by_mailbox(
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=party,
-                preview=preview,
+                preview=_card_preview(body_text, unique_body_text, body_preview),
                 staleness_hours=_staleness_hours(thread.last_message_at, now),
                 message_count=int(count or 0),
                 outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -890,7 +915,9 @@ async def list_recent_for_mailboxes(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .join(ranked, ranked.c.tid == Thread.id)
@@ -905,7 +932,9 @@ async def list_recent_for_mailboxes(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .order_by(Thread.mailbox, Thread.last_message_at.desc().nullslast(), Thread.id.desc())
@@ -917,7 +946,17 @@ async def list_recent_for_mailboxes(
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
     pending: list[tuple[str, uuid.UUID, str]] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         key = thread.mailbox.lower()
         if key not in buckets or len(buckets[key]) >= per_mailbox:
             continue
@@ -935,7 +974,7 @@ async def list_recent_for_mailboxes(
             category=thread.category,
             last_message_at=thread.last_message_at,
             last_sender=party,
-            preview=preview,
+            preview=_card_preview(body_text, unique_body_text, body_preview),
             staleness_hours=_staleness_hours(thread.last_message_at, now),
             message_count=int(count or 0),
             outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -1070,7 +1109,9 @@ async def list_needs_attention(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .outerjoin(Message, Message.thread_id == Thread.id)
@@ -1091,7 +1132,9 @@ async def list_needs_attention(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
     )
@@ -1105,7 +1148,17 @@ async def list_needs_attention(
     summaries: list[ThreadSummary] = []
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         pairs.append((thread.mailbox, thread.conversation_id))
         thread_ids.append(thread.id)
         party = _party_sender(thread.mailbox, sender, direction, to_recipients)
@@ -1121,7 +1174,7 @@ async def list_needs_attention(
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=party,
-                preview=preview,
+                preview=_card_preview(body_text, unique_body_text, body_preview),
                 staleness_hours=_staleness_hours(thread.last_message_at, now),
                 message_count=int(count or 0),
                 outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -1226,6 +1279,8 @@ async def build_thread_summary(
         select(
             Message.sender,
             Message.body_preview,
+            Message.body_text,
+            Message.unique_body_text,
             Message.graph_message_id,
             Message.direction,
             Message.to_recipients,
@@ -1236,10 +1291,12 @@ async def build_thread_summary(
     )
     latest = (await session.execute(latest_stmt)).one_or_none()
     sender = latest[0] if latest else None
-    preview = latest[1] if latest else None
-    graph_message_id = latest[2] if latest else None
-    direction = latest[3] if latest else None
-    to_recipients = latest[4] if latest else None
+    body_preview = latest[1] if latest else None
+    body_text = latest[2] if latest else None
+    unique_body_text = latest[3] if latest else None
+    graph_message_id = latest[4] if latest else None
+    direction = latest[5] if latest else None
+    to_recipients = latest[6] if latest else None
     party = _party_sender(thread.mailbox, sender, direction, to_recipients)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, [thread.id])
     finished = await draft_repo.review_finished_by_threads(session, [thread.id])
@@ -1254,7 +1311,7 @@ async def build_thread_summary(
         category=thread.category,
         last_message_at=thread.last_message_at,
         last_sender=party,
-        preview=preview,
+        preview=_card_preview(body_text, unique_body_text, body_preview),
         staleness_hours=_staleness_hours(thread.last_message_at, now),
         message_count=count,
         has_draft=thread.id in await _thread_ids_with_drafts(session, [thread.id]),

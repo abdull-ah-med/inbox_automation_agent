@@ -22,7 +22,7 @@ from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.auth import UserMe
 from app.models.schemas.email import ThreadStateEnum
-from app.services.thread_view_service import reply_text_for_message
+from app.services.thread_view_service import preview_text_for_message, reply_text_for_message
 
 pytestmark = pytest.mark.db
 
@@ -120,6 +120,20 @@ def test_reply_text_splits_zendesk_stacked_agent_photo_wall() -> None:
     assert reply.count("Alex Taylor (SampleHelpdesk)") == 1
     assert "further questions" not in reply
     assert "are we still able to send invitations" not in reply
+
+
+def test_preview_text_for_card_uses_reply_pipeline_not_raw_graph_preview() -> None:
+    """Mailbox cards must not show Zendesk delimiter junk from bodyPreview."""
+    preview = preview_text_for_message(
+        body_text=ZENDESK_STACKED_AGENTS,
+        unique_body_text=ZENDESK_STACKED_AGENTS,
+        body_preview=(
+            "##- Please type your reply above this line -## Your request (40145) has been updated."
+        ),
+    )
+    assert preview is not None
+    assert "Please type your reply above this line" not in preview
+    assert "close out this ticket" in preview
 
 
 @pytest.fixture

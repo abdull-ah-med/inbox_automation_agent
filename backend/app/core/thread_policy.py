@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Literal
 
 from app.models.schemas.email import ThreadStateEnum
 
@@ -102,6 +103,7 @@ class ThreadPresentation:
     triage_history: TriageHistoryView
     suggest_resolve_default: bool
     show_resolution_banner: bool
+    resolution_mode: Literal["auto", "manual"] | None = None
 
 
 def derive_presentation(inp: ThreadPolicyInput) -> ThreadPresentation:

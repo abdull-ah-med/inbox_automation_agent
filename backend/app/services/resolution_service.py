@@ -6,14 +6,17 @@ import uuid
 from typing import Literal
 
 import structlog
+from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import ThreadNotFoundError, ThreadStateError
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
-from app.repositories import thread_repo
+from app.repositories import message_repo, thread_repo
 from app.services import audit_service
+from app.services.workflow_extraction_service import maybe_extract_workflow
 
 logger = structlog.get_logger(__name__)
 
@@ -29,27 +32,61 @@ async def _require_thread(
     return thread
 
 
-async def resolve_thread_manual(
+def _compose_resolve_learning_text(
+    *,
+    actions_taken: str,
+    involved: str | None,
+    subject: str | None,
+    inbound_snippet: str | None,
+) -> str:
+    parts = [f"Actions taken: {actions_taken.strip()}"]
+    if involved and involved.strip():
+        parts.append(f"Involved: {involved.strip()}")
+    if subject and subject.strip():
+        parts.append(f"Subject: {subject.strip()}")
+    if inbound_snippet and inbound_snippet.strip():
+        parts.append(f"\nLatest inbound:\n{inbound_snippet.strip()}")
+    return "\n".join(parts)
+
+
+def _resolve_audit_body(
+    *,
+    resolved_actions: str,
+    involved: str | None,
+    urgency: str | None,
+    already_resolved: bool,
+) -> str:
+    if already_resolved:
+        body = "Recorded how you resolved this thread."
+    else:
+        body = "You marked this thread resolved. Removed from Needs Attention."
+        if urgency:
+            body = f"{body} Assessed urgency was {urgency}; it no longer drives priority."
+    body = f"{body} Actions taken: {resolved_actions}"
+    if involved and involved.strip():
+        body = f"{body} With: {involved.strip()}"
+    return body
+
+
+async def _record_resolve_capture(
     session: AsyncSession,
     settings: Settings,
+    thread: thread_repo.ThreadSchema,
     thread_id: uuid.UUID,
     *,
     actor: str,
-    note: str | None = None,
-) -> str:
-    thread = await _require_thread(session, settings, thread_id)
-    if thread.state == ThreadStateEnum.RESOLVED.value:
-        return str(thread.state)
-    await thread_repo.set_thread_outcome(
-        session,
-        thread_id,
-        state=ThreadStateEnum.RESOLVED.value,
+    resolved_actions: str,
+    involved: str | None,
+    already_resolved: bool,
+    anthropic_client: AsyncAnthropic | None,
+    openai_client: AsyncOpenAI | None,
+) -> None:
+    body = _resolve_audit_body(
+        resolved_actions=resolved_actions,
+        involved=involved,
+        urgency=thread.urgency,
+        already_resolved=already_resolved,
     )
-    body = "You marked this thread resolved. Removed from Needs Attention."
-    if thread.urgency:
-        body = f"{body} Assessed urgency was {thread.urgency}; it no longer drives priority."
-    if note and note.strip():
-        body = f"{body} Note: {note.strip()}"
     try:
         await audit_service.log_event(
             session,
@@ -58,7 +95,9 @@ async def resolve_thread_manual(
             mailbox=thread.mailbox,
             payload={
                 "urgency_assessed": thread.urgency,
-                "note": note,
+                "actions_taken": resolved_actions,
+                "involved": involved,
+                "already_resolved": already_resolved,
                 "human": {
                     "title": "Marked resolved",
                     "body": body,
@@ -69,6 +108,74 @@ async def resolve_thread_manual(
         )
     except Exception:
         logger.warning("manual_resolve_audit_failed", thread_id=str(thread_id))
+
+    if anthropic_client is None:
+        return
+    try:
+        inbound_snippet = await message_repo.latest_inbound_body_snippet(session, thread_id)
+        learning_text = _compose_resolve_learning_text(
+            actions_taken=resolved_actions,
+            involved=involved,
+            subject=thread.subject,
+            inbound_snippet=inbound_snippet,
+        )
+        sender_addr = thread.alert_sender_norm or ""
+        sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+        await maybe_extract_workflow(
+            session,
+            client=anthropic_client,
+            settings=settings,
+            openai_client=openai_client,
+            mailbox=thread.mailbox,
+            thread_id=thread_id,
+            email_text=learning_text,
+            thread_summary=thread.subject or "",
+            sender_address=sender_addr or None,
+            sender_domain=sender_dom or None,
+            routing_category=None,
+            atomization_text=resolved_actions,
+        )
+    except Exception:
+        logger.warning("workflow_extraction_resolve_failed", thread_id=str(thread_id))
+
+
+async def resolve_thread_manual(
+    session: AsyncSession,
+    settings: Settings,
+    thread_id: uuid.UUID,
+    *,
+    actor: str,
+    actions_taken: str,
+    involved: str | None = None,
+    anthropic_client: AsyncAnthropic | None = None,
+    openai_client: AsyncOpenAI | None = None,
+) -> str:
+    resolved_actions = actions_taken.strip()
+    if not resolved_actions:
+        raise ValueError("actions_taken is required")
+
+    thread = await _require_thread(session, settings, thread_id)
+    already_resolved = thread.state == ThreadStateEnum.RESOLVED.value
+    if not already_resolved:
+        await thread_repo.set_thread_outcome(
+            session,
+            thread_id,
+            state=ThreadStateEnum.RESOLVED.value,
+        )
+
+    await _record_resolve_capture(
+        session,
+        settings,
+        thread,
+        thread_id,
+        actor=actor,
+        resolved_actions=resolved_actions,
+        involved=involved,
+        already_resolved=already_resolved,
+        anthropic_client=anthropic_client,
+        openai_client=openai_client,
+    )
+
     return ThreadStateEnum.RESOLVED.value
 
 

@@ -48,6 +48,8 @@ export const ThreadTriageSidebar = ({
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
   const [resolvePromptOpen, setResolvePromptOpen] = useState(false)
+  const [resolveActionsTaken, setResolveActionsTaken] = useState("")
+  const [resolveInvolved, setResolveInvolved] = useState("")
   const [approveBody, setApproveBody] = useState("")
   const [approvalNote, setApprovalNote] = useState("")
   const [approvalScope, setApprovalScope] = useState<"once" | "similar" | "">("")
@@ -57,33 +59,53 @@ export const ThreadTriageSidebar = ({
   const siblings = useSiblingsPrompt(threadId)
   const presentation = thread.presentation
 
-  const maybePromptResolve = () => {
-    if (presentation?.is_finished) return
-    if (!presentation?.suggest_resolve_default) return
+  const openResolvePrompt = () => {
+    setResolveActionsTaken("")
+    setResolveInvolved("")
     setResolvePromptOpen(true)
   }
 
-  const { approveMutation, rejectMutation, resolveMutation, handleConfirmApprove, handleReject } =
-    useThreadReviewMutations({
-      threadId,
-      draft,
-      queryClient,
-      approveBody,
-      approvalNote,
-      approvalScope,
-      rejectNote,
-      rejectReason,
-      setApproveOpen,
-      setApprovalNote,
-      setApprovalScope,
-      setRejectOpen,
-      setRejectNote,
-      setRejectReason,
-      setActionError,
-      setResolvePromptOpen,
-      maybePromptResolve,
-      siblings,
-    })
+  const maybePromptResolve = () => {
+    if (presentation?.is_finished) return
+    if (!presentation?.suggest_resolve_default) return
+    openResolvePrompt()
+  }
+
+  const handleMarkResolved = () => {
+    openResolvePrompt()
+  }
+
+  const {
+    approveMutation,
+    rejectMutation,
+    resolveMutation,
+    handleConfirmApprove,
+    handleReject,
+    handleConfirmResolve,
+  } = useThreadReviewMutations({
+    threadId,
+    draft,
+    queryClient,
+    approveBody,
+    approvalNote,
+    approvalScope,
+    rejectNote,
+    rejectReason,
+    setApproveOpen,
+    setApprovalNote,
+    setApprovalScope,
+    setRejectOpen,
+    setRejectNote,
+    setRejectReason,
+    setActionError,
+    setResolvePromptOpen,
+    resolveActionsTaken,
+    resolveInvolved,
+    setResolveActionsTaken,
+    setResolveInvolved,
+    maybePromptResolve,
+    siblings,
+  })
 
   const generateDraftMutation = useMutation({
     mutationFn: () => api.threads.generateDraft(threadId),
@@ -146,7 +168,10 @@ export const ThreadTriageSidebar = ({
       badge={draft ? feedbackBadge(draft) : null}
       feedbackDone={isFeedbackDone(draft)}
       busy={
-        approveMutation.isPending || rejectMutation.isPending || generateDraftMutation.isPending
+        approveMutation.isPending ||
+        rejectMutation.isPending ||
+        generateDraftMutation.isPending ||
+        resolveMutation.isPending
       }
       generatePending={generateDraftMutation.isPending}
       suggestedActions={draft?.suggested_actions ?? []}
@@ -156,6 +181,8 @@ export const ThreadTriageSidebar = ({
       approveOpen={approveOpen}
       rejectOpen={rejectOpen}
       resolvePromptOpen={resolvePromptOpen}
+      resolveActionsTaken={resolveActionsTaken}
+      resolveInvolved={resolveInvolved}
       approveBody={approveBody}
       approvalNote={approvalNote}
       approvalScope={approvalScope}
@@ -168,6 +195,9 @@ export const ThreadTriageSidebar = ({
       onApproveOpenChange={setApproveOpen}
       onRejectOpenChange={setRejectOpen}
       onResolvePromptOpenChange={setResolvePromptOpen}
+      onResolveActionsTakenChange={setResolveActionsTaken}
+      onResolveInvolvedChange={setResolveInvolved}
+      onMarkResolved={handleMarkResolved}
       onApproveBodyChange={setApproveBody}
       onApprovalNoteChange={setApprovalNote}
       onApprovalScopeChange={setApprovalScope}
@@ -178,7 +208,7 @@ export const ThreadTriageSidebar = ({
       onRejectKeyDown={handleRejectKeyDown}
       onConfirmApprove={handleConfirmApprove}
       onConfirmReject={handleReject}
-      onConfirmResolve={() => resolveMutation.mutate()}
+      onConfirmResolve={handleConfirmResolve}
       onGenerateDraft={handleGenerateDraft}
       onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
     />

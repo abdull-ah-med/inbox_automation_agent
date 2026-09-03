@@ -124,7 +124,7 @@ async def test_run_draft_pending_to_drafted() -> None:
             _state(),
             session=AsyncMock(),
             client=AsyncMock(),
-            settings=Settings(anthropic_api_key="test-key"),
+            settings=Settings(anthropic_api_key="test-key", salute_directory_enabled=False),
             thread_id=thread_id,
         )
 
@@ -172,7 +172,7 @@ async def test_run_draft_generation_failure_requires_human() -> None:
             _state(),
             session=AsyncMock(),
             client=AsyncMock(),
-            settings=Settings(anthropic_api_key="test-key"),
+            settings=Settings(anthropic_api_key="test-key", salute_directory_enabled=False),
             thread_id=uuid.uuid4(),
         )
 
@@ -244,7 +244,7 @@ async def test_run_draft_persists_context_match_confidence() -> None:
             _state(),
             session=AsyncMock(),
             client=AsyncMock(),
-            settings=Settings(anthropic_api_key="test-key"),
+            settings=Settings(anthropic_api_key="test-key", salute_directory_enabled=False),
             thread_id=thread_id,
             cross_thread_context=cross,
         )
@@ -277,7 +277,7 @@ async def test_run_draft_persists_context_match_confidence() -> None:
             _state(),
             session=AsyncMock(),
             client=AsyncMock(),
-            settings=Settings(anthropic_api_key="test-key"),
+            settings=Settings(anthropic_api_key="test-key", salute_directory_enabled=False),
             thread_id=thread_id,
         )
 

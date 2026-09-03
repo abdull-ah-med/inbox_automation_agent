@@ -57,10 +57,10 @@ export const threadsApi = {
       method: "POST",
     })
   },
-  resolve(id: string, body?: { note?: string }) {
+  resolve(id: string, body: { actions_taken: string; involved?: string | null }) {
     return apiFetch<{ state: string }>(`/api/threads/${id}/resolve`, {
       method: "POST",
-      body: JSON.stringify(body ?? {}),
+      body: JSON.stringify(body),
     })
   },
   generateDraft(id: string) {

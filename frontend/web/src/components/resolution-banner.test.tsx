@@ -153,6 +153,29 @@ describe("ResolutionBanner", () => {
     expect(screen.queryByRole("button", { name: "Mark thread still open" })).toBeNull()
   })
 
+  it("shows manual resolve copy without wrong-reason feedback", () => {
+    renderBanner({
+      presentation: { ...resolvedPresentation, resolution_mode: "manual" },
+      activity: [
+        {
+          title: "Marked resolved",
+          body: "You marked this thread resolved. Removed from Needs Attention. Assessed urgency was HIGH; it no longer drives priority. Actions taken: normal gmail alert",
+          actor_kind: "elise",
+          event_type: "thread.resolved.reviewer",
+          timestamp: "2026-09-03T11:00:00Z",
+        },
+      ],
+    })
+
+    const status = screen.getByRole("status")
+    expect(status).toHaveTextContent(/you marked this thread resolved/i)
+    expect(status).toHaveTextContent(/removed from needs attention/i)
+    expect(status).toHaveTextContent(/actions taken: normal gmail alert/i)
+    expect(status.textContent?.match(/you marked this thread resolved/gi)).toHaveLength(1)
+    expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
+    expect(screen.getByRole("button", { name: "Mark thread still open" })).toBeInTheDocument()
+  })
+
   it("shows an inline error when wrong-reason feedback fails", async () => {
     resolutionFeedbackMock.mockRejectedValue(new Error("Network down"))
     const user = userEvent.setup({ pointerEventsCheck: 0 })

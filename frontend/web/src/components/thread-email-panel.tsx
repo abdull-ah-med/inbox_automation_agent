@@ -34,10 +34,17 @@ const meetingLabel = (message: MessageDetail): string | null => {
 }
 
 const peekText = (message: MessageDetail): string => {
+  const reply = message.reply_text?.trim()
+  if (reply) {
+    const oneLine = reply
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .join(" ")
+    if (oneLine) return oneLine
+  }
   const preview = message.body_preview?.trim()
   if (preview) return preview
-  const reply = message.reply_text?.trim()
-  if (reply) return reply.split("\n")[0] ?? reply
   const meeting = meetingLabel(message)
   if (meeting) return meeting
   return ""

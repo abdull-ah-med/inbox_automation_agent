@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { api } from "@/lib/api-client"
 import { getMutationErrorMessage } from "@/lib/error-messages"
 import type { ActivityEntry, ThreadPresentation } from "@/lib/types"
+import { formatManualResolveLines } from "@/lib/manual-resolve-banner"
 import { cn } from "@/lib/utils"
 
 type FeedbackOutcome = "reopened" | "wrong_reason"
@@ -39,6 +40,22 @@ const outcomeFromActivity = (activity: ActivityEntry[] | undefined): FeedbackOut
   }
   return null
 }
+
+const manualResolveBody = (activity: ActivityEntry[] | undefined): string | null => {
+  const entry = activity?.toReversed().find((row) => row.event_type === "thread.resolved.reviewer")
+  return entry?.body?.trim() || null
+}
+
+const bannerBodyClass =
+  "mt-1 space-y-1 leading-relaxed text-emerald-800/85 dark:text-emerald-100/75"
+
+const ManualResolveBody = ({ lines }: { lines: string[] }) => (
+  <div className={bannerBodyClass}>
+    {lines.map((line) => (
+      <p key={line}>{line}</p>
+    ))}
+  </div>
+)
 
 export const ResolutionBanner = ({
   threadId,
@@ -117,9 +134,51 @@ export const ResolutionBanner = ({
     )
   }
 
-  const urgencyNote = urgencyAssessed
-    ? ` Assessed urgency was ${urgencyAssessed}; it no longer drives priority.`
-    : ""
+  if (presentation?.resolution_mode === "manual") {
+    const manualLines = formatManualResolveLines(manualResolveBody(activity), urgencyAssessed)
+
+    return (
+      <div role="status" className={bannerShellClass}>
+        <CircleCheck
+          aria-hidden="true"
+          className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
+            You marked this thread resolved
+          </p>
+          <ManualResolveBody lines={manualLines} />
+          {error ? (
+            <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="cursor-pointer bg-emerald-700 text-white hover:bg-emerald-800 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+              aria-label="Mark thread still open"
+              disabled={feedbackMutation.isPending}
+              onClick={handleReopen}
+            >
+              Still open?
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="cursor-pointer text-emerald-800 hover:bg-emerald-100/80 dark:text-emerald-200 dark:hover:bg-emerald-900/40"
+              aria-label="Dismiss resolution banner"
+              onClick={handleDismiss}
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div role="status" className={bannerShellClass}>
@@ -131,10 +190,13 @@ export const ResolutionBanner = ({
         <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
           This thread was resolved automatically
         </p>
-        <p className="mt-1 max-w-2xl leading-relaxed text-emerald-800/85 dark:text-emerald-100/75">
-          Removed from Needs Attention.
-          {urgencyNote} You can reopen if work is still open.
-        </p>
+        <div className={bannerBodyClass}>
+          <p>Removed from Needs Attention.</p>
+          {urgencyAssessed ? (
+            <p>Assessed urgency was {urgencyAssessed}; it no longer drives priority.</p>
+          ) : null}
+          <p>You can reopen if work is still open.</p>
+        </div>
         {error ? (
           <p className="mt-2 text-xs text-red-700 dark:text-red-300" role="alert">
             {error}

@@ -336,6 +336,8 @@ async def resolve_thread(
     session: DbSession,
     settings: AppSettings,
     user: CurrentUser,
+    anthropic_client: AnthropicClientDep,
+    openai_client: OpenAIClientDep,
 ) -> ResolveThreadResponse:
     """Mark a thread resolved (local DB only). Does not send or edit Outlook mail."""
     _ = request, response
@@ -344,7 +346,10 @@ async def resolve_thread(
         settings,
         thread_id,
         actor=user.email,
-        note=body.note,
+        actions_taken=body.actions_taken,
+        involved=body.involved,
+        anthropic_client=anthropic_client,
+        openai_client=openai_client,
     )
     await session.commit()
     return ResolveThreadResponse(state=state)
