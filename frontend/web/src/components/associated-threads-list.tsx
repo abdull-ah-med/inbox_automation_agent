@@ -18,7 +18,7 @@ import {
 import { api } from "@/lib/api-client"
 import { getMutationErrorMessage } from "@/lib/error-messages"
 import { formatReviewerDate } from "@/lib/dates"
-import type { RelatedThreadItem } from "@/lib/types"
+import type { RelatedThreadItem, ThreadDetail } from "@/lib/types"
 import { textLinkClass } from "@/lib/utils"
 
 const MATCH_REASON_LABELS: Record<string, string> = {
@@ -28,6 +28,185 @@ const MATCH_REASON_LABELS: Record<string, string> = {
   shared_deadline: "Shared deadline",
   cosine: "Similar content",
 }
+
+const MatchReasonChips = ({ reasons }: { reasons?: string[] | null }) => {
+  if (!reasons || reasons.length === 0) return null
+  return (
+    <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Match reasons">
+      {reasons.map((reason) => {
+        const label = MATCH_REASON_LABELS[reason]
+        if (!label) return null
+        return (
+          <li
+            key={reason}
+            className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+          >
+            {label}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+const AssociationRow = ({
+  item,
+  multiSelect,
+  selected,
+  inflight,
+  onPreview,
+  onToggleSelected,
+  onConfirm,
+  onRemove,
+}: {
+  item: RelatedThreadItem
+  multiSelect: boolean
+  selected: boolean
+  inflight: boolean
+  onPreview: (relatedId: string) => void
+  onToggleSelected: (relatedId: string) => void
+  onConfirm: (relatedId: string) => void
+  onRemove: (relatedId: string) => void
+}) => {
+  const canConfirm = item.status !== "confirmed"
+  return (
+    <li className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
+      <div className="flex min-w-0 flex-1 items-start gap-3">
+        {multiSelect ? (
+          <input
+            type="checkbox"
+            checked={selected}
+            aria-label={`Select associated thread ${item.subject}`}
+            tabIndex={0}
+            className="mt-1 size-4 shrink-0"
+            disabled={inflight}
+            onChange={() => onToggleSelected(item.thread_id)}
+          />
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            tabIndex={0}
+            aria-label={`Preview associated thread ${item.subject}`}
+            className="block max-w-full truncate text-left text-sm font-medium text-blue-700 hover:underline dark:text-blue-400"
+            onClick={() => onPreview(item.thread_id)}
+          >
+            {item.subject}
+          </button>
+          <p className="text-muted-foreground mt-0.5 truncate text-xs">
+            <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+              {item.mailbox}
+            </span>
+            {" · "}
+            {formatReviewerDate(item.last_message_at)}
+            {" · "}
+            {item.status}
+          </p>
+          <MatchReasonChips reasons={item.match_reasons} />
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {!multiSelect && canConfirm ? (
+          <Button
+            type="button"
+            size="sm"
+            tabIndex={0}
+            aria-label={`Confirm associated thread ${item.subject}`}
+            disabled={inflight}
+            onClick={() => onConfirm(item.thread_id)}
+          >
+            Confirm
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          tabIndex={0}
+          aria-label={`Delete association ${item.subject}`}
+          disabled={inflight}
+          onClick={() => onRemove(item.thread_id)}
+        >
+          Delete Association
+        </Button>
+      </div>
+    </li>
+  )
+}
+
+const AssociationPreviewDialog = ({
+  open,
+  sourceThreadId,
+  sourceSubject,
+  previewItem,
+  previewId,
+  isLoading,
+  isError,
+  error,
+  data,
+  onOpenChange,
+  onBack,
+}: {
+  open: boolean
+  sourceThreadId: string
+  sourceSubject: string
+  previewItem: RelatedThreadItem | null
+  previewId: string | null
+  isLoading: boolean
+  isError: boolean
+  error: unknown
+  data: ThreadDetail | undefined
+  onOpenChange: (open: boolean) => void
+  onBack: () => void
+}) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent size="lg" className="overscroll-contain">
+      <DialogHeader>
+        <DialogTitle className="pr-8 text-pretty">
+          {previewItem?.subject ?? "Associated thread"}
+        </DialogTitle>
+        <DialogDescription>
+          Still reviewing “{sourceSubject}”. Close this preview to return.
+        </DialogDescription>
+      </DialogHeader>
+      {isLoading ? <p className="text-muted-foreground text-sm">Loading thread…</p> : null}
+      {isError ? (
+        <p className="text-sm text-red-600" role="alert">
+          {error instanceof Error ? error.message : "Could not load associated thread."}
+        </p>
+      ) : null}
+      {data ? (
+        <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
+          <ThreadEmailPanel
+            threadId={previewId ?? data.thread.id}
+            subject={data.thread.subject}
+            messages={data.messages}
+          />
+        </div>
+      ) : null}
+      <DialogFooter>
+        <Button
+          type="button"
+          variant="outline"
+          tabIndex={0}
+          aria-label="Back to current thread"
+          onClick={onBack}
+        >
+          Back to current thread
+        </Button>
+        {previewId ? (
+          <Link
+            href={associatedThreadHref(previewId, sourceThreadId)}
+            className={textLinkClass}
+            aria-label="Open full thread"
+          >
+            Open full thread
+          </Link>
+        ) : null}
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+)
 
 export const AssociatedThreadsList = ({
   sourceThreadId,
@@ -47,6 +226,7 @@ export const AssociatedThreadsList = ({
   const [inflightIds, setInflightIds] = useState<Set<string>>(() => new Set())
   const inflightRef = useRef(new Map<string, AbortController>())
   const [previewId, setPreviewId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
 
   const rows = items
     .filter((item) => !dismissedIds.has(item.thread_id))
@@ -54,6 +234,23 @@ export const AssociatedThreadsList = ({
       const status = statusById[item.thread_id]
       return status ? { ...item, status } : item
     })
+
+  const proposedRows = rows.filter((item) => item.status !== "confirmed")
+  const multiSelect = rows.length > 1
+  const rowIds = rows.map((item) => item.thread_id)
+  const proposedIds = proposedRows.map((item) => item.thread_id)
+  const selectedRowIds = rowIds.filter((id) => selectedIds.has(id))
+  const selectedProposed = proposedIds.filter((id) => selectedIds.has(id))
+  const allSelected = multiSelect && rowIds.length > 0 && selectedRowIds.length === rowIds.length
+  const someSelected = selectedRowIds.length > 0
+  const partiallySelected = someSelected && !allSelected
+  const bulkBusy = selectedRowIds.some((id) => inflightIds.has(id))
+  const hasProposedSelected = selectedProposed.length > 0
+  const allProposedSelected =
+    proposedIds.length > 0 && selectedProposed.length === proposedIds.length && hasProposedSelected
+  const showBulkConfirm = proposedRows.length > 0
+  const bulkLabel = allProposedSelected ? "Confirm all" : "Confirm"
+  const removeLabel = allSelected ? "Delete all associations" : "Delete Association"
 
   const previewQuery = useQuery({
     queryKey: ["thread", previewId],
@@ -97,6 +294,12 @@ export const AssociatedThreadsList = ({
       } else {
         setStatusById((current) => ({ ...current, [relatedId]: nextStatus }))
       }
+      setSelectedIds((current) => {
+        if (!current.has(relatedId)) return current
+        const next = new Set(current)
+        next.delete(relatedId)
+        return next
+      })
       void queryClient.invalidateQueries({ queryKey: ["thread", sourceThreadId] })
       if (nextStatus === "dismissed" && previewId === relatedId) {
         setPreviewId(null)
@@ -112,18 +315,38 @@ export const AssociatedThreadsList = ({
     }
   }
 
-  const handlePreview = (relatedId: string) => {
-    setPreviewId(relatedId)
+  const handleToggleSelected = (relatedId: string) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(relatedId)) {
+        next.delete(relatedId)
+      } else {
+        next.add(relatedId)
+      }
+      return next
+    })
   }
 
-  const handlePreviewOpenChange = (open: boolean) => {
-    if (!open) {
-      setPreviewId(null)
+  const handleToggleSelectAll = () => {
+    setSelectedIds((current) => {
+      const everySelected = rowIds.every((id) => current.has(id))
+      if (everySelected) return new Set()
+      return new Set(rowIds)
+    })
+  }
+
+  const handleConfirmSelected = () => {
+    if (selectedProposed.length === 0) return
+    for (const relatedId of selectedProposed) {
+      void handleReview(relatedId, "confirmed")
     }
   }
 
-  const handleBackToCurrent = () => {
-    setPreviewId(null)
+  const handleRemoveSelected = () => {
+    if (selectedRowIds.length === 0) return
+    for (const relatedId of selectedRowIds) {
+      void handleReview(relatedId, "dismissed")
+    }
   }
 
   return (
@@ -136,131 +359,84 @@ export const AssociatedThreadsList = ({
           {error}
         </p>
       ) : null}
-      <ul className="space-y-2">
-        {rows.map((item) => (
-          <li
-            key={item.thread_id}
-            className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
-          >
-            <div className="min-w-0 flex-1">
-              <button
-                type="button"
-                tabIndex={0}
-                aria-label={`Preview associated thread ${item.subject}`}
-                className="block max-w-full truncate text-left text-sm font-medium text-blue-700 hover:underline dark:text-blue-400"
-                onClick={() => handlePreview(item.thread_id)}
-              >
-                {item.subject}
-              </button>
-              <p className="text-muted-foreground mt-0.5 truncate text-xs">
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                  {item.mailbox}
-                </span>
-                {" · "}
-                {formatReviewerDate(item.last_message_at)}
-                {" · "}
-                {item.status}
-              </p>
-              {item.match_reasons && item.match_reasons.length > 0 ? (
-                <ul className="mt-1.5 flex flex-wrap gap-1" aria-label="Match reasons">
-                  {item.match_reasons.map((reason) => {
-                    const label = MATCH_REASON_LABELS[reason]
-                    if (!label) return null
-                    return (
-                      <li
-                        key={reason}
-                        className="rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-                      >
-                        {label}
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              {item.status !== "confirmed" ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  tabIndex={0}
-                  aria-label={`Confirm associated thread ${item.subject}`}
-                  disabled={inflightIds.has(item.thread_id)}
-                  onClick={() => {
-                    void handleReview(item.thread_id, "confirmed")
-                  }}
-                >
-                  Confirm
-                </Button>
-              ) : null}
+      {multiSelect ? (
+        <div className="mb-2 flex items-center justify-between gap-3 px-3">
+          <label className="flex items-center gap-3">
+            <input
+              ref={(el) => {
+                if (el) el.indeterminate = partiallySelected
+              }}
+              type="checkbox"
+              checked={allSelected}
+              aria-checked={allSelected ? true : partiallySelected ? "mixed" : false}
+              aria-label="Select all associations"
+              tabIndex={0}
+              className="size-4 shrink-0"
+              onChange={handleToggleSelectAll}
+            />
+            <span className="text-muted-foreground text-xs">Select all</span>
+          </label>
+          <div className="flex items-center gap-1">
+            {showBulkConfirm ? (
               <Button
                 type="button"
                 size="sm"
-                variant="ghost"
                 tabIndex={0}
-                aria-label={`Remove association ${item.subject}`}
-                disabled={inflightIds.has(item.thread_id)}
-                onClick={() => {
-                  void handleReview(item.thread_id, "dismissed")
-                }}
+                aria-label={bulkLabel}
+                disabled={!hasProposedSelected || bulkBusy}
+                onClick={handleConfirmSelected}
               >
-                Remove
+                {bulkLabel}
               </Button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      <Dialog open={previewId != null} onOpenChange={handlePreviewOpenChange}>
-        <DialogContent size="lg" className="overscroll-contain">
-          <DialogHeader>
-            <DialogTitle className="pr-8 text-pretty">
-              {previewItem?.subject ?? "Associated thread"}
-            </DialogTitle>
-            <DialogDescription>
-              Still reviewing “{sourceSubject}”. Close this preview to return.
-            </DialogDescription>
-          </DialogHeader>
-          {previewQuery.isLoading ? (
-            <p className="text-muted-foreground text-sm">Loading thread…</p>
-          ) : null}
-          {previewQuery.isError ? (
-            <p className="text-sm text-red-600" role="alert">
-              {previewQuery.error instanceof Error
-                ? previewQuery.error.message
-                : "Could not load associated thread."}
-            </p>
-          ) : null}
-          {previewQuery.data ? (
-            <div className="max-h-[50vh] overflow-y-auto overscroll-contain">
-              <ThreadEmailPanel
-                threadId={previewId ?? previewQuery.data.thread.id}
-                subject={previewQuery.data.thread.subject}
-                messages={previewQuery.data.messages}
-              />
-            </div>
-          ) : null}
-          <DialogFooter>
+            ) : null}
             <Button
               type="button"
-              variant="outline"
+              size="sm"
+              variant="ghost"
               tabIndex={0}
-              aria-label="Back to current thread"
-              onClick={handleBackToCurrent}
+              aria-label={removeLabel}
+              disabled={!someSelected || bulkBusy}
+              onClick={handleRemoveSelected}
             >
-              Back to current thread
+              {removeLabel}
             </Button>
-            {previewId ? (
-              <Link
-                href={associatedThreadHref(previewId, sourceThreadId)}
-                className={textLinkClass}
-                aria-label="Open full thread"
-              >
-                Open full thread
-              </Link>
-            ) : null}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </div>
+        </div>
+      ) : null}
+      <ul className="space-y-2">
+        {rows.map((item) => (
+          <AssociationRow
+            key={item.thread_id}
+            item={item}
+            multiSelect={multiSelect}
+            selected={selectedIds.has(item.thread_id)}
+            inflight={inflightIds.has(item.thread_id)}
+            onPreview={setPreviewId}
+            onToggleSelected={handleToggleSelected}
+            onConfirm={(relatedId) => {
+              void handleReview(relatedId, "confirmed")
+            }}
+            onRemove={(relatedId) => {
+              void handleReview(relatedId, "dismissed")
+            }}
+          />
+        ))}
+      </ul>
+      <AssociationPreviewDialog
+        open={previewId != null}
+        sourceThreadId={sourceThreadId}
+        sourceSubject={sourceSubject}
+        previewItem={previewItem}
+        previewId={previewId}
+        isLoading={previewQuery.isLoading}
+        isError={previewQuery.isError}
+        error={previewQuery.error}
+        data={previewQuery.data}
+        onOpenChange={(open) => {
+          if (!open) setPreviewId(null)
+        }}
+        onBack={() => setPreviewId(null)}
+      />
     </section>
   )
 }

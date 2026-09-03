@@ -120,8 +120,8 @@ describe("AssociatedThreadsList", () => {
       screen.getByRole("button", { name: "Confirm associated thread SampleClient follow-up 8/14" }),
     ).toHaveTextContent("Confirm")
     expect(
-      screen.getByRole("button", { name: "Remove association SampleClient follow-up 8/14" }),
-    ).toHaveTextContent("Remove")
+      screen.getByRole("button", { name: "Delete association SampleClient follow-up 8/14" }),
+    ).toHaveTextContent("Delete Association")
   })
 
   it("confirmed row hides confirm and keeps remove control", () => {
@@ -134,8 +134,8 @@ describe("AssociatedThreadsList", () => {
     expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument()
     expect(screen.getByText(/confirmed/)).toBeInTheDocument()
     expect(
-      screen.getByRole("button", { name: "Remove association SampleClient follow-up 8/14" }),
-    ).toHaveTextContent("Remove")
+      screen.getByRole("button", { name: "Delete association SampleClient follow-up 8/14" }),
+    ).toHaveTextContent("Delete Association")
   })
 
   it("opens a preview modal and keeps the source thread on screen", async () => {
@@ -194,7 +194,7 @@ describe("AssociatedThreadsList", () => {
     expect(screen.getByText(/confirmed/)).toBeInTheDocument()
     await user.click(
       screen.getByRole("button", {
-        name: "Remove association SampleClient follow-up 8/14",
+        name: "Delete association SampleClient follow-up 8/14",
       }),
     )
     await waitFor(() => {
@@ -223,13 +223,14 @@ describe("AssociatedThreadsList", () => {
     }
     renderList([item, second])
     await user.click(
-      screen.getByRole("button", {
-        name: "Confirm associated thread SampleClient follow-up 8/14",
+      screen.getByRole("checkbox", {
+        name: "Select associated thread SampleClient follow-up 8/14",
       }),
     )
+    await user.click(screen.getByRole("button", { name: "Confirm" }))
     await user.click(
       screen.getByRole("button", {
-        name: "Remove association Invoice packet 8/12",
+        name: "Delete association Invoice packet 8/12",
       }),
     )
     await waitFor(() => {
