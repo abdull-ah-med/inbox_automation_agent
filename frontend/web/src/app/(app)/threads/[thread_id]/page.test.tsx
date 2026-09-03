@@ -149,4 +149,25 @@ describe("Thread detail page — useSearchParams Suspense boundary", () => {
     expect(await screen.findByText("SampleClient follow-up")).toBeInTheDocument()
     expect(relatedThreads).not.toHaveBeenCalled()
   })
+
+  it("restores the filtered mailbox URL in the Sales breadcrumb", async () => {
+    searchParamsString.mockReturnValue(
+      `returnTo=${encodeURIComponent("/mailboxes/sales?state=REPLY_REVIEW")}`,
+    )
+    threadDetail.mockResolvedValue({
+      thread: baseThread,
+      messages: [],
+      classification: null,
+      draft: null,
+      triage: null,
+      audit_log: [],
+    })
+
+    renderPage()
+
+    expect(await screen.findByRole("link", { name: "Sales" })).toHaveAttribute(
+      "href",
+      "/mailboxes/sales?state=REPLY_REVIEW",
+    )
+  })
 })

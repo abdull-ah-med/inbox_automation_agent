@@ -19,6 +19,7 @@ import { ThreadTriageSidebar } from "@/components/thread-triage-sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
 import { inboxLabel } from "@/lib/design-tokens"
+import { parseMailboxReturnTo } from "@/lib/mailbox-list-return"
 
 // `useSearchParams` opts the client-component tree up to the nearest
 // Suspense boundary into CSR during prerendering (Next.js docs: "Missing
@@ -85,6 +86,7 @@ function ThreadDetailPageContent() {
       threadId={threadId}
       originId={originId}
       originSubject={originQuery.data?.subject?.trim() || "the thread you were reviewing"}
+      mailboxReturnTo={parseMailboxReturnTo(searchParams.get("returnTo"))}
       data={data}
     />
   )
@@ -134,11 +136,13 @@ const ThreadDetailLoaded = ({
   threadId,
   originId,
   originSubject,
+  mailboxReturnTo,
   data,
 }: {
   threadId: string
   originId: string | null
   originSubject: string
+  mailboxReturnTo: string | null
   data: ThreadDetailData
 }) => {
   const {
@@ -163,7 +167,7 @@ const ThreadDetailLoaded = ({
     { label: "Overview", href: "/dashboard" },
     {
       label,
-      href: `/mailboxes/${encodeURIComponent(thread.mailbox_key)}`,
+      href: mailboxReturnTo ?? `/mailboxes/${encodeURIComponent(thread.mailbox_key)}`,
     },
     ...(originId ? [{ label: originSubject, href: `/threads/${originId}` }] : []),
     { label: subject },

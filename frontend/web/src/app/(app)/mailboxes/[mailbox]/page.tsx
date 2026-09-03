@@ -92,6 +92,10 @@ function MailboxPageContent() {
   const urgency = searchParams.get("urgency") ?? ""
   const dateFrom = searchParams.get("from") ?? ""
   const dateTo = searchParams.get("to") ?? ""
+  const listReturnTo = useMemo(() => {
+    const query = searchParams.toString()
+    return query ? `${pathname}?${query}` : pathname
+  }, [pathname, searchParams])
 
   const updateFilters = useCallback(
     (patch: { state?: string; urgency?: string; from?: string; to?: string }) => {
@@ -315,7 +319,7 @@ function MailboxPageContent() {
       ) : (
         <div className="space-y-2">
           {threads.map((thread) => (
-            <ThreadCard key={thread.id} thread={thread} />
+            <ThreadCard key={thread.id} thread={thread} returnTo={listReturnTo} />
           ))}
           <div ref={sentinelRef} className="h-8" />
           {isFetchingNextPage ? <Skeleton className="h-16 w-full rounded-lg" /> : null}
