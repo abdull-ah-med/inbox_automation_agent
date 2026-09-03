@@ -664,6 +664,86 @@ async def test_open_fyi_list_is_briefing_only(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_list_by_mailbox_reply_review_is_letter_only(db_session) -> None:
+    """`state=REPLY_REVIEW` is disposition reply_review — non-empty letter, unanswered.
+
+    Empty-body FYI and Daily Drivers action-without-letter stay out even though
+    all three rows are still DRAFTED in threads.state.
+    """
+    from app.models.db.audit_event import AuditEvent
+
+    t_letter = _thread(
+        mailbox=SALES,
+        conversation_id="t-rr-letter",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=T_TONE,
+    )
+    t_fyi = _thread(
+        mailbox=SALES,
+        conversation_id="t-rr-fyi",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="LOW",
+        last_message_at=T_OPEN,
+    )
+    t_alert = _thread(
+        mailbox=SALES,
+        conversation_id="t-rr-alert",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=T_HUMAN,
+    )
+    t_alert.alert_fingerprint = "daily-drivers-v1"
+    t_approved = _thread(
+        mailbox=SALES,
+        conversation_id="t-rr-approved",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=T_REOPEN,
+    )
+    db_session.add_all([t_letter, t_fyi, t_alert, t_approved])
+    await db_session.flush()
+    empty_fyi = _draft(t_fyi, created_at=T_OPEN)
+    empty_fyi.body = ""
+    empty_alert = _draft(t_alert, created_at=T_HUMAN)
+    empty_alert.body = ""
+    letter = _draft(t_letter, created_at=T_TONE)
+    letter.body = "Hi — here is the reply for review."
+    approved = _draft(
+        t_approved,
+        created_at=T_REOPEN,
+        approved_at=T_REOPEN,
+    )
+    approved.body = "Already approved reply body."
+    db_session.add_all(
+        [
+            _message(t_fyi, automated=False, body="FYI portal access is ready."),
+            _message(t_alert, automated=True, body="Daily Drivers changes update."),
+            empty_fyi,
+            empty_alert,
+            letter,
+            approved,
+            AuditEvent(
+                event_type="triage.action_needed",
+                conversation_id=t_alert.conversation_id,
+                mailbox=SALES,
+                payload={"has_action_items": True, "is_automated": True, "draft_needed": False},
+                actor="system",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    items, _ = await thread_repo.list_by_mailbox(
+        db_session, SALES, state="REPLY_REVIEW", limit=25
+    )
+    assert [row.id for row in items] == [t_letter.id]
+    assert items[0].has_letter is True
+    assert items[0].presentation is not None
+    assert items[0].presentation.disposition == "reply_review"
+
+
+@pytest.mark.asyncio
 async def test_recently_resolved_by_draftassistant_is_48h_excluding_elise(db_session) -> None:
     """48h DraftAssistant resolves in; Elise resolve and 72h-old DraftAssistant resolve out."""
     from app.models.db.audit_event import AuditEvent

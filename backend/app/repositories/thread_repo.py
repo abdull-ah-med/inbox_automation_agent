@@ -71,9 +71,11 @@ _FILTERED_STATES = (ThreadStateEnum.SPAM.value,)
 #: Mailbox list filter aliases — not stored ``threads.state`` values.
 #: ``AWAITING_ACTION`` / ``STALE`` match dashboard ``awaiting_action_count`` /
 #: ``stale_count``. ``FILTERED`` matches ``filtered_count`` (SPAM only).
+#: ``REPLY_REVIEW`` / ``OPEN_FYI`` match disposition queues (not raw DRAFTED).
 _AWAITING_ACTION_FILTER = "AWAITING_ACTION"
 _STALE_FILTER = "STALE"
 _FILTERED_FILTER = "FILTERED"
+_REPLY_REVIEW_FILTER = "REPLY_REVIEW"
 _OPEN_FYI_FILTER = "OPEN_FYI"
 _RECENTLY_RESOLVED_DRAFTASSISTANT_FILTER = "RECENTLY_RESOLVED_DRAFTASSISTANT"
 _RECENTLY_RESOLVED_DRAFTASSISTANT_HOURS = 48
@@ -695,6 +697,13 @@ def _apply_mailbox_list_filters(
             stmt = stmt.where(needs_elise)
     elif state == _FILTERED_FILTER:
         stmt = stmt.where(Thread.state.in_(_FILTERED_STATES))
+    elif state == _REPLY_REVIEW_FILTER:
+        latest_draft = _latest_draft_ranked()
+        stmt = stmt.outerjoin(
+            latest_draft,
+            (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
+        )
+        stmt = stmt.where(_is_reply_review(latest_draft))
     elif state == _OPEN_FYI_FILTER:
         latest_draft = _latest_draft_ranked()
         stmt = stmt.outerjoin(
@@ -1157,6 +1166,15 @@ def _is_actionable_operational_alert() -> Any:
     return and_(_is_operational_alert(), ~_triage_informational())
 
 
+def _is_reply_review(latest_draft: Any) -> Any:
+    """Disposition reply_review: DRAFTED with non-empty letter still awaiting Elise."""
+    return and_(
+        Thread.state == ThreadStateEnum.DRAFTED.value,
+        _has_letter_sql(latest_draft),
+        _draft_unanswered(latest_draft),
+    )
+
+
 def _needs_elise_action(latest_draft: Any) -> Any:
     """SQL: Needs Attention dispositions — letter review, offline action, or pipeline failure."""
     unanswered = _draft_unanswered(latest_draft)
@@ -1165,18 +1183,13 @@ def _needs_elise_action(latest_draft: Any) -> Any:
         Thread.state == ThreadStateEnum.REQUIRES_HUMAN.value,
         or_(no_draft, unanswered),
     )
-    reply_review = and_(
-        Thread.state == ThreadStateEnum.DRAFTED.value,
-        _has_letter_sql(latest_draft),
-        unanswered,
-    )
     action_no_draft = and_(
         Thread.state == ThreadStateEnum.DRAFTED.value,
         _no_letter_sql(latest_draft),
         or_(no_draft, unanswered),
         _is_actionable_operational_alert(),
     )
-    return or_(requires_human, reply_review, action_no_draft)
+    return or_(requires_human, _is_reply_review(latest_draft), action_no_draft)
 
 
 def _is_fyi_briefing(latest_draft: Any) -> Any:
