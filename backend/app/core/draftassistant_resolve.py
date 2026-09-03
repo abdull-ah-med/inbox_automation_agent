@@ -57,9 +57,7 @@ def is_cc_observer(
     local = mailbox.split("@", 1)[0]
     if local and local in body:
         return False
-    if owner_name and owner_name.strip() and owner_name.strip().lower() in body:
-        return False
-    return True
+    return not (owner_name and owner_name.strip() and owner_name.strip().lower() in body)
 
 
 def draftassistant_auto_close_decision(

@@ -16,9 +16,7 @@ depends_on: Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.execute(
-        sa.text("UPDATE threads SET state = 'RESOLVED' WHERE state = 'NO_ACTION'")
-    )
+    op.execute(sa.text("UPDATE threads SET state = 'RESOLVED' WHERE state = 'NO_ACTION'"))
 
 
 def downgrade() -> None:

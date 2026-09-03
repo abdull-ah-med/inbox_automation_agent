@@ -734,9 +734,7 @@ async def test_list_by_mailbox_reply_review_is_letter_only(db_session) -> None:
     )
     await db_session.commit()
 
-    items, _ = await thread_repo.list_by_mailbox(
-        db_session, SALES, state="REPLY_REVIEW", limit=25
-    )
+    items, _ = await thread_repo.list_by_mailbox(db_session, SALES, state="REPLY_REVIEW", limit=25)
     assert [row.id for row in items] == [t_letter.id]
     assert items[0].has_letter is True
     assert items[0].presentation is not None

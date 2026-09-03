@@ -378,13 +378,17 @@ async def test_manual_resolve_stores_resolve_snapshot(db_session) -> None:
     await db_session.commit()
 
     payload = (
-        await db_session.execute(
-            select(AuditEvent).where(
-                AuditEvent.conversation_id == thread.conversation_id,
-                AuditEvent.event_type == "thread.resolved.reviewer",
+        (
+            await db_session.execute(
+                select(AuditEvent).where(
+                    AuditEvent.conversation_id == thread.conversation_id,
+                    AuditEvent.event_type == "thread.resolved.reviewer",
+                )
             )
         )
-    ).scalar_one().payload
+        .scalar_one()
+        .payload
+    )
     snapshot = payload["resolve_snapshot"]
     assert snapshot["resolved_by"] == "elise"
     assert snapshot["resolution_reason"] == "manual"

@@ -141,7 +141,7 @@ class ThreadPresentation:
     resolution_summary: str | None = None
 
 
-def derive_disposition(inp: ThreadPolicyInput) -> DispositionKind:
+def derive_disposition(inp: ThreadPolicyInput) -> DispositionKind:  # noqa: PLR0911
     state = (inp.state or "").strip().upper()
     if state == ThreadStateEnum.SPAM.value:
         return DispositionKind.SPAM
@@ -187,11 +187,11 @@ def derive_presentation(inp: ThreadPolicyInput) -> ThreadPresentation:
     # Finished always means no open work, even if frozen triage said action needed.
     if is_finished or inp.draft_review_finished:
         open_work = False
-    elif in_needs_attention:
-        open_work = True
-    elif disposition == DispositionKind.FYI_BRIEFING:
-        open_work = True
-    elif inp.has_action_items is True:
+    elif (
+        in_needs_attention
+        or disposition == DispositionKind.FYI_BRIEFING
+        or inp.has_action_items is True
+    ):
         open_work = True
     elif inp.has_action_items is False:
         open_work = False

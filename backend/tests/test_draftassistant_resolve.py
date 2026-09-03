@@ -159,15 +159,7 @@ def test_action_items_never_auto_close() -> None:
 
 
 def test_finished_thread_reopens_only_when_new_inbound_has_action() -> None:
-    assert (
-        should_reopen_finished_thread(prior_state="RESOLVED", has_action_items=True) is True
-    )
-    assert (
-        should_reopen_finished_thread(prior_state="NO_ACTION", has_action_items=True) is True
-    )
-    assert (
-        should_reopen_finished_thread(prior_state="RESOLVED", has_action_items=False) is False
-    )
-    assert (
-        should_reopen_finished_thread(prior_state="DRAFTED", has_action_items=True) is False
-    )
+    assert should_reopen_finished_thread(prior_state="RESOLVED", has_action_items=True) is True
+    assert should_reopen_finished_thread(prior_state="NO_ACTION", has_action_items=True) is True
+    assert should_reopen_finished_thread(prior_state="RESOLVED", has_action_items=False) is False
+    assert should_reopen_finished_thread(prior_state="DRAFTED", has_action_items=True) is False

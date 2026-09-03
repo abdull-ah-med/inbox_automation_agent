@@ -65,7 +65,10 @@ async def _run(*, run_triage: object, run_draft: object) -> tuple[object, AsyncM
         patch("app.services.pipeline.service.triage_service.run_triage", new=run_triage),
         patch("app.services.pipeline.service.draft_service.run_draft", new=run_draft),
         patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
-        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
+            new=AsyncMock(return_value=None),
+        ),
         patch(_SET_OUTCOME, new=AsyncMock(return_value=None)) as set_outcome,
         _patch_embed(),
     ):
@@ -186,10 +189,20 @@ async def test_courtesy_close_skips_draft_and_writes_resolved() -> None:
     )
 
     with (
-        patch("app.services.pipeline.service.triage_service.run_triage", new=AsyncMock(side_effect=_run_triage)),
-        patch("app.services.pipeline.service.draft_service.run_draft", new=AsyncMock()) as run_draft,
-        patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()) as log_event,
-        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.pipeline.service.triage_service.run_triage",
+            new=AsyncMock(side_effect=_run_triage),
+        ),
+        patch(
+            "app.services.pipeline.service.draft_service.run_draft", new=AsyncMock()
+        ) as run_draft,
+        patch(
+            "app.services.pipeline.service.audit_service.log_event", new=AsyncMock()
+        ) as log_event,
+        patch(
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
+            new=AsyncMock(return_value=None),
+        ),
         patch(_SET_OUTCOME, new=AsyncMock(return_value=None)) as set_outcome,
         _patch_embed(),
     ):
@@ -303,7 +316,10 @@ async def test_thread_state_update_failure_does_not_crash_pipeline() -> None:
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
-        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
+        patch(
+            "app.services.pipeline.service.thread_repo.get_by_id_trusted",
+            new=AsyncMock(return_value=None),
+        ),
         patch(_SET_OUTCOME, new=AsyncMock(side_effect=RuntimeError("db down"))),
         _patch_embed(),
     ):

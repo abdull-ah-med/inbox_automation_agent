@@ -83,7 +83,11 @@ def provenance_from_events(events: list[Mapping[str, Any]]) -> dict[str, str | N
             continue
         if event_type not in _RESOLVE_MODES:
             continue
-        snapshot = payload.get("resolve_snapshot") if isinstance(payload.get("resolve_snapshot"), Mapping) else {}
+        snapshot = (
+            payload.get("resolve_snapshot")
+            if isinstance(payload.get("resolve_snapshot"), Mapping)
+            else {}
+        )
         resolved_by = "elise" if event_type == "thread.resolved.reviewer" else "draftassistant"
         if isinstance(snapshot.get("resolved_by"), str) and snapshot["resolved_by"]:
             resolved_by = str(snapshot["resolved_by"])

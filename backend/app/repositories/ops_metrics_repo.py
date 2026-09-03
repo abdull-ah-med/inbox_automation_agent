@@ -35,9 +35,7 @@ _AWAITING_STATES = (
     ThreadStateEnum.AWAITING_VENDOR.value,
     ThreadStateEnum.AWAITING_PARTNER.value,
 )
-_FILTERED_STATES = (
-    ThreadStateEnum.SPAM.value,
-)
+_FILTERED_STATES = (ThreadStateEnum.SPAM.value,)
 
 _SPAM_EVENTS: tuple[str, ...] = (
     TriageAuditEvent.SPAM_DISCARDED,
