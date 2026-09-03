@@ -34,12 +34,12 @@ const STATE_ITEMS = [
   { label: "New — not yet triaged", value: "NEW" },
   { label: "Awaiting action", value: "AWAITING_ACTION" },
   { label: "Stale", value: "STALE" },
-  { label: "Draft ready", value: "DRAFTED" },
+  { label: "Reply ready", value: "REPLY_REVIEW" },
+  { label: "Open FYI", value: "OPEN_FYI" },
   { label: "Needs human review", value: "REQUIRES_HUMAN" },
   { label: "Resolved", value: "RESOLVED" },
-  { label: "Spam / no action", value: "FILTERED" },
-  { label: "No action needed", value: "NO_ACTION" },
-  { label: "Spam", value: "SPAM" },
+  { label: "Recently resolved by DraftAssistant", value: "RECENTLY_RESOLVED_DRAFTASSISTANT" },
+  { label: "Spam", value: "FILTERED" },
 ] as const
 
 const URGENCY_ITEMS = [

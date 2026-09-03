@@ -3,7 +3,7 @@
 import Link from "next/link"
 
 import { EmptyState } from "@/components/empty-state"
-import { StatusBadge, stateLabel, stateTone, urgencyTone } from "@/components/status-badge"
+import { ThreadCardBadges } from "@/components/thread-card-parts"
 import { formatRelativeTime, inboxLabel } from "@/lib/design-tokens"
 import type { ThreadSummary } from "@/lib/types"
 
@@ -31,17 +31,7 @@ export const AttentionQueue = ({ threads }: { threads: ThreadSummary[] }) => {
               <span className="text-xs font-medium text-gray-500">
                 {inboxLabel(thread.mailbox_key)}
               </span>
-              <StatusBadge label={stateLabel(thread.state)} tone={stateTone(thread.state)} />
-              {thread.urgency ? (
-                <StatusBadge label={thread.urgency} tone={urgencyTone(thread.urgency)} />
-              ) : null}
-              {thread.triage?.is_internal ? <StatusBadge label="Internal" tone="blue" /> : null}
-              {thread.triage?.is_automated ? (
-                <StatusBadge label="Automated" tone="neutral" />
-              ) : null}
-              {thread.triage?.needs_context ? (
-                <StatusBadge label="Needs context" tone="amber" />
-              ) : null}
+              <ThreadCardBadges thread={thread} />
             </div>
             <p className="mt-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">
               {thread.subject || "(no subject)"}

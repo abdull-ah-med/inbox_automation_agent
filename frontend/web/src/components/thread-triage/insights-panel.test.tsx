@@ -89,4 +89,53 @@ describe("InsightsPanel resolve control", () => {
 
     expect(onMarkResolved).toHaveBeenCalledTimes(1)
   })
+
+  it("shows the disposition primary badge instead of raw Drafted", () => {
+    renderPanel({
+      ...baseThread,
+      presentation: {
+        ...baseThread.presentation!,
+        disposition: "fyi_briefing",
+        primary_badge: { kind: "disposition", label: "FYI" },
+        badges_now: [{ kind: "disposition", label: "FYI" }],
+      },
+    })
+    expect(screen.getByText("FYI")).toBeInTheDocument()
+    expect(screen.queryByText("Draft ready")).not.toBeInTheDocument()
+    expect(screen.queryByText("Drafted")).not.toBeInTheDocument()
+  })
+
+  it("labels inactive assessed urgency without claiming the thread is finished", () => {
+    renderWithProviders(
+      <InsightsPanel
+        thread={{
+          ...baseThread,
+          urgency: "CRITICAL",
+          presentation: {
+            ...baseThread.presentation!,
+            is_finished: false,
+            open_work: false,
+            in_needs_attention: false,
+            urgency_active: false,
+            urgency_assessed: "CRITICAL",
+          },
+        }}
+        teachingNote={null}
+        urgency="CRITICAL"
+        urgencyReason="Urgency bumped automatically: 3 similar alerts in 48h"
+        draftId="draft-1"
+        feedbackDone={false}
+        busy={false}
+        activity={[]}
+        resolvePending={false}
+        onMarkResolved={vi.fn()}
+        onUrgencySaved={() => undefined}
+      />,
+    )
+
+    expect(screen.getByText("CRITICAL")).toBeInTheDocument()
+    expect(screen.getByText(/inactive/i)).toBeInTheDocument()
+    expect(screen.getByText(/no longer drives priority/i)).toBeInTheDocument()
+    expect(screen.queryByText(/finished thread/i)).toBeNull()
+  })
 })

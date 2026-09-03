@@ -145,7 +145,7 @@ export const ResolutionBanner = ({
         />
         <div className="min-w-0 flex-1">
           <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
-            You marked this thread resolved
+            Resolved by Elise
           </p>
           <ManualResolveBody lines={manualLines} />
           {error ? (
@@ -180,6 +180,10 @@ export const ResolutionBanner = ({
     )
   }
 
+  const draftassistantSummary =
+    presentation?.resolution_summary?.trim() ||
+    "Courtesy close or no reply needed. Removed from Needs Attention."
+
   return (
     <div role="status" className={bannerShellClass}>
       <CircleCheck
@@ -188,10 +192,10 @@ export const ResolutionBanner = ({
       />
       <div className="min-w-0 flex-1">
         <p className="font-medium tracking-tight text-emerald-950 dark:text-emerald-50">
-          This thread was resolved automatically
+          Resolved by DraftAssistant
         </p>
         <div className={bannerBodyClass}>
-          <p>Removed from Needs Attention.</p>
+          <p>{draftassistantSummary}</p>
           {urgencyAssessed ? (
             <p>Assessed urgency was {urgencyAssessed}; it no longer drives priority.</p>
           ) : null}

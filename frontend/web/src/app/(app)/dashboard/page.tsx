@@ -74,7 +74,7 @@ export default function DashboardPage() {
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {data.total_awaiting} awaiting action · {data.total_stale} stale
             {totalFiltered > 0
-              ? ` · ${totalFiltered} filtered as spam/no action (hidden by default)`
+              ? ` · ${totalFiltered} filtered as spam (hidden by default)`
               : ""}
           </p>
         </div>
@@ -133,6 +133,29 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {(data.open_fyi?.length ?? 0) > 0 || (data.recently_resolved_by_draftassistant?.length ?? 0) > 0 ? (
+        <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Open FYI</CardTitle>
+              <CardDescription>Briefings with no reply to send. Not in Needs Attention.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AttentionQueue threads={data.open_fyi ?? []} />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Recently resolved by DraftAssistant</CardTitle>
+              <CardDescription>Auto-closed in the last 48 hours. Reopen if work is still open.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <AttentionQueue threads={data.recently_resolved_by_draftassistant ?? []} />
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
     </>
   )
 }

@@ -43,7 +43,8 @@ export const ThreadDetailHeader = ({ thread, messages }: ThreadDetailHeaderProps
             </p>
             {presentation && !presentation.urgency_active && presentation.urgency_assessed ? (
               <p className="text-muted-foreground mt-1 text-xs">
-                Assessed urgency {presentation.urgency_assessed} (inactive — finished thread)
+                Assessed urgency {presentation.urgency_assessed} (inactive — no longer drives
+                priority)
               </p>
             ) : null}
           </div>

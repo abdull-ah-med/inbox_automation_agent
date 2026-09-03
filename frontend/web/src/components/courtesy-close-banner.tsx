@@ -3,10 +3,13 @@ import { looksLikeCourtesyClose } from "@/lib/courtesy-close"
 export const CourtesyCloseBanner = ({
   state,
   lastInboundBody,
+  hidden = false,
 }: {
   state: string
   lastInboundBody: string | null
+  hidden?: boolean
 }) => {
+  if (hidden) return null
   if (state !== "DRAFTED") return null
   if (!lastInboundBody) return null
   if (!looksLikeCourtesyClose(lastInboundBody)) return null

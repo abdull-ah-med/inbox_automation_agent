@@ -108,6 +108,125 @@ describe("MailboxSummaryCard", () => {
     expect(screen.queryByText("No threads awaiting action right now.")).toBeNull()
   })
 
+  it("shows CRITICAL only from live Now badges, not raw stored urgency", () => {
+    renderCard(
+      mailbox({
+        recent_threads: [
+          thread("Your domain is now authenticated", {
+            id: "critical-live",
+            urgency: "CRITICAL",
+            presentation: {
+              is_finished: false,
+              open_work: true,
+              in_needs_attention: true,
+              urgency_active: true,
+              urgency_assessed: "CRITICAL",
+              suggest_resolve_default: false,
+              show_resolution_banner: false,
+              disposition: "action_no_draft",
+              primary_badge: { kind: "disposition", label: "Action needed" },
+              badges_now: [
+                { kind: "disposition", label: "Action needed" },
+                { kind: "urgency", label: "CRITICAL" },
+                { kind: "needs_context", label: "Needs context" },
+              ],
+              triage_history: {
+                has_action_items: false,
+                needs_context: false,
+                is_spam: false,
+              },
+            },
+          }),
+        ],
+      }),
+    )
+
+    expect(screen.getByText("Your domain is now authenticated")).toBeInTheDocument()
+    expect(screen.getByText("Action needed")).toBeInTheDocument()
+    expect(screen.getByText("CRITICAL")).toBeInTheDocument()
+    expect(screen.queryByText("Needs context")).toBeNull()
+  })
+
+  it("leads each preview with the subject, not a badge stack", () => {
+    renderCard(
+      mailbox({
+        recent_threads: [
+          thread("Follow up an DOT and non DOT proposal", {
+            id: "subject-first",
+            presentation: {
+              is_finished: false,
+              open_work: true,
+              in_needs_attention: true,
+              urgency_active: true,
+              urgency_assessed: "NORMAL",
+              suggest_resolve_default: false,
+              show_resolution_banner: false,
+              disposition: "reply_review",
+              primary_badge: { kind: "disposition", label: "Reply ready" },
+              badges_now: [
+                { kind: "disposition", label: "Reply ready" },
+                { kind: "urgency", label: "NORMAL" },
+                { kind: "needs_context", label: "Needs context" },
+                { kind: "internal", label: "Internal" },
+              ],
+              triage_history: {
+                has_action_items: true,
+                needs_context: true,
+                is_spam: false,
+              },
+            },
+          }),
+        ],
+      }),
+    )
+
+    const link = screen.getByRole("link", { name: "Review Follow up an DOT and non DOT proposal" })
+    expect(link.textContent).toMatch(/^Follow up an DOT and non DOT proposal/)
+    expect(screen.getByText("Reply ready")).toBeInTheDocument()
+    expect(screen.queryByText("NORMAL")).toBeNull()
+    expect(screen.queryByText("Needs context")).toBeNull()
+    expect(screen.queryByText("Internal")).toBeNull()
+  })
+
+  it("does not duplicate stale as a header chip when the stats row already shows it", () => {
+    renderCard()
+    // Stale lives once in the stats row filter — no second header StatusBadge.
+    expect(screen.getAllByRole("button", { name: "View 22 stale threads in Info" })).toHaveLength(1)
+  })
+
+  it("hides stored CRITICAL when presentation marks urgency inactive", () => {
+    renderCard(
+      mailbox({
+        recent_threads: [
+          thread("Your domain is now authenticated", {
+            id: "critical-inactive",
+            urgency: "CRITICAL",
+            presentation: {
+              is_finished: true,
+              open_work: false,
+              in_needs_attention: false,
+              urgency_active: false,
+              urgency_assessed: "CRITICAL",
+              suggest_resolve_default: false,
+              show_resolution_banner: true,
+              disposition: "resolved_draftassistant",
+              primary_badge: { kind: "disposition", label: "Resolved by DraftAssistant" },
+              badges_now: [{ kind: "disposition", label: "Resolved by DraftAssistant" }],
+              triage_history: {
+                has_action_items: false,
+                needs_context: false,
+                is_spam: false,
+              },
+            },
+          }),
+        ],
+      }),
+    )
+
+    expect(screen.getByText("Resolved by DraftAssistant")).toBeInTheDocument()
+    expect(screen.queryByText("CRITICAL")).toBeNull()
+  })
+
   it("shows empty-queue copy when ingested threads are not awaiting action", () => {
     renderCard(
       mailbox({
@@ -170,7 +289,7 @@ describe("MailboxSummaryCard", () => {
     expect(await screen.findByText("Newest ingested thread")).toBeInTheDocument()
 
     await user.click(
-      screen.getByRole("button", { name: "View 37 filtered as spam/no action in Info" }),
+      screen.getByRole("button", { name: "View 37 filtered as spam in Info" }),
     )
     expect(await screen.findByText("Discount blast")).toBeInTheDocument()
     expect(screen.queryByText("Newest ingested thread")).toBeNull()

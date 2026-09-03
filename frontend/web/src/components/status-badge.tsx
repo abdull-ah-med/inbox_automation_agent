@@ -1,7 +1,7 @@
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple" | "orange"
+type BadgeTone = "neutral" | "blue" | "green" | "amber" | "red" | "purple" | "orange" | "teal"
 
 const TONE_CLASS: Record<BadgeTone, string> = {
   neutral: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
@@ -11,6 +11,7 @@ const TONE_CLASS: Record<BadgeTone, string> = {
   red: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300",
   purple: "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300",
   orange: "bg-[#F97316]/15 text-[#F97316] dark:bg-[#F97316]/20 dark:text-[#F97316]",
+  teal: "bg-teal-100 text-teal-800 dark:bg-teal-950/40 dark:text-teal-300",
 }
 
 export const StatusBadge = ({
@@ -105,5 +106,45 @@ export const stateLabel = (state: string | null | undefined): string => {
       return "Resolved"
     default:
       return state ?? "—"
+  }
+}
+
+const DISPOSITION_LABEL: Record<string, string> = {
+  reply_review: "Reply ready",
+  action_no_draft: "Action needed",
+  fyi_briefing: "FYI",
+  waiting_on_them: "Waiting on them",
+  needs_human: "Needs human",
+  processing: "Processing",
+  resolved_draftassistant: "Resolved by DraftAssistant",
+  resolved_elise: "Resolved by Elise",
+  spam: "Spam",
+}
+
+export const dispositionLabel = (disposition: string | null | undefined): string => {
+  if (!disposition) return "—"
+  return DISPOSITION_LABEL[disposition] ?? disposition
+}
+
+export const dispositionTone = (disposition: string | null | undefined): BadgeTone => {
+  switch (disposition) {
+    case "resolved_draftassistant":
+    case "reply_review":
+      return "green"
+    case "resolved_elise":
+      return "teal"
+    case "action_no_draft":
+      return "amber"
+    case "fyi_briefing":
+    case "processing":
+      return "neutral"
+    case "waiting_on_them":
+      return "blue"
+    case "needs_human":
+      return "red"
+    case "spam":
+      return "orange"
+    default:
+      return "neutral"
   }
 }

@@ -92,6 +92,44 @@ function ThreadDetailPageContent() {
 
 type ThreadDetailData = Awaited<ReturnType<typeof api.threads.detail>>
 
+const ThreadDetailBanners = ({
+  threadId,
+  thread,
+  presentation,
+  messages,
+  activity,
+}: {
+  threadId: string
+  thread: ThreadDetailData["thread"]
+  presentation: ThreadDetailData["thread"]["presentation"]
+  messages: ThreadDetailData["messages"]
+  activity: ThreadDetailData["activity"]
+}) => {
+  const lastInbound = messages.toReversed().find((row) => row.direction === "inbound")
+  const hideCourtesyClose =
+    Boolean(presentation?.show_resolution_banner) ||
+    presentation?.disposition === "fyi_briefing" ||
+    presentation?.disposition === "resolved_draftassistant" ||
+    presentation?.disposition === "resolved_elise"
+
+  return (
+    <>
+      <ResolutionBanner
+        threadId={threadId}
+        presentation={presentation}
+        urgencyAssessed={presentation?.urgency_assessed ?? thread.urgency}
+        activity={activity ?? []}
+      />
+      <RecurrenceBanner threadId={threadId} activity={activity ?? []} />
+      <CourtesyCloseBanner
+        state={thread.state}
+        lastInboundBody={lastInbound?.body_text ?? null}
+        hidden={hideCourtesyClose}
+      />
+    </>
+  )
+}
+
 const ThreadDetailLoaded = ({
   threadId,
   originId,
@@ -121,7 +159,6 @@ const ThreadDetailLoaded = ({
   const presentation = thread.presentation
   const subject = thread.subject || "(no subject)"
   const showSentReply = thread.state === "RESOLVED" && sent_reply != null
-  const lastInbound = messages.toReversed().find((row) => row.direction === "inbound")
   const crumbItems = [
     { label: "Overview", href: "/dashboard" },
     {
@@ -139,14 +176,13 @@ const ThreadDetailLoaded = ({
 
       <ThreadDetailHeader thread={thread} messages={messages} />
 
-      <ResolutionBanner
+      <ThreadDetailBanners
         threadId={threadId}
+        thread={thread}
         presentation={presentation}
-        urgencyAssessed={presentation?.urgency_assessed ?? thread.urgency}
-        activity={activity ?? []}
+        messages={messages}
+        activity={activity}
       />
-      <RecurrenceBanner threadId={threadId} activity={activity ?? []} />
-      <CourtesyCloseBanner state={thread.state} lastInboundBody={lastInbound?.body_text ?? null} />
       <AssociatedThreadsList
         sourceThreadId={threadId}
         sourceSubject={subject}

@@ -168,10 +168,9 @@ describe("ResolutionBanner", () => {
     })
 
     const status = screen.getByRole("status")
-    expect(status).toHaveTextContent(/you marked this thread resolved/i)
+    expect(status).toHaveTextContent(/resolved by elise/i)
     expect(status).toHaveTextContent(/removed from needs attention/i)
     expect(status).toHaveTextContent(/actions taken: normal gmail alert/i)
-    expect(status.textContent?.match(/you marked this thread resolved/gi)).toHaveLength(1)
     expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
     expect(screen.getByRole("button", { name: "Mark thread still open" })).toBeInTheDocument()
   })
@@ -186,6 +185,43 @@ describe("ResolutionBanner", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent("Network down")
     })
-    expect(screen.getByRole("status")).toHaveTextContent(/resolved automatically/i)
+    expect(screen.getByRole("status")).toHaveTextContent(/resolved by draftassistant/i)
+  })
+
+  it("shows Resolved by DraftAssistant copy and the stored reason for NO_ACTION threads", () => {
+    renderBanner({
+      presentation: {
+        ...resolvedPresentation,
+        disposition: "resolved_draftassistant",
+        resolution_mode: "auto",
+        resolution_summary: "Courtesy close — sender thanked you; no reply needed.",
+      },
+    })
+    const status = screen.getByRole("status")
+    expect(status).toHaveTextContent(/resolved by draftassistant/i)
+    expect(status).toHaveTextContent(/courtesy close — sender thanked you; no reply needed/i)
+  })
+
+  it("shows Resolved by Elise copy for manual provenance", () => {
+    renderBanner({
+      presentation: {
+        ...resolvedPresentation,
+        disposition: "resolved_elise",
+        resolution_mode: "manual",
+      },
+      activity: [
+        {
+          title: "Marked resolved",
+          body: "You marked this thread resolved. Removed from Needs Attention. Actions taken: checked portal",
+          actor_kind: "elise",
+          event_type: "thread.resolved.reviewer",
+          timestamp: "2026-09-03T11:00:00Z",
+        },
+      ],
+    })
+    const status = screen.getByRole("status")
+    expect(status).toHaveTextContent(/resolved by elise/i)
+    expect(status).toHaveTextContent(/checked portal/i)
+    expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
   })
 })
