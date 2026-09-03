@@ -26,6 +26,7 @@ from app.models.db.audit_event import AuditEvent
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
+from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.dashboard import (
     BadgeNowView,
     ThreadPresentationView,
@@ -33,7 +34,6 @@ from app.models.schemas.dashboard import (
     TriageFlags,
     TriageHistoryView,
 )
-from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import audit_repo, draft_repo, message_repo
 from app.repositories.thread_list_helpers import (
@@ -1250,7 +1250,7 @@ async def list_needs_attention(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda latest_draft, now: _needs_elise_action(latest_draft),
+        match=lambda latest_draft, _now: _needs_elise_action(latest_draft),
         limit=limit,
         sort=sort,
     )
@@ -1402,7 +1402,7 @@ async def list_open_fyi(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda latest_draft, now: _is_fyi_briefing(latest_draft),
+        match=lambda latest_draft, _now: _is_fyi_briefing(latest_draft),
         limit=limit,
         sort="recent",
     )
@@ -1418,7 +1418,7 @@ async def list_recently_resolved_by_draftassistant(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda latest_draft, now: _draftassistant_resolved_recently(now),
+        match=lambda _latest_draft, now: _draftassistant_resolved_recently(now),
         limit=limit,
         sort="recent",
     )
@@ -1465,9 +1465,7 @@ async def aggregate_overview(
             func.count(case((and_(needs_elise, Thread.urgency == "NORMAL"), 1))).label(
                 "urgency_normal"
             ),
-            func.count(case((and_(needs_elise, Thread.urgency == "LOW"), 1))).label(
-                "urgency_low"
-            ),
+            func.count(case((and_(needs_elise, Thread.urgency == "LOW"), 1))).label("urgency_low"),
         )
         .outerjoin(
             latest_draft,

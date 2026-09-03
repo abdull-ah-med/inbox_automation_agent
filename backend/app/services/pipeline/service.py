@@ -29,7 +29,6 @@ from app.models.schemas.graph import IngestResultSchema
 from app.repositories import (
     draft_repo,
     message_repo,
-    sent_reply_repo,
     skill_repo,
     thread_repo,
 )

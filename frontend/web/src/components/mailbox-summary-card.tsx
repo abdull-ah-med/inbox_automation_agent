@@ -195,7 +195,7 @@ export const MailboxSummaryCard = ({ mailbox }: { mailbox: MailboxOverview }) =>
               ))}
             </div>
           ) : previewThreads.length ? (
-            <ul className="divide-y divide-border/60">
+            <ul className="divide-border/60 divide-y">
               {previewThreads.map((item) => {
                 const signals = mailboxPreviewSignals(item)
                 return (
@@ -206,7 +206,7 @@ export const MailboxSummaryCard = ({ mailbox }: { mailbox: MailboxOverview }) =>
                       tabIndex={0}
                       className="focus-visible:ring-ring pointer-events-auto block min-w-0 cursor-pointer rounded-sm no-underline outline-none focus-visible:ring-2"
                     >
-                      <p className="text-card-foreground truncate text-sm font-medium leading-snug">
+                      <p className="text-card-foreground truncate text-sm leading-snug font-medium">
                         {item.subject || "(no subject)"}
                       </p>
                       <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">

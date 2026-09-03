@@ -288,9 +288,7 @@ describe("MailboxSummaryCard", () => {
     await user.click(screen.getByRole("button", { name: "View all 98 threads in Info" }))
     expect(await screen.findByText("Newest ingested thread")).toBeInTheDocument()
 
-    await user.click(
-      screen.getByRole("button", { name: "View 37 filtered as spam in Info" }),
-    )
+    await user.click(screen.getByRole("button", { name: "View 37 filtered as spam in Info" }))
     expect(await screen.findByText("Discount blast")).toBeInTheDocument()
     expect(screen.queryByText("Newest ingested thread")).toBeNull()
   })

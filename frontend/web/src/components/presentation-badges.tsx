@@ -1,4 +1,9 @@
-import { StatusBadge, dispositionTone, urgencyTone, stateToneFromLabel } from "@/components/status-badge"
+import {
+  StatusBadge,
+  dispositionTone,
+  urgencyTone,
+  stateToneFromLabel,
+} from "@/components/status-badge"
 
 const KIND_TONE: Record<
   string,
