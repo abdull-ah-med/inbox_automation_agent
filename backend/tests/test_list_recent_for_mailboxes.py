@@ -52,7 +52,7 @@ async def _seed_card_preview(session) -> None:
             mailbox=BUSY,
             conversation_id=f"alpha-{i:02d}",
             subject=f"alpha-{i:02d}",
-            state=ThreadStateEnum.DRAFTED.value,
+            state=ThreadStateEnum.REQUIRES_HUMAN.value,
             last_message_at=BASE + timedelta(hours=i),
         )
         for i in range(BUSY_COUNT)
@@ -62,7 +62,7 @@ async def _seed_card_preview(session) -> None:
             mailbox=QUIET,
             conversation_id="zeta-open",
             subject="zeta-open",
-            state=ThreadStateEnum.DRAFTED.value,
+            state=ThreadStateEnum.REQUIRES_HUMAN.value,
             last_message_at=datetime(2026, 8, 25, 12, 0, tzinfo=UTC),
         )
     )
@@ -83,11 +83,11 @@ async def _seed_card_preview(session) -> None:
 async def test_quiet_mailbox_keeps_its_awaiting_preview_when_busy_mailbox_sorts_first(
     db_session,
 ) -> None:
-    """30 DRAFTED on aaa@ + 1 DRAFTED and 1 newer RESOLVED on zzz@.
+    """30 REQUIRES_HUMAN on aaa@ + 1 open and 1 newer RESOLVED on zzz@.
 
     Card preview per mailbox is 3. zzz must still show zeta-open (the only
     open work), not an empty list and not the resolved sibling.
-    aaa must show the three newest DRAFTED subjects: alpha-29, 28, 27.
+    aaa must show the three newest subjects: alpha-29, 28, 27.
     """
     await _seed_card_preview(db_session)
 

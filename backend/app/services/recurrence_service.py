@@ -226,6 +226,17 @@ async def apply_recurrence_escalation(
     if thread.state in _FINISHED:
         return assessed_urgency
 
+    triage = await audit_repo.get_latest_triage_flags(
+        session, thread.conversation_id, mailbox=thread.mailbox
+    )
+    if triage is not None and triage.has_action_items is False:
+        logger.info(
+            "recurrence_skipped_informational",
+            thread_id=str(thread_id),
+            mailbox=mailbox,
+        )
+        return assessed_urgency
+
     fingerprint = await _ensure_fingerprint(session, thread)
     if fingerprint and await alert_fingerprint_feedback_repo.is_suppressed(
         session, mailbox=thread.mailbox, fingerprint=fingerprint
@@ -256,7 +267,18 @@ async def apply_recurrence_escalation(
     if applied is None:
         return assessed_urgency
 
-    pending = [row for row in members if row.urgency != applied]
+    actionable: list[thread_repo.ThreadSchema] = []
+    for row in members:
+        member_triage = await audit_repo.get_latest_triage_flags(
+            session, row.conversation_id, mailbox=row.mailbox
+        )
+        if member_triage is not None and member_triage.has_action_items is False:
+            continue
+        actionable.append(row)
+    if not actionable:
+        return assessed_urgency
+
+    pending = [row for row in actionable if row.urgency != applied]
     if not pending:
         return applied
 

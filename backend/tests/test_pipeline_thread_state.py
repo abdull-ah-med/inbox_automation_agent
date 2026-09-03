@@ -65,6 +65,7 @@ async def _run(*, run_triage: object, run_draft: object) -> tuple[object, AsyncM
         patch("app.services.pipeline.service.triage_service.run_triage", new=run_triage),
         patch("app.services.pipeline.service.draft_service.run_draft", new=run_draft),
         patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
+        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
         patch(_SET_OUTCOME, new=AsyncMock(return_value=None)) as set_outcome,
         _patch_embed(),
     ):
@@ -142,6 +143,73 @@ async def test_no_action_outcome_still_persists_drafted_briefing() -> None:
     states = [call.kwargs["state"] for call in set_outcome.await_args_list]
     assert "NO_ACTION" not in states
     assert "DRAFTED" in states
+
+
+@pytest.mark.asyncio
+async def test_courtesy_close_skips_draft_and_writes_resolved() -> None:
+    """Courtesy close writes RESOLVED and skips letter generation."""
+
+    async def _run_triage(state: EmailTriageState, **_: object) -> EmailTriageState:
+        state.triage = TriageResultSchema(
+            is_spam=False,
+            has_action_items=False,
+            action_items_summary=None,
+            needs_context=False,
+            draft_needed=False,
+        )
+        state.draft_status = "PENDING"
+        return state
+
+    courtesy = EmailMessageSchema(
+        message_id="m1",
+        conversation_id="c1",
+        mailbox="elise@example.com",
+        sender="olivia@client.com",
+        subject="Re: Friday walkthrough",
+        body_text="Sounds good, thanks! Let me know if you're unable to join Friday.",
+        received_at=datetime(2026, 7, 10, tzinfo=UTC),
+        direction=EmailDirectionEnum.INBOUND,
+        to_recipients=["elise@example.com"],
+    )
+    context = ThreadContextSchema(
+        conversation_id="c1",
+        mailbox=courtesy.mailbox,
+        subject=courtesy.subject,
+        messages=[courtesy],
+    )
+    ingest = IngestResultSchema(
+        message_id="m1",
+        status="ingested",
+        thread_id=_THREAD_ID,
+        conversation_id="c1",
+        thread_context=context,
+    )
+
+    with (
+        patch("app.services.pipeline.service.triage_service.run_triage", new=AsyncMock(side_effect=_run_triage)),
+        patch("app.services.pipeline.service.draft_service.run_draft", new=AsyncMock()) as run_draft,
+        patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()) as log_event,
+        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
+        patch(_SET_OUTCOME, new=AsyncMock(return_value=None)) as set_outcome,
+        _patch_embed(),
+    ):
+        state = await pipeline_service.run_after_ingest(
+            session=AsyncMock(),
+            redis=AsyncMock(),
+            settings=Settings(environment="local"),
+            client=AsyncMock(),
+            openai_client=AsyncMock(),
+            ingest_result=ingest,
+        )
+
+    run_draft.assert_not_awaited()
+    states = [call.kwargs["state"] for call in set_outcome.await_args_list]
+    assert "RESOLVED" in states
+    assert "NO_ACTION" not in states
+    assert "DRAFTED" not in states
+    event_types = [call.kwargs.get("event_type") for call in log_event.await_args_list]
+    assert "thread.resolved.draftassistant" in event_types
+    assert state.draft_status == "SKIPPED"
 
 
 @pytest.mark.asyncio
@@ -235,6 +303,7 @@ async def test_thread_state_update_failure_does_not_crash_pipeline() -> None:
             new=AsyncMock(side_effect=_run_draft),
         ),
         patch("app.services.pipeline.service.audit_service.log_event", new=AsyncMock()),
+        patch("app.services.pipeline.service.thread_repo.get_by_id_trusted", new=AsyncMock(return_value=None)),
         patch(_SET_OUTCOME, new=AsyncMock(side_effect=RuntimeError("db down"))),
         _patch_embed(),
     ):

@@ -184,6 +184,71 @@ async def test_second_fingerprint_thread_floors_both_high(db_session) -> None:
 
 
 @pytest.mark.asyncio
+async def test_informational_automated_cluster_does_not_floor_urgency(db_session) -> None:
+    """Domain-auth style repeats: triage has_action_items=False → no CRITICAL bump."""
+    from app.models.db.audit_event import AuditEvent
+
+    subject = "Your domain is now authenticated"
+    thread_a = _thread(
+        conversation_id="domain-a", subject=subject, last_message_at=T0, urgency="LOW"
+    )
+    thread_b = _thread(
+        conversation_id="domain-b", subject=subject, last_message_at=T_B, urgency="LOW"
+    )
+    thread_c = _thread(
+        conversation_id="domain-c", subject=subject, last_message_at=T_C, urgency="LOW"
+    )
+    await _persist(
+        db_session,
+        thread_a,
+        thread_b,
+        thread_c,
+        _message(thread_a, received_at=T0),
+        _message(thread_b, received_at=T_B),
+        _message(thread_c, received_at=T_C),
+        _draft(thread_a, created_at=T0),
+        _draft(thread_b, created_at=T_B),
+        _draft(thread_c, created_at=T_C),
+        AuditEvent(
+            event_type="triage.no_action_discarded",
+            conversation_id=thread_a.conversation_id,
+            mailbox=SALES,
+            payload={"has_action_items": False, "is_automated": True},
+            actor="system",
+        ),
+        AuditEvent(
+            event_type="triage.no_action_discarded",
+            conversation_id=thread_b.conversation_id,
+            mailbox=SALES,
+            payload={"has_action_items": False, "is_automated": True},
+            actor="system",
+        ),
+        AuditEvent(
+            event_type="triage.no_action_discarded",
+            conversation_id=thread_c.conversation_id,
+            mailbox=SALES,
+            payload={"has_action_items": False, "is_automated": True},
+            actor="system",
+        ),
+    )
+    await db_session.commit()
+
+    await _escalate(db_session, thread_a, assessed="LOW", now=T0)
+    await _escalate(db_session, thread_b, assessed="LOW", now=T_B)
+    applied_c = await _escalate(db_session, thread_c, assessed="LOW", now=T_C)
+    await db_session.commit()
+
+    rows = [
+        await thread_repo.get_by_id(db_session, thread_a.id, TenantScope.single(thread_a.mailbox)),
+        await thread_repo.get_by_id(db_session, thread_b.id, TenantScope.single(thread_b.mailbox)),
+        await thread_repo.get_by_id(db_session, thread_c.id, TenantScope.single(thread_c.mailbox)),
+    ]
+    assert applied_c == "LOW"
+    assert [row.urgency for row in rows] == ["LOW", "LOW", "LOW"]
+    assert all(row is not None and row.urgency_reason is None for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_third_fingerprint_thread_within_48h_floors_all_critical(db_session) -> None:
     thread_a = _thread(conversation_id="alert-a", subject=DISK_90, last_message_at=T0)
     thread_b = _thread(conversation_id="alert-b", subject=DISK_90, last_message_at=T_B)

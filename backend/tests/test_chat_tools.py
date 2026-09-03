@@ -731,7 +731,10 @@ def test_overview_search_result_uses_dashboard_source() -> None:
 @pytest.mark.db
 @pytest.mark.asyncio
 async def test_get_overview_returns_hand_counted_mailbox_stats(db_session) -> None:
-    """2 open sales + 1 resolved sales + 1 open CR. Awaiting is the 3 open rows."""
+    """2 open sales + 1 resolved sales + 1 FYI CR (DRAFTED, no draft).
+
+    Awaiting is the 2 REQUIRES_HUMAN sales rows; urgency bar counts only those.
+    """
     from app.models.db.thread import Thread
     from app.models.schemas.email import ThreadStateEnum
     from app.services.chat_tools import execute_chat_tool
@@ -796,11 +799,11 @@ async def test_get_overview_returns_hand_counted_mailbox_stats(db_session) -> No
     assert "mailbox: sales@example.com" in result.overview
     assert "threads: 3" in result.overview
     assert "awaiting_action: 2" in result.overview
-    assert "urgency: HIGH=2 LOW=1" in result.overview
+    assert "urgency: HIGH=2" in result.overview
     assert "mailbox: cr@example.com" in result.overview
     assert "threads: 1" in result.overview
-    assert "awaiting_action: 1" in result.overview
-    assert "urgency: NORMAL=1" in result.overview
+    assert "awaiting_action: 0" in result.overview
+    assert "urgency: none" in result.overview
 
     scoped = await execute_chat_tool(
         db_session,

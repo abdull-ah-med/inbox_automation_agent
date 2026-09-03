@@ -30,6 +30,24 @@ def test_olivia_courtesy_close_is_no_action_discarded() -> None:
     assert outcome == "no_action_discarded"
 
 
+def test_cc_observer_birthday_is_no_action_discarded() -> None:
+    has_action, outcome = _outcome_for("cc_observer_birthday.json")
+    assert has_action is False
+    assert outcome == "no_action_discarded"
+
+
+def test_daily_drivers_action_needs_action() -> None:
+    has_action, outcome = _outcome_for("daily_drivers_action.json")
+    assert has_action is True
+    assert outcome == "action_needed"
+
+
+def test_method_lead_cc_needs_action() -> None:
+    has_action, outcome = _outcome_for("method_lead_cc.json")
+    assert has_action is True
+    assert outcome == "action_needed"
+
+
 def test_billing_ask_still_needs_action() -> None:
     has_action, outcome = _outcome_for("samplelab_harmeyer_rebilling.json")
     assert has_action is True

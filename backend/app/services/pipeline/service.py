@@ -14,11 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.exceptions import AuditError, DraftGenerationError
+from app.core.draftassistant_resolve import (
+    build_resolve_snapshot,
+    draftassistant_auto_close_decision,
+    should_reopen_finished_thread,
+)
 from app.core.tenant_scope import TenantScope
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.draft import DraftSchema
-from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
+from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.repositories import (
@@ -332,6 +337,93 @@ async def _post_slack_card_after_commit(
     return state
 
 
+async def _reopen_finished_if_action_needed(
+    session: AsyncSession,
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID | None,
+) -> None:
+    if thread_id is None or state.triage is None:
+        return
+    try:
+        prior = await thread_repo.get_by_id_trusted(session, thread_id)
+        if prior is None:
+            return
+        if not should_reopen_finished_thread(
+            prior_state=prior.state,
+            has_action_items=state.triage.has_action_items,
+        ):
+            return
+        await thread_repo.set_thread_outcome(
+            session,
+            thread_id,
+            state=ThreadStateEnum.DRAFTED.value,
+        )
+        await _safe_audit(
+            session,
+            state=state,
+            event_type="thread.reopened.inbound_followup",
+            payload={
+                "prior_state": prior.state,
+                "message_id": state.original_email.message_id,
+                "human": {
+                    "title": "Reopened after new inbound",
+                    "body": "New inbound has action items. Thread is open again.",
+                    "actor_kind": "agent",
+                },
+            },
+        )
+    except Exception:
+        logger.warning("reopen_finished_lookup_failed", thread_id=str(thread_id))
+
+
+async def _apply_draftassistant_auto_resolve(
+    session: AsyncSession,
+    *,
+    state: EmailTriageState,
+    thread_id: uuid.UUID | None,
+    settings: Settings,
+) -> EmailTriageState | None:
+    if thread_id is None:
+        return None
+    owner = settings.owner_for_mailbox(state.original_email.mailbox)
+    decision = draftassistant_auto_close_decision(state, owner_name=owner)
+    if decision is None:
+        return None
+    await thread_repo.set_thread_outcome(
+        session,
+        thread_id,
+        state=ThreadStateEnum.RESOLVED.value,
+    )
+    snapshot = build_resolve_snapshot(
+        resolved_by="draftassistant",
+        resolution_reason=decision.reason,
+        disposition_at_resolve="resolved_draftassistant",
+        had_draft=False,
+        has_action_items=False,
+        draft_needed=False,
+        confidence_tier=decision.confidence_tier,
+    )
+    await _safe_audit(
+        session,
+        state=state,
+        event_type="thread.resolved.draftassistant",
+        payload={
+            "resolution_reason": decision.reason,
+            "resolution_summary": decision.summary,
+            "resolve_snapshot": snapshot,
+            "human": {
+                "title": "Resolved by DraftAssistant",
+                "body": decision.summary,
+                "actor_kind": "agent",
+            },
+        },
+    )
+    state.draft_status = "SKIPPED"
+    state.slack_delivery = "not_required"
+    return state
+
+
 async def run_after_ingest(
     *,
     session: AsyncSession,
@@ -393,6 +485,28 @@ async def run_after_ingest(
         payload=_audit_payload(state),
     )
     await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
+    await _reopen_finished_if_action_needed(
+        session,
+        state=state,
+        thread_id=parsed_thread_id,
+    )
+    draftassistant_closed = await _apply_draftassistant_auto_resolve(
+        session,
+        state=state,
+        thread_id=parsed_thread_id,
+        settings=settings,
+    )
+    if draftassistant_closed is not None:
+        from app.core.dependencies import openai_client_from_settings
+
+        embed_client = openai_client or openai_client_from_settings(settings)
+        await _embed_non_spam_safe(
+            session,
+            state=draftassistant_closed,
+            openai_client=embed_client,
+            settings=settings,
+        )
+        return draftassistant_closed
 
     from app.core.dependencies import openai_client_from_settings
     from app.db.session import get_session_factory
@@ -1145,30 +1259,6 @@ async def _run_phased_post_ingest(
                     tip = max(rows, key=lambda row: row.received_at) if rows else None
                     is_meeting = tip is not None and sent_reply_service.is_meeting_message(tip)
                     skip_briefing_extras = is_meeting or not has_inbound
-            if not skip_letter:
-                prior = await thread_repo.get_by_id_trusted(session, parsed_thread_id)
-                prior_sent = await sent_reply_repo.get_by_thread(session, parsed_thread_id)
-                if (
-                    prior is not None
-                    and prior.state
-                    in {
-                        "RESOLVED",
-                        "NO_ACTION",
-                    }
-                    and prior_sent is not None
-                ):
-                    await _safe_audit(
-                        session,
-                        state=state,
-                        event_type="thread.reopened.inbound_followup",
-                        payload={
-                            "prior_state": prior.state,
-                            "sent_reply_id": str(prior_sent.id),
-                            "message_id": ingest_result.message_id,
-                        },
-                    )
-                    if session.in_transaction():
-                        await session.commit()
 
     state = await _phased_triage_summarize(
         state=state,
@@ -1179,6 +1269,28 @@ async def _run_phased_post_ingest(
         parsed_thread_id=parsed_thread_id,
         apply_thread_state=not skip_letter,
     )
+
+    if parsed_thread_id is not None:
+        async with session_factory() as session, session.begin():
+            await _reopen_finished_if_action_needed(
+                session,
+                state=state,
+                thread_id=parsed_thread_id,
+            )
+            draftassistant_closed = await _apply_draftassistant_auto_resolve(
+                session,
+                state=state,
+                thread_id=parsed_thread_id,
+                settings=settings,
+            )
+        if draftassistant_closed is not None:
+            await _embed_in_fresh_session(
+                state=draftassistant_closed,
+                openai_client=openai_client,
+                settings=settings,
+                session_factory=session_factory,
+            )
+            return draftassistant_closed
 
     skip_sonnet = skip_letter and (
         has_teaching_note

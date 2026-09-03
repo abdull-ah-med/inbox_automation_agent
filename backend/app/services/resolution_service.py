@@ -12,9 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.exceptions import ThreadNotFoundError, ThreadStateError
+from app.core.draftassistant_resolve import (
+    REOPEN_ACTION_FINGERPRINT,
+    RESOLUTION_SUMMARIES,
+    build_resolve_snapshot,
+    restore_disposition_from_snapshot,
+)
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
-from app.repositories import message_repo, thread_repo
+from app.repositories import audit_repo, message_repo, thread_repo
 from app.services import audit_service
 from app.services.workflow_extraction_service import maybe_extract_workflow
 
@@ -87,6 +93,14 @@ async def _record_resolve_capture(
         urgency=thread.urgency,
         already_resolved=already_resolved,
     )
+    snapshot = build_resolve_snapshot(
+        resolved_by="elise",
+        resolution_reason="manual",
+        disposition_at_resolve="resolved_elise",
+        had_draft=False,
+        actions_taken=resolved_actions,
+        involved=involved,
+    )
     try:
         await audit_service.log_event(
             session,
@@ -98,6 +112,9 @@ async def _record_resolve_capture(
                 "actions_taken": resolved_actions,
                 "involved": involved,
                 "already_resolved": already_resolved,
+                "resolution_reason": "manual",
+                "resolution_summary": RESOLUTION_SUMMARIES["manual"],
+                "resolve_snapshot": snapshot,
                 "human": {
                     "title": "Marked resolved",
                     "body": body,
@@ -195,8 +212,20 @@ async def apply_resolution_feedback(
             ThreadStateEnum.NO_ACTION.value,
         }:
             raise ThreadStateError("Thread is not finished; cannot reopen")
+        snapshot = await audit_repo.get_latest_resolve_snapshot(
+            session,
+            mailbox=thread.mailbox,
+            conversation_id=thread.conversation_id,
+        )
+        restore = restore_disposition_from_snapshot(snapshot)
         new_state = ThreadStateEnum.DRAFTED.value
         await thread_repo.set_thread_outcome(session, thread_id, state=new_state)
+        if restore == "action_no_draft" and not thread.alert_fingerprint:
+            await thread_repo.set_alert_fingerprint(
+                session,
+                thread_id,
+                REOPEN_ACTION_FINGERPRINT,
+            )
         body = "Reopened after your feedback. Back in Needs Attention when a draft awaits review."
         if note and note.strip():
             body = f"{body} Note: {note.strip()}"
@@ -209,6 +238,7 @@ async def apply_resolution_feedback(
                 payload={
                     "previous_state": thread.state,
                     "note": note,
+                    "restore_disposition": restore,
                     "human": {
                         "title": "Reopened after feedback",
                         "body": body,

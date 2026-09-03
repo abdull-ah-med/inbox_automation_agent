@@ -18,6 +18,7 @@ class NarrativeEntry:
 
 
 _FALLBACK_TITLES: dict[str, str] = {
+    "thread.resolved.draftassistant": "Resolved by DraftAssistant",
     "thread.resolved.sent_reply_detected": "Resolved from sent reply",
     "thread.resolved.closing_mail": "Resolved from closing mail",
     "thread.resolved.reviewer": "Marked resolved",
@@ -34,7 +35,9 @@ _RESOLVE_MODES: dict[str, Literal["auto", "manual"]] = {
     "thread.resolved.reviewer": "manual",
     "thread.resolved.sent_reply_detected": "auto",
     "thread.resolved.closing_mail": "auto",
+    "thread.resolved.draftassistant": "auto",
     "thread.outcome.closing_inbound": "auto",
+    "thread.outcome.no_action": "auto",
 }
 _REOPEN_EVENTS = frozenset(
     {
@@ -56,6 +59,43 @@ def resolution_mode_from_events(
         elif event_type in _RESOLVE_MODES:
             mode = _RESOLVE_MODES[event_type]
     return mode
+
+
+def provenance_from_events(events: list[Mapping[str, Any]]) -> dict[str, str | None]:
+    """Latest resolve/reopen snapshot fields for presentation."""
+    out: dict[str, str | None] = {
+        "resolved_by": None,
+        "resolution_reason": None,
+        "resolution_summary": None,
+        "forced_disposition": None,
+    }
+    for row in events:
+        event_type = str(row.get("event_type") or row.get("event") or "")
+        payload = row.get("payload") if isinstance(row.get("payload"), Mapping) else {}
+        if event_type in _REOPEN_EVENTS:
+            restore = payload.get("restore_disposition")
+            out = {
+                "resolved_by": None,
+                "resolution_reason": None,
+                "resolution_summary": None,
+                "forced_disposition": str(restore) if restore else None,
+            }
+            continue
+        if event_type not in _RESOLVE_MODES:
+            continue
+        snapshot = payload.get("resolve_snapshot") if isinstance(payload.get("resolve_snapshot"), Mapping) else {}
+        resolved_by = "elise" if event_type == "thread.resolved.reviewer" else "draftassistant"
+        if isinstance(snapshot.get("resolved_by"), str) and snapshot["resolved_by"]:
+            resolved_by = str(snapshot["resolved_by"])
+        reason = snapshot.get("resolution_reason") or payload.get("resolution_reason")
+        summary = snapshot.get("resolution_summary") or payload.get("resolution_summary")
+        out = {
+            "resolved_by": resolved_by,
+            "resolution_reason": str(reason) if reason else None,
+            "resolution_summary": str(summary) if summary else None,
+            "forced_disposition": None,
+        }
+    return out
 
 
 def _fallback_body(event_type: str, payload: Mapping[str, Any]) -> str:

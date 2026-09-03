@@ -71,6 +71,14 @@ async def test_dashboard_overview_assembles_configured_mailboxes() -> None:
             AsyncMock(return_value=[]),
         ),
         patch(
+            "app.services.dashboard_service.thread_repo.list_open_fyi",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.dashboard_service.thread_repo.list_recently_resolved_by_draftassistant",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
             "app.services.dashboard_service.audit_repo.list_recent",
             AsyncMock(
                 return_value=[

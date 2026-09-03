@@ -108,6 +108,119 @@ async def triage_flags_by_conversations(
     return out
 
 
+_RESOLVE_PROVENANCE_EVENTS = (
+    "thread.resolved.reviewer",
+    "thread.resolved.sent_reply_detected",
+    "thread.resolved.closing_mail",
+    "thread.resolved.draftassistant",
+    "thread.outcome.closing_inbound",
+    "thread.outcome.no_action",
+    "thread.reopened.resolution_feedback",
+    "thread.reopened.inbound_followup",
+)
+
+_ELISE_RESOLVE_EVENTS = frozenset({"thread.resolved.reviewer"})
+_REOPEN_PROVENANCE_EVENTS = frozenset(
+    {
+        "thread.reopened.resolution_feedback",
+        "thread.reopened.inbound_followup",
+    }
+)
+
+
+async def resolution_provenance_by_conversations(
+    session: AsyncSession,
+    pairs: list[tuple[str, str]],
+) -> dict[tuple[str, str], dict[str, str | None]]:
+    """Latest resolve provenance keyed by ``(mailbox, conversation_id)``."""
+    if not pairs:
+        return {}
+    mailboxes = sorted({mailbox for mailbox, _ in pairs})
+    conversation_ids = sorted({cid for _, cid in pairs})
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.mailbox.in_(mailboxes),
+            AuditEvent.conversation_id.in_(conversation_ids),
+            AuditEvent.event_type.in_(_RESOLVE_PROVENANCE_EVENTS),
+        )
+        .order_by(
+            AuditEvent.mailbox,
+            AuditEvent.conversation_id,
+            AuditEvent.created_at.asc(),
+        )
+    )
+    result = await session.execute(stmt)
+    wanted = set(pairs)
+    latest: dict[tuple[str, str], dict[str, str | None]] = {}
+    for event in result.scalars().all():
+        key = (event.mailbox, event.conversation_id)
+        if key not in wanted:
+            continue
+        if event.event_type in _REOPEN_PROVENANCE_EVENTS:
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            restore = payload.get("restore_disposition")
+            latest[key] = {
+                "resolved_by": None,
+                "resolution_reason": None,
+                "resolution_summary": None,
+                "forced_disposition": str(restore) if restore else None,
+            }
+            continue
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        snapshot = payload.get("resolve_snapshot")
+        snapshot_dict = snapshot if isinstance(snapshot, dict) else {}
+        resolved_by = "elise" if event.event_type in _ELISE_RESOLVE_EVENTS else "draftassistant"
+        if isinstance(snapshot_dict.get("resolved_by"), str) and snapshot_dict["resolved_by"]:
+            resolved_by = str(snapshot_dict["resolved_by"])
+        reason = snapshot_dict.get("resolution_reason") or payload.get("resolution_reason")
+        summary = snapshot_dict.get("resolution_summary") or payload.get("resolution_summary")
+        latest[key] = {
+            "resolved_by": resolved_by,
+            "resolution_reason": str(reason) if reason else None,
+            "resolution_summary": str(summary) if summary else None,
+            "forced_disposition": None,
+        }
+    return latest
+
+
+async def get_latest_resolve_snapshot(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    conversation_id: str,
+) -> dict[str, Any] | None:
+    """Latest DraftAssistant/Elise resolve snapshot for reopen restore."""
+    stmt = (
+        select(AuditEvent)
+        .where(
+            AuditEvent.mailbox == mailbox,
+            AuditEvent.conversation_id == conversation_id,
+            AuditEvent.event_type.in_(
+                (
+                    "thread.resolved.reviewer",
+                    "thread.resolved.draftassistant",
+                    "thread.resolved.sent_reply_detected",
+                    "thread.resolved.closing_mail",
+                    "thread.outcome.closing_inbound",
+                    "thread.outcome.no_action",
+                )
+            ),
+        )
+        .order_by(AuditEvent.created_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    event = result.scalar_one_or_none()
+    if event is None:
+        return None
+    payload = event.payload if isinstance(event.payload, dict) else {}
+    snapshot = payload.get("resolve_snapshot")
+    if isinstance(snapshot, dict):
+        return snapshot
+    return None
+
+
 async def create_audit_event(
     session: AsyncSession,
     *,

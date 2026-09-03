@@ -25,6 +25,7 @@ import pytest
 
 from app.core.tenant_scope import TenantScope
 from app.models.db.draft import Draft
+from app.models.db.message import Message
 from app.models.db.thread import Thread
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import thread_repo
@@ -320,8 +321,8 @@ async def test_list_by_mailbox_stale_is_old_needs_attention_only(db_session) -> 
 
 
 @pytest.mark.asyncio
-async def test_list_by_mailbox_filtered_is_spam_and_no_action(db_session) -> None:
-    """`state=FILTERED` is the dashboard spam/no-action bucket, not a stored state."""
+async def test_list_by_mailbox_filtered_is_spam_only(db_session) -> None:
+    """`state=FILTERED` is spam only — NO_ACTION is an DraftAssistant resolve, not filtered."""
     now = datetime.now(UTC)
     t_spam = _thread(
         mailbox=SALES,
@@ -356,7 +357,7 @@ async def test_list_by_mailbox_filtered_is_spam_and_no_action(db_session) -> Non
 
     items, _ = await thread_repo.list_by_mailbox(db_session, SALES, state="FILTERED", limit=25)
 
-    assert [row.id for row in items] == [t_spam.id, t_no_action.id]
+    assert [row.id for row in items] == [t_spam.id]
 
 
 @pytest.mark.asyncio
@@ -368,6 +369,33 @@ async def test_awaiting_action_count_matches_needs_attention_grain(db_session) -
 
     assert by_mailbox[SALES] == 4
     assert by_mailbox[OTHER] == 1
+
+
+@pytest.mark.asyncio
+async def test_urgency_breakdown_counts_only_needs_attention_threads(db_session) -> None:
+    """Dashboard bar is live queue urgency, not every stored CRITICAL/HIGH.
+
+    Seeded Needs Attention on sales: CRITICAL, HIGH, NORMAL, LOW → 1 each.
+    RESOLVED + AWAITING_CLIENT keep HIGH but are out of the bar.
+    OTHER mailbox CRITICAL is isolated to that mailbox.
+    """
+    await _seed(db_session)
+
+    overview = await thread_repo.aggregate_overview(db_session, [SALES, OTHER])
+    by_mailbox = {row["mailbox"]: row["urgency_breakdown"] for row in overview}
+
+    assert by_mailbox[SALES] == {
+        "CRITICAL": 1,
+        "HIGH": 1,
+        "NORMAL": 1,
+        "LOW": 1,
+    }
+    assert by_mailbox[OTHER] == {
+        "CRITICAL": 1,
+        "HIGH": 0,
+        "NORMAL": 0,
+        "LOW": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -398,7 +426,7 @@ async def test_wrong_action_sets_no_action_and_leaves_queue(db_session) -> None:
 
     updated = await thread_repo.get_by_id(db_session, thread.id, TenantScope.single(thread.mailbox))
     assert updated is not None
-    assert updated.state == ThreadStateEnum.NO_ACTION.value
+    assert updated.state == ThreadStateEnum.RESOLVED.value
     rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
     assert [row.id for row in rows] == []
 
@@ -434,3 +462,252 @@ async def test_tone_reject_keeps_thread_in_queue(db_session) -> None:
     assert updated.state == ThreadStateEnum.DRAFTED.value
     rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
     assert [row.id for row in rows] == [thread.id]
+
+
+def _message(thread: Thread, *, automated: bool, body: str) -> Message:
+    return Message(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        graph_message_id=str(uuid.uuid4()),
+        direction="inbound",
+        sender="alerts@example.com" if automated else "coworker@example.com",
+        body_text=body,
+        received_at=thread.last_message_at or T_OPEN,
+        to_recipients=[thread.mailbox],
+        cc_recipients=[],
+        is_automated=automated,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fyi_briefing_without_letter_is_out_of_needs_attention(db_session) -> None:
+    """Briefing-only DRAFTED thread with empty body is out of Needs Attention."""
+    t_fyi = _thread(
+        mailbox=SALES,
+        conversation_id="t-samba-fyi",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="LOW",
+        last_message_at=T_OPEN,
+    )
+    t_letter = _thread(
+        mailbox=SALES,
+        conversation_id="t-letter-ready",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=T_TONE,
+    )
+    db_session.add_all([t_fyi, t_letter])
+    await db_session.flush()
+    db_session.add_all(
+        [
+            _message(t_fyi, automated=False, body="I now have access to Samba Safety's website."),
+        ]
+    )
+    fyi_briefing = _draft(t_fyi, created_at=T_OPEN)
+    fyi_briefing.body = ""
+    db_session.add(fyi_briefing)
+    letter = _draft(t_letter, created_at=T_TONE)
+    letter.body = "Hi — confirming portal access is ready."
+    db_session.add(letter)
+    await db_session.commit()
+
+    rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
+    assert [row.id for row in rows] == [t_letter.id]
+
+
+@pytest.mark.asyncio
+async def test_automated_alert_without_letter_stays_in_needs_attention(db_session) -> None:
+    """Daily Drivers: offline action, empty letter, still Elise's queue."""
+    from app.models.db.audit_event import AuditEvent
+
+    t_alert = _thread(
+        mailbox=SALES,
+        conversation_id="t-daily-drivers",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=T_OPEN,
+    )
+    t_alert.alert_fingerprint = "daily-drivers-v1"
+    db_session.add(t_alert)
+    await db_session.flush()
+    empty = _draft(t_alert, created_at=T_OPEN)
+    empty.body = ""
+    db_session.add_all(
+        [
+            _message(t_alert, automated=True, body="Daily Drivers changes update."),
+            empty,
+            AuditEvent(
+                event_type="triage.action_needed",
+                conversation_id=t_alert.conversation_id,
+                mailbox=SALES,
+                payload={"has_action_items": True, "is_automated": True, "draft_needed": False},
+                actor="system",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    rows = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
+    assert [row.id for row in rows] == [t_alert.id]
+
+
+@pytest.mark.asyncio
+async def test_informational_automated_domain_auth_is_open_fyi_not_needs_attention(
+    db_session,
+) -> None:
+    """Domain authenticated: automated + triage no action → Open FYI, not live fire."""
+    from app.models.db.audit_event import AuditEvent
+
+    t_domain = _thread(
+        mailbox=SALES,
+        conversation_id="t-domain-auth",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="CRITICAL",
+        last_message_at=T_OPEN,
+    )
+    t_domain.alert_fingerprint = "domain-auth-v1"
+    db_session.add(t_domain)
+    await db_session.flush()
+    empty = _draft(t_domain, created_at=T_OPEN)
+    empty.body = ""
+    db_session.add_all(
+        [
+            _message(t_domain, automated=True, body="Your domain is now authenticated."),
+            empty,
+            AuditEvent(
+                event_type="triage.no_action_discarded",
+                conversation_id=t_domain.conversation_id,
+                mailbox=SALES,
+                payload={"has_action_items": False, "is_automated": True, "draft_needed": False},
+                actor="system",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    needs = await thread_repo.list_needs_attention(db_session, [SALES], limit=20)
+    fyi = await thread_repo.list_open_fyi(db_session, [SALES], limit=20)
+    assert [row.id for row in needs] == []
+    assert [row.id for row in fyi] == [t_domain.id]
+    assert fyi[0].urgency == "CRITICAL"
+    assert fyi[0].presentation is not None
+    assert fyi[0].presentation.urgency_active is False
+    assert fyi[0].presentation.disposition == "fyi_briefing"
+
+    overview = await thread_repo.aggregate_overview(db_session, [SALES])
+    assert overview[0]["urgency_breakdown"]["CRITICAL"] == 0
+    assert overview[0]["open_fyi_count"] == 1
+    assert overview[0]["awaiting_action_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_open_fyi_list_is_briefing_only(db_session) -> None:
+    """Open FYI list includes briefing-only drafts; letter and alert threads stay out."""
+    t_fyi = _thread(
+        mailbox=SALES,
+        conversation_id="t-open-fyi",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="LOW",
+        last_message_at=T_TONE,
+    )
+    t_letter = _thread(
+        mailbox=SALES,
+        conversation_id="t-fyi-letter",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="HIGH",
+        last_message_at=T_OPEN,
+    )
+    t_alert = _thread(
+        mailbox=SALES,
+        conversation_id="t-fyi-alert",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="NORMAL",
+        last_message_at=T_HUMAN,
+    )
+    t_alert.alert_fingerprint = "daily-drivers-v1"
+    t_other = _thread(
+        mailbox=OTHER,
+        conversation_id="t-other-fyi",
+        state=ThreadStateEnum.DRAFTED.value,
+        urgency="LOW",
+        last_message_at=T_TONE,
+    )
+    db_session.add_all([t_fyi, t_letter, t_alert, t_other])
+    await db_session.flush()
+    empty_fyi = _draft(t_fyi, created_at=T_TONE)
+    empty_fyi.body = ""
+    empty_other = _draft(t_other, created_at=T_TONE)
+    empty_other.body = ""
+    empty_alert = _draft(t_alert, created_at=T_HUMAN)
+    empty_alert.body = ""
+    letter = _draft(t_letter, created_at=T_OPEN)
+    letter.body = "Hi — confirming portal access is ready."
+    db_session.add_all(
+        [
+            _message(t_fyi, automated=False, body="Samba Safety website access is ready."),
+            _message(t_alert, automated=True, body="Daily Drivers changes update."),
+            empty_fyi,
+            empty_other,
+            empty_alert,
+            letter,
+        ]
+    )
+    await db_session.commit()
+
+    rows = await thread_repo.list_open_fyi(db_session, [SALES], limit=20)
+    assert [row.id for row in rows] == [t_fyi.id]
+
+    overview = await thread_repo.aggregate_overview(db_session, [SALES, OTHER])
+    by_mailbox = {row["mailbox"]: row for row in overview}
+    assert by_mailbox[SALES]["open_fyi_count"] == 1
+    assert by_mailbox[OTHER]["open_fyi_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recently_resolved_by_draftassistant_is_48h_excluding_elise(db_session) -> None:
+    """48h DraftAssistant resolves in; Elise resolve and 72h-old DraftAssistant resolve out."""
+    from app.models.db.audit_event import AuditEvent
+
+    now = datetime.now(UTC)
+    t_draftassistant = _thread(
+        mailbox=SALES,
+        conversation_id="t-draftassistant-recent",
+        state=ThreadStateEnum.NO_ACTION.value,
+        urgency="LOW",
+        last_message_at=now - timedelta(hours=2),
+    )
+    t_elise = _thread(
+        mailbox=SALES,
+        conversation_id="t-elise-recent",
+        state=ThreadStateEnum.RESOLVED.value,
+        urgency="NORMAL",
+        last_message_at=now - timedelta(hours=1),
+    )
+    t_old = _thread(
+        mailbox=SALES,
+        conversation_id="t-draftassistant-old",
+        state=ThreadStateEnum.RESOLVED.value,
+        urgency="LOW",
+        last_message_at=now - timedelta(hours=72),
+    )
+    db_session.add_all([t_draftassistant, t_elise, t_old])
+    await db_session.flush()
+    t_draftassistant.last_updated_at = now - timedelta(hours=2)
+    t_elise.last_updated_at = now - timedelta(hours=1)
+    t_old.last_updated_at = now - timedelta(hours=72)
+    db_session.add(
+        AuditEvent(
+            event_type="thread.resolved.reviewer",
+            conversation_id=t_elise.conversation_id,
+            mailbox=SALES,
+            payload={"resolved_by": "elise"},
+            actor="elise@example.com",
+        )
+    )
+    await db_session.commit()
+
+    rows = await thread_repo.list_recently_resolved_by_draftassistant(db_session, [SALES], limit=20)
+    assert [row.id for row in rows] == [t_draftassistant.id]
+
+    overview = await thread_repo.aggregate_overview(db_session, [SALES])
+    assert overview[0]["recently_resolved_draftassistant_count"] == 1
