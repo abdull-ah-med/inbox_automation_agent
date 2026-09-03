@@ -24,6 +24,10 @@ def test_v1_dataset_has_expected_cases() -> None:
     assert "injection-payload" in ids
     assert "cache-paraphrase" in ids
     assert "hallucination-bait" in ids
+    assert "operational-fyi-screens-done" in ids
+    assert "cc-observer-birthday" in ids
+    assert "daily-drivers-action" in ids
+    assert "method-lead-cc" in ids
 
 
 def test_suite_tags_partition() -> None:

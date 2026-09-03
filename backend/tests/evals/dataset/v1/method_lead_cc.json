@@ -1,0 +1,22 @@
+{
+  "id": "method-lead-cc",
+  "dataset_version": "evals_dataset_v1",
+  "suite_tags": ["B"],
+  "subject": "DOT audit package for three drivers",
+  "body": "Hi — we need a quote for a DOT audit package covering three drivers starting next month. Can you send pricing and turnaround?",
+  "mailbox": "inquiries@example.com",
+  "sender": "ops@sample-freight.example.com",
+  "to_recipients": ["jordan@sample-freight.example.com"],
+  "cc_recipients": ["inquiries@example.com"],
+  "triage": {
+    "is_spam": false,
+    "has_action_items": true,
+    "draft_needed": true,
+    "needs_context": false,
+    "routing_category": "general",
+    "action_items_summary": "Send DOT audit package pricing and turnaround"
+  },
+  "use_samplelab_skill": false,
+  "expected_tools": [],
+  "geval_criteria": "CC on the inquiries mailbox is a lead, not a CC observer. Draft a reply with pricing/turnaround; do not discard."
+}
