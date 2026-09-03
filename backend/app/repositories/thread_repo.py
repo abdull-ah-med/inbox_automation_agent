@@ -15,18 +15,15 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Select, and_, case, exists, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 
 from app.core.exceptions import InvalidCursorError
 from app.core.mailbox_keys import infer_mailbox_key
 from app.core.outlook_links import outlook_web_link
 from app.core.tenant_scope import TenantScope
 from app.core.thread_policy import presentation_from_flags
-from app.models.db.audit_event import AuditEvent
 from app.models.db.draft import Draft
 from app.models.db.message import Message
 from app.models.db.thread import Thread
-from app.models.schemas.audit_events import TriageAuditEvent
 from app.models.schemas.dashboard import (
     BadgeNowView,
     ThreadPresentationView,
@@ -36,11 +33,21 @@ from app.models.schemas.dashboard import (
 )
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import audit_repo, draft_repo, message_repo
+from app.repositories.thread_disposition_sql import (
+    draftassistant_resolved_recently,
+    is_fyi_briefing,
+    is_reply_review,
+    latest_draft_ranked,
+    needs_elise_action,
+)
 from app.repositories.thread_list_helpers import (
     card_preview,
     display_state,
     enriched_triage,
     party_sender,
+)
+from app.repositories.thread_mailbox_previews import (  # noqa: F401
+    list_recent_for_mailboxes,
 )
 
 #: Real actionable states — a message reached the pipeline and either has a
@@ -78,9 +85,6 @@ _FILTERED_FILTER = "FILTERED"
 _REPLY_REVIEW_FILTER = "REPLY_REVIEW"
 _OPEN_FYI_FILTER = "OPEN_FYI"
 _RECENTLY_RESOLVED_DRAFTASSISTANT_FILTER = "RECENTLY_RESOLVED_DRAFTASSISTANT"
-_RECENTLY_RESOLVED_DRAFTASSISTANT_HOURS = 48
-
-_AutomatedMessage = aliased(Message)
 
 # Mailbox date filters use US Eastern calendar days (matches ops reports).
 _MAILBOX_LIST_TZ = ZoneInfo("America/New_York")
@@ -680,12 +684,12 @@ def _apply_mailbox_list_filters(
     now: datetime,
 ) -> Select[tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]]:
     if state in {_AWAITING_ACTION_FILTER, _STALE_FILTER}:
-        latest_draft = _latest_draft_ranked()
+        latest_draft = latest_draft_ranked()
         stmt = stmt.outerjoin(
             latest_draft,
             (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
         )
-        needs_elise = _needs_elise_action(latest_draft)
+        needs_elise = needs_elise_action(latest_draft)
         if state == _STALE_FILTER:
             cutoff = now - timedelta(hours=stale_after_hours)
             stmt = stmt.where(
@@ -698,21 +702,21 @@ def _apply_mailbox_list_filters(
     elif state == _FILTERED_FILTER:
         stmt = stmt.where(Thread.state.in_(_FILTERED_STATES))
     elif state == _REPLY_REVIEW_FILTER:
-        latest_draft = _latest_draft_ranked()
+        latest_draft = latest_draft_ranked()
         stmt = stmt.outerjoin(
             latest_draft,
             (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
         )
-        stmt = stmt.where(_is_reply_review(latest_draft))
+        stmt = stmt.where(is_reply_review(latest_draft))
     elif state == _OPEN_FYI_FILTER:
-        latest_draft = _latest_draft_ranked()
+        latest_draft = latest_draft_ranked()
         stmt = stmt.outerjoin(
             latest_draft,
             (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
         )
-        stmt = stmt.where(_is_fyi_briefing(latest_draft))
+        stmt = stmt.where(is_fyi_briefing(latest_draft))
     elif state == _RECENTLY_RESOLVED_DRAFTASSISTANT_FILTER:
-        stmt = stmt.where(_draftassistant_resolved_recently(now))
+        stmt = stmt.where(draftassistant_resolved_recently(now))
     elif state:
         stmt = stmt.where(Thread.state == state)
     if urgency:
@@ -884,160 +888,6 @@ async def list_by_mailbox(
     return items, next_cursor
 
 
-async def list_recent_for_mailboxes(
-    session: AsyncSession,
-    mailbox_emails: list[str],
-    *,
-    per_mailbox: int = 3,
-    stale_after_hours: int = 24,
-) -> dict[str, list[ThreadSummary]]:
-    """Top ``per_mailbox`` awaiting-action threads per mailbox.
-
-    Ranked independently per mailbox so a busy inbox cannot starve the
-    others on the home-page cards.
-    """
-    _ = stale_after_hours  # reserved for future stale filtering parity
-    if not mailbox_emails or per_mailbox < 1:
-        return {email: [] for email in mailbox_emails}
-
-    now = datetime.now(UTC)
-    msg_count = func.count(Message.id).label("message_count")
-    latest_msg = _latest_message_ranked()
-    latest_draft = _latest_draft_ranked()
-    ranked = (
-        select(
-            Thread.id.label("tid"),
-            func.row_number()
-            .over(
-                partition_by=Thread.mailbox,
-                order_by=(Thread.last_message_at.desc().nullslast(), Thread.id.desc()),
-            )
-            .label("rn"),
-        )
-        .outerjoin(
-            latest_draft,
-            (latest_draft.c.tid == Thread.id) & (latest_draft.c.rn == 1),
-        )
-        .where(
-            Thread.mailbox.in_(mailbox_emails),
-            _needs_elise_action(latest_draft),
-        )
-        .subquery()
-    )
-
-    stmt = (
-        select(
-            Thread,
-            msg_count,
-            latest_msg.c.sender,
-            latest_msg.c.direction,
-            latest_msg.c.to_recipients,
-            latest_msg.c.body_preview,
-            latest_msg.c.body_text,
-            latest_msg.c.unique_body_text,
-            latest_msg.c.graph_message_id,
-        )
-        .join(ranked, ranked.c.tid == Thread.id)
-        .outerjoin(Message, Message.thread_id == Thread.id)
-        .outerjoin(
-            latest_msg,
-            (latest_msg.c.tid == Thread.id) & (latest_msg.c.rn == 1),
-        )
-        .where(ranked.c.rn <= per_mailbox)
-        .group_by(
-            Thread.id,
-            latest_msg.c.sender,
-            latest_msg.c.direction,
-            latest_msg.c.to_recipients,
-            latest_msg.c.body_preview,
-            latest_msg.c.body_text,
-            latest_msg.c.unique_body_text,
-            latest_msg.c.graph_message_id,
-        )
-        .order_by(Thread.mailbox, Thread.last_message_at.desc().nullslast(), Thread.id.desc())
-    )
-    result = await session.execute(stmt)
-    rows = result.all()
-
-    buckets: dict[str, list[ThreadSummary]] = {email.lower(): [] for email in mailbox_emails}
-    pairs: list[tuple[str, str]] = []
-    thread_ids: list[uuid.UUID] = []
-    pending: list[tuple[str, uuid.UUID, str]] = []
-    for (
-        thread,
-        count,
-        sender,
-        direction,
-        to_recipients,
-        body_preview,
-        body_text,
-        unique_body_text,
-        graph_message_id,
-    ) in rows:
-        key = thread.mailbox.lower()
-        if key not in buckets or len(buckets[key]) >= per_mailbox:
-            continue
-        pairs.append((thread.mailbox, thread.conversation_id))
-        thread_ids.append(thread.id)
-        party = party_sender(thread.mailbox, sender, direction, to_recipients)
-        summary = ThreadSummary(
-            id=thread.id,
-            mailbox=thread.mailbox,
-            mailbox_key=infer_mailbox_key(thread.mailbox),
-            subject=thread.subject,
-            state=display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
-            urgency=thread.urgency,
-            urgency_reason=thread.urgency_reason,
-            category=thread.category,
-            last_message_at=thread.last_message_at,
-            last_sender=party,
-            preview=card_preview(body_text, unique_body_text, body_preview),
-            staleness_hours=_staleness_hours(thread.last_message_at, now),
-            message_count=int(count or 0),
-            outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
-        )
-        buckets[key].append(summary)
-        pending.append((thread.mailbox, thread.id, thread.conversation_id))
-
-    triage_map = await audit_repo.triage_flags_by_conversations(session, pairs)
-    automated_map = await message_repo.inbound_automated_by_threads(session, thread_ids)
-    draft_ids = await _thread_ids_with_drafts(session, thread_ids)
-    letter_ids = await _thread_ids_with_letters(session, thread_ids)
-    teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, thread_ids)
-    finished = await draft_repo.review_finished_by_threads(session, thread_ids)
-    provenance = await audit_repo.resolution_provenance_by_conversations(session, pairs)
-    for mailbox, thread_id, conversation_id in pending:
-        key = mailbox.lower()
-        for i, item in enumerate(buckets[key]):
-            if item.id != thread_id:
-                continue
-            prov = provenance.get((mailbox, conversation_id), {})
-            buckets[key][i] = with_presentation(
-                item.model_copy(
-                    update={
-                        "triage": enriched_triage(
-                            triage_map.get((mailbox, conversation_id)),
-                            mailbox=mailbox,
-                            last_sender=item.last_sender,
-                            subject=item.subject,
-                            is_automated=automated_map.get(thread_id),
-                        ),
-                        "has_draft": thread_id in draft_ids,
-                        "has_letter": thread_id in letter_ids,
-                        "teaching_note": teaching_notes.get(thread_id),
-                    }
-                ),
-                draft_review_finished=thread_id in finished,
-                resolved_by=prov.get("resolved_by"),
-                resolution_reason=prov.get("resolution_reason"),
-                resolution_summary=prov.get("resolution_summary"),
-                forced_disposition=prov.get("forced_disposition"),
-            )
-            break
-
-    return {email: buckets.get(email.lower(), []) for email in mailbox_emails}
-
-
 async def _thread_ids_with_drafts(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],
@@ -1056,7 +906,7 @@ async def ids_needing_attention(
     """Subset of ``thread_ids`` that still belong on Needs Attention."""
     if not thread_ids:
         return set()
-    latest_draft = _latest_draft_ranked()
+    latest_draft = latest_draft_ranked()
     stmt = (
         select(Thread.id)
         .outerjoin(
@@ -1065,160 +915,11 @@ async def ids_needing_attention(
         )
         .where(
             Thread.id.in_(list(thread_ids)),
-            _needs_elise_action(latest_draft),
+            needs_elise_action(latest_draft),
         )
     )
     result = await session.execute(stmt)
     return {row[0] for row in result.all()}
-
-
-def _latest_draft_ranked() -> Any:
-    return (
-        select(
-            Draft.thread_id.label("tid"),
-            Draft.feedback_action.label("feedback_action"),
-            Draft.approved_at.label("approved_at"),
-            Draft.body.label("body"),
-            func.row_number()
-            .over(
-                partition_by=Draft.thread_id,
-                order_by=(Draft.created_at.desc(), Draft.id.desc()),
-            )
-            .label("rn"),
-        )
-    ).subquery()
-
-
-def _draft_unanswered(latest_draft: Any) -> Any:
-    return and_(
-        latest_draft.c.approved_at.is_(None),
-        or_(
-            latest_draft.c.feedback_action.is_(None),
-            latest_draft.c.feedback_action != "wrong",
-        ),
-    )
-
-
-def _has_letter_sql(latest_draft: Any) -> Any:
-    return and_(
-        latest_draft.c.tid.is_not(None),
-        func.length(func.btrim(func.coalesce(latest_draft.c.body, ""))) > 0,
-    )
-
-
-def _no_letter_sql(latest_draft: Any) -> Any:
-    return or_(
-        latest_draft.c.tid.is_(None),
-        func.length(func.btrim(func.coalesce(latest_draft.c.body, ""))) == 0,
-    )
-
-
-def _is_operational_alert() -> Any:
-    return or_(
-        Thread.alert_fingerprint.is_not(None),
-        exists(
-            select(1).where(
-                _AutomatedMessage.thread_id == Thread.id,
-                _AutomatedMessage.is_automated.is_(True),
-            )
-        ),
-    )
-
-
-_TRIAGE_EVENT_TYPES = (
-    TriageAuditEvent.ACTION_NEEDED.value,
-    TriageAuditEvent.NO_ACTION_DISCARDED.value,
-    TriageAuditEvent.SPAM_DISCARDED.value,
-    TriageAuditEvent.FAILED.value,
-)
-
-
-def _triage_informational() -> Any:
-    """Latest triage for this thread says no action items (informational / FYI)."""
-    newer = aliased(AuditEvent)
-    return exists(
-        select(1)
-        .select_from(AuditEvent)
-        .where(
-            AuditEvent.conversation_id == Thread.conversation_id,
-            AuditEvent.mailbox == Thread.mailbox,
-            AuditEvent.event_type.in_(_TRIAGE_EVENT_TYPES),
-            or_(
-                AuditEvent.event_type == TriageAuditEvent.NO_ACTION_DISCARDED.value,
-                AuditEvent.payload["has_action_items"].as_boolean().is_(False),
-            ),
-            ~exists(
-                select(1)
-                .select_from(newer)
-                .where(
-                    newer.conversation_id == AuditEvent.conversation_id,
-                    newer.mailbox == AuditEvent.mailbox,
-                    newer.event_type.in_(_TRIAGE_EVENT_TYPES),
-                    newer.created_at > AuditEvent.created_at,
-                )
-            ),
-        )
-    )
-
-
-def _is_actionable_operational_alert() -> Any:
-    """Ops automated alert that still needs Elise — not domain-auth / FYI triage."""
-    return and_(_is_operational_alert(), ~_triage_informational())
-
-
-def _is_reply_review(latest_draft: Any) -> Any:
-    """Disposition reply_review: DRAFTED with non-empty letter still awaiting Elise."""
-    return and_(
-        Thread.state == ThreadStateEnum.DRAFTED.value,
-        _has_letter_sql(latest_draft),
-        _draft_unanswered(latest_draft),
-    )
-
-
-def _needs_elise_action(latest_draft: Any) -> Any:
-    """SQL: Needs Attention dispositions — letter review, offline action, or pipeline failure."""
-    unanswered = _draft_unanswered(latest_draft)
-    no_draft = latest_draft.c.tid.is_(None)
-    requires_human = and_(
-        Thread.state == ThreadStateEnum.REQUIRES_HUMAN.value,
-        or_(no_draft, unanswered),
-    )
-    action_no_draft = and_(
-        Thread.state == ThreadStateEnum.DRAFTED.value,
-        _no_letter_sql(latest_draft),
-        or_(no_draft, unanswered),
-        _is_actionable_operational_alert(),
-    )
-    return or_(requires_human, _is_reply_review(latest_draft), action_no_draft)
-
-
-def _is_fyi_briefing(latest_draft: Any) -> Any:
-    unanswered = _draft_unanswered(latest_draft)
-    no_draft = latest_draft.c.tid.is_(None)
-    return and_(
-        Thread.state == ThreadStateEnum.DRAFTED.value,
-        _no_letter_sql(latest_draft),
-        or_(no_draft, unanswered),
-        or_(~_is_operational_alert(), _triage_informational()),
-    )
-
-
-def _draftassistant_resolved_recently(now: datetime, hours: int = _RECENTLY_RESOLVED_DRAFTASSISTANT_HOURS) -> Any:
-    cutoff = now - timedelta(hours=hours)
-    reviewer = exists(
-        select(1).where(
-            AuditEvent.conversation_id == Thread.conversation_id,
-            AuditEvent.mailbox == Thread.mailbox,
-            AuditEvent.event_type == "thread.resolved.reviewer",
-        )
-    )
-    return and_(
-        Thread.state.in_(
-            {ThreadStateEnum.RESOLVED.value, ThreadStateEnum.NO_ACTION.value},
-        ),
-        Thread.last_updated_at >= cutoff,
-        ~reviewer,
-    )
 
 
 async def _thread_ids_with_letters(
@@ -1250,7 +951,7 @@ async def list_needs_attention(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda latest_draft, _now: _needs_elise_action(latest_draft),
+        match=lambda latest_draft, _now: needs_elise_action(latest_draft),
         limit=limit,
         sort=sort,
     )
@@ -1270,7 +971,7 @@ async def _list_thread_summaries(
     now = datetime.now(UTC)
     msg_count = func.count(Message.id).label("message_count")
     latest_msg = _latest_message_ranked()
-    latest_draft = _latest_draft_ranked()
+    latest_draft = latest_draft_ranked()
 
     urgency_rank = case(
         (Thread.urgency == "CRITICAL", 0),
@@ -1402,7 +1103,7 @@ async def list_open_fyi(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda latest_draft, _now: _is_fyi_briefing(latest_draft),
+        match=lambda latest_draft, _now: is_fyi_briefing(latest_draft),
         limit=limit,
         sort="recent",
     )
@@ -1418,7 +1119,7 @@ async def list_recently_resolved_by_draftassistant(
     return await _list_thread_summaries(
         session,
         mailbox_emails,
-        match=lambda _latest_draft, now: _draftassistant_resolved_recently(now),
+        match=lambda _latest_draft, now: draftassistant_resolved_recently(now),
         limit=limit,
         sort="recent",
     )
@@ -1436,10 +1137,10 @@ async def aggregate_overview(
     if not mailbox_emails:
         return []
 
-    latest_draft = _latest_draft_ranked()
-    needs_elise = _needs_elise_action(latest_draft)
-    open_fyi = _is_fyi_briefing(latest_draft)
-    draftassistant_recent = _draftassistant_resolved_recently(now)
+    latest_draft = latest_draft_ranked()
+    needs_elise = needs_elise_action(latest_draft)
+    open_fyi = is_fyi_briefing(latest_draft)
+    draftassistant_recent = draftassistant_resolved_recently(now)
     stmt = (
         select(
             Thread.mailbox,

@@ -13,22 +13,18 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
-from app.core.exceptions import AuditError, DraftGenerationError
-from app.core.draftassistant_resolve import (
-    build_resolve_snapshot,
-    draftassistant_auto_close_decision,
-    should_reopen_finished_thread,
-)
+from app.core.exceptions import DraftGenerationError
 from app.core.tenant_scope import TenantScope
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.draft import DraftSchema
-from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema, ThreadStateEnum
+from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.models.schemas.graph import IngestResultSchema
 from app.repositories import (
     draft_repo,
     message_repo,
+    sent_reply_repo,  # noqa: F401 — tests patch pipeline.service.sent_reply_repo
     skill_repo,
     thread_repo,
 )
@@ -51,9 +47,14 @@ from app.services.pipeline.already_replied import (
     latest_proposed_has_teaching_note,
     promote_and_resolve_sent_tip,
 )
+from app.services.pipeline.audit_helpers import safe_audit
 from app.services.pipeline.draft_phase import (
     _apply_draft_outcome_state,
     _draft_audit_payload,
+)
+from app.services.pipeline.thread_lifecycle import (
+    apply_draftassistant_auto_resolve,
+    reopen_finished_if_action_needed,
 )
 from app.services.pipeline.triage_phase import (
     _allowlisted_senders,
@@ -62,6 +63,8 @@ from app.services.pipeline.triage_phase import (
     _audit_payload,
     _invalidate_chat_cache_mailbox,
 )
+
+_safe_audit = safe_audit  # tests patch pipeline.service._safe_audit
 
 logger = structlog.get_logger(__name__)
 
@@ -214,32 +217,6 @@ async def _refresh_thread_summary_safe(
         logger.exception("pipeline_thread_summary_failed", thread_id=str(thread_id))
 
 
-async def _safe_audit(
-    session: AsyncSession,
-    *,
-    state: EmailTriageState,
-    event_type: str,
-    payload: dict[str, object],
-) -> None:
-    email = state.original_email
-    try:
-        await audit_service.log_event(
-            session,
-            event_type=event_type,
-            conversation_id=email.conversation_id,
-            mailbox=email.mailbox,
-            payload=payload,
-            actor="system",
-        )
-    except AuditError:
-        logger.exception(
-            "pipeline_audit_failed",
-            conversation_id=email.conversation_id,
-            mailbox=email.mailbox,
-            event_type=event_type,
-        )
-
-
 def _should_embed(state: EmailTriageState, openai_client: AsyncOpenAI | None) -> bool:
     """Embed every non-spam email that reached a triage result — only when OpenAI is configured."""
     if openai_client is None:
@@ -323,7 +300,7 @@ async def _post_slack_card_after_commit(
         return state
 
     async with session_factory() as session, session.begin():
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type="slack.card_posted",
@@ -333,93 +310,6 @@ async def _post_slack_card_after_commit(
                 "draft_status": state.draft_status,
             },
         )
-    return state
-
-
-async def _reopen_finished_if_action_needed(
-    session: AsyncSession,
-    *,
-    state: EmailTriageState,
-    thread_id: uuid.UUID | None,
-) -> None:
-    if thread_id is None or state.triage is None:
-        return
-    try:
-        prior = await thread_repo.get_by_id_trusted(session, thread_id)
-        if prior is None:
-            return
-        if not should_reopen_finished_thread(
-            prior_state=prior.state,
-            has_action_items=state.triage.has_action_items,
-        ):
-            return
-        await thread_repo.set_thread_outcome(
-            session,
-            thread_id,
-            state=ThreadStateEnum.DRAFTED.value,
-        )
-        await _safe_audit(
-            session,
-            state=state,
-            event_type="thread.reopened.inbound_followup",
-            payload={
-                "prior_state": prior.state,
-                "message_id": state.original_email.message_id,
-                "human": {
-                    "title": "Reopened after new inbound",
-                    "body": "New inbound has action items. Thread is open again.",
-                    "actor_kind": "agent",
-                },
-            },
-        )
-    except Exception:
-        logger.warning("reopen_finished_lookup_failed", thread_id=str(thread_id))
-
-
-async def _apply_draftassistant_auto_resolve(
-    session: AsyncSession,
-    *,
-    state: EmailTriageState,
-    thread_id: uuid.UUID | None,
-    settings: Settings,
-) -> EmailTriageState | None:
-    if thread_id is None:
-        return None
-    owner = settings.owner_for_mailbox(state.original_email.mailbox)
-    decision = draftassistant_auto_close_decision(state, owner_name=owner)
-    if decision is None:
-        return None
-    await thread_repo.set_thread_outcome(
-        session,
-        thread_id,
-        state=ThreadStateEnum.RESOLVED.value,
-    )
-    snapshot = build_resolve_snapshot(
-        resolved_by="draftassistant",
-        resolution_reason=decision.reason,
-        disposition_at_resolve="resolved_draftassistant",
-        had_draft=False,
-        has_action_items=False,
-        draft_needed=False,
-        confidence_tier=decision.confidence_tier,
-    )
-    await _safe_audit(
-        session,
-        state=state,
-        event_type="thread.resolved.draftassistant",
-        payload={
-            "resolution_reason": decision.reason,
-            "resolution_summary": decision.summary,
-            "resolve_snapshot": snapshot,
-            "human": {
-                "title": "Resolved by DraftAssistant",
-                "body": decision.summary,
-                "actor_kind": "agent",
-            },
-        },
-    )
-    state.draft_status = "SKIPPED"
-    state.slack_delivery = "not_required"
     return state
 
 
@@ -477,19 +367,19 @@ async def run_after_ingest(
     parsed_thread_id = uuid.UUID(ingest_result.thread_id) if ingest_result.thread_id else None
     await _invalidate_chat_cache_mailbox(session, email.mailbox)
 
-    await _safe_audit(
+    await safe_audit(
         session,
         state=state,
         event_type=_audit_event_type(state),
         payload=_audit_payload(state),
     )
     await _apply_triage_outcome_state(session, state=state, thread_id=parsed_thread_id)
-    await _reopen_finished_if_action_needed(
+    await reopen_finished_if_action_needed(
         session,
         state=state,
         thread_id=parsed_thread_id,
     )
-    draftassistant_closed = await _apply_draftassistant_auto_resolve(
+    draftassistant_closed = await apply_draftassistant_auto_resolve(
         session,
         state=state,
         thread_id=parsed_thread_id,
@@ -556,7 +446,7 @@ async def run_after_ingest(
                 settings=settings,
             )
         state.cross_thread_context = cross_thread
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type="context.match" if cross_thread is not None else "context.no_match",
@@ -588,7 +478,7 @@ async def run_after_ingest(
     if not ingest_result.thread_id:
         state.draft_status = "REQUIRES_HUMAN"
         state.error_logs.append("draft_skipped:missing_thread_id")
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type="draft.requires_human",
@@ -617,7 +507,7 @@ async def run_after_ingest(
     )
 
     draft_event = "draft.generated" if state.draft_status == "DRAFTED" else "draft.requires_human"
-    await _safe_audit(
+    await safe_audit(
         session,
         state=state,
         event_type=draft_event,
@@ -707,7 +597,7 @@ async def _phased_triage_summarize(
 
     async with session_factory() as session, session.begin():
         await _invalidate_chat_cache_mailbox(session, email.mailbox)
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type=_audit_event_type(state),
@@ -757,7 +647,7 @@ async def _phased_already_replied_exit(
         session_factory=session_factory,
     )
     async with session_factory() as session, session.begin():
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type="draft.skipped_already_replied",
@@ -801,7 +691,7 @@ async def _phased_early_draft_exit(
         state.draft_status = "REQUIRES_HUMAN"
         state.error_logs.append("draft_skipped:missing_thread_id")
         async with session_factory() as session, session.begin():
-            await _safe_audit(
+            await safe_audit(
                 session,
                 state=state,
                 event_type="draft.requires_human",
@@ -845,7 +735,7 @@ async def _phased_resolve_cross_thread(
             )
         state.cross_thread_context = cross_thread
         async with session_factory() as session, session.begin():
-            await _safe_audit(
+            await safe_audit(
                 session,
                 state=state,
                 event_type=("context.match" if cross_thread is not None else "context.no_match"),
@@ -1178,7 +1068,7 @@ async def _phased_finalize_draft_and_slack(
 ) -> EmailTriageState:
     draft_event = "draft.generated" if state.draft_status == "DRAFTED" else "draft.requires_human"
     async with session_factory() as session, session.begin():
-        await _safe_audit(
+        await safe_audit(
             session,
             state=state,
             event_type=draft_event,
@@ -1271,12 +1161,12 @@ async def _run_phased_post_ingest(
 
     if parsed_thread_id is not None:
         async with session_factory() as session, session.begin():
-            await _reopen_finished_if_action_needed(
+            await reopen_finished_if_action_needed(
                 session,
                 state=state,
                 thread_id=parsed_thread_id,
             )
-            draftassistant_closed = await _apply_draftassistant_auto_resolve(
+            draftassistant_closed = await apply_draftassistant_auto_resolve(
                 session,
                 state=state,
                 thread_id=parsed_thread_id,
