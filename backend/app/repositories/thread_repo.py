@@ -17,11 +17,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import InvalidCursorError
-from app.core.internal_mail import (
-    display_state_for_internal_mail,
-    enrich_triage_flags,
-    thread_counterpart,
-)
 from app.core.mailbox_keys import infer_mailbox_key
 from app.core.outlook_links import outlook_web_link
 from app.core.tenant_scope import TenantScope
@@ -38,6 +33,12 @@ from app.models.schemas.dashboard import (
 )
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import audit_repo, draft_repo, message_repo
+from app.repositories.thread_list_helpers import (
+    card_preview,
+    display_state,
+    enriched_triage,
+    party_sender,
+)
 
 #: Real actionable states — a message reached the pipeline and either has a
 #: draft awaiting review or needs a human because generation failed. ``NEW``
@@ -78,27 +79,6 @@ _FILTERED_FILTER = "FILTERED"
 _MAILBOX_LIST_TZ = ZoneInfo("America/New_York")
 
 
-def _enriched_triage(
-    flags: TriageFlags | None,
-    *,
-    mailbox: str,
-    last_sender: str | None,
-    subject: str | None = None,
-    is_automated: bool | None = None,
-) -> TriageFlags | None:
-    return enrich_triage_flags(
-        flags,
-        sender=last_sender,
-        mailbox=mailbox,
-        subject=subject,
-        is_automated=is_automated,
-    )
-
-
-def _display_state(state: str, *, mailbox: str, last_sender: str | None) -> str:
-    return display_state_for_internal_mail(state, sender=last_sender, mailbox=mailbox)
-
-
 def _to_presentation_view(
     *,
     state: str,
@@ -137,6 +117,7 @@ def _to_presentation_view(
         ),
         suggest_resolve_default=derived.suggest_resolve_default,
         show_resolution_banner=derived.show_resolution_banner,
+        resolution_mode=derived.resolution_mode,
     )
 
 
@@ -169,7 +150,9 @@ def _latest_message_ranked() -> Any:
             Message.sender.label("sender"),
             Message.direction.label("direction"),
             Message.to_recipients.label("to_recipients"),
-            Message.body_preview.label("preview"),
+            Message.body_preview.label("body_preview"),
+            Message.body_text.label("body_text"),
+            Message.unique_body_text.label("unique_body_text"),
             Message.graph_message_id.label("graph_message_id"),
             func.row_number()
             .over(
@@ -179,20 +162,6 @@ def _latest_message_ranked() -> Any:
             .label("rn"),
         )
     ).subquery()
-
-
-def _party_sender(
-    mailbox: str,
-    sender: str | None,
-    direction: str | None,
-    to_recipients: list[str] | None,
-) -> str | None:
-    return thread_counterpart(
-        mailbox=mailbox,
-        sender=sender,
-        direction=direction,
-        to_recipients=list(to_recipients or []),
-    )
 
 
 class ThreadSchema(BaseModel):
@@ -739,16 +708,16 @@ async def list_by_mailbox(
     msg_count = func.count(Message.id).label("message_count")
     latest_msg = _latest_message_ranked()
 
-    stmt: Select[
-        tuple[Thread, int, str | None, str | None, list[str] | None, str | None, str | None]
-    ] = (
+    stmt = (
         select(
             Thread,
             msg_count,
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .outerjoin(Message, Message.thread_id == Thread.id)
@@ -762,7 +731,9 @@ async def list_by_mailbox(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .order_by(Thread.last_message_at.desc().nullslast(), Thread.id.desc())
@@ -788,23 +759,33 @@ async def list_by_mailbox(
     items: list[ThreadSummary] = []
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         pairs.append((thread.mailbox, thread.conversation_id))
         thread_ids.append(thread.id)
-        party = _party_sender(thread.mailbox, sender, direction, to_recipients)
+        party = party_sender(thread.mailbox, sender, direction, to_recipients)
         items.append(
             ThreadSummary(
                 id=thread.id,
                 mailbox=thread.mailbox,
                 mailbox_key=infer_mailbox_key(thread.mailbox),
                 subject=thread.subject,
-                state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
+                state=display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
                 urgency=thread.urgency,
                 urgency_reason=thread.urgency_reason,
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=party,
-                preview=preview,
+                preview=card_preview(body_text, unique_body_text, body_preview),
                 staleness_hours=_staleness_hours(thread.last_message_at, now),
                 message_count=int(count or 0),
                 outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -821,7 +802,7 @@ async def list_by_mailbox(
         items[i] = with_presentation(
             items[i].model_copy(
                 update={
-                    "triage": _enriched_triage(
+                    "triage": enriched_triage(
                         triage_map.get((thread.mailbox, thread.conversation_id)),
                         mailbox=thread.mailbox,
                         last_sender=items[i].last_sender,
@@ -890,7 +871,9 @@ async def list_recent_for_mailboxes(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .join(ranked, ranked.c.tid == Thread.id)
@@ -905,7 +888,9 @@ async def list_recent_for_mailboxes(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .order_by(Thread.mailbox, Thread.last_message_at.desc().nullslast(), Thread.id.desc())
@@ -917,25 +902,35 @@ async def list_recent_for_mailboxes(
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
     pending: list[tuple[str, uuid.UUID, str]] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         key = thread.mailbox.lower()
         if key not in buckets or len(buckets[key]) >= per_mailbox:
             continue
         pairs.append((thread.mailbox, thread.conversation_id))
         thread_ids.append(thread.id)
-        party = _party_sender(thread.mailbox, sender, direction, to_recipients)
+        party = party_sender(thread.mailbox, sender, direction, to_recipients)
         summary = ThreadSummary(
             id=thread.id,
             mailbox=thread.mailbox,
             mailbox_key=infer_mailbox_key(thread.mailbox),
             subject=thread.subject,
-            state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
+            state=display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
             urgency=thread.urgency,
             urgency_reason=thread.urgency_reason,
             category=thread.category,
             last_message_at=thread.last_message_at,
             last_sender=party,
-            preview=preview,
+            preview=card_preview(body_text, unique_body_text, body_preview),
             staleness_hours=_staleness_hours(thread.last_message_at, now),
             message_count=int(count or 0),
             outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -956,7 +951,7 @@ async def list_recent_for_mailboxes(
             buckets[key][i] = with_presentation(
                 item.model_copy(
                     update={
-                        "triage": _enriched_triage(
+                        "triage": enriched_triage(
                             triage_map.get((mailbox, conversation_id)),
                             mailbox=mailbox,
                             last_sender=item.last_sender,
@@ -1070,7 +1065,9 @@ async def list_needs_attention(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
         .outerjoin(Message, Message.thread_id == Thread.id)
@@ -1091,7 +1088,9 @@ async def list_needs_attention(
             latest_msg.c.sender,
             latest_msg.c.direction,
             latest_msg.c.to_recipients,
-            latest_msg.c.preview,
+            latest_msg.c.body_preview,
+            latest_msg.c.body_text,
+            latest_msg.c.unique_body_text,
             latest_msg.c.graph_message_id,
         )
     )
@@ -1105,23 +1104,33 @@ async def list_needs_attention(
     summaries: list[ThreadSummary] = []
     pairs: list[tuple[str, str]] = []
     thread_ids: list[uuid.UUID] = []
-    for thread, count, sender, direction, to_recipients, preview, graph_message_id in rows:
+    for (
+        thread,
+        count,
+        sender,
+        direction,
+        to_recipients,
+        body_preview,
+        body_text,
+        unique_body_text,
+        graph_message_id,
+    ) in rows:
         pairs.append((thread.mailbox, thread.conversation_id))
         thread_ids.append(thread.id)
-        party = _party_sender(thread.mailbox, sender, direction, to_recipients)
+        party = party_sender(thread.mailbox, sender, direction, to_recipients)
         summaries.append(
             ThreadSummary(
                 id=thread.id,
                 mailbox=thread.mailbox,
                 mailbox_key=infer_mailbox_key(thread.mailbox),
                 subject=thread.subject,
-                state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
+                state=display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
                 urgency=thread.urgency,
                 urgency_reason=thread.urgency_reason,
                 category=thread.category,
                 last_message_at=thread.last_message_at,
                 last_sender=party,
-                preview=preview,
+                preview=card_preview(body_text, unique_body_text, body_preview),
                 staleness_hours=_staleness_hours(thread.last_message_at, now),
                 message_count=int(count or 0),
                 outlook_url=outlook_web_link(graph_message_id) if graph_message_id else None,
@@ -1137,7 +1146,7 @@ async def list_needs_attention(
         summaries[i] = with_presentation(
             summaries[i].model_copy(
                 update={
-                    "triage": _enriched_triage(
+                    "triage": enriched_triage(
                         triage_map.get((thread.mailbox, thread.conversation_id)),
                         mailbox=thread.mailbox,
                         last_sender=summaries[i].last_sender,
@@ -1226,6 +1235,8 @@ async def build_thread_summary(
         select(
             Message.sender,
             Message.body_preview,
+            Message.body_text,
+            Message.unique_body_text,
             Message.graph_message_id,
             Message.direction,
             Message.to_recipients,
@@ -1236,11 +1247,13 @@ async def build_thread_summary(
     )
     latest = (await session.execute(latest_stmt)).one_or_none()
     sender = latest[0] if latest else None
-    preview = latest[1] if latest else None
-    graph_message_id = latest[2] if latest else None
-    direction = latest[3] if latest else None
-    to_recipients = latest[4] if latest else None
-    party = _party_sender(thread.mailbox, sender, direction, to_recipients)
+    body_preview = latest[1] if latest else None
+    body_text = latest[2] if latest else None
+    unique_body_text = latest[3] if latest else None
+    graph_message_id = latest[4] if latest else None
+    direction = latest[5] if latest else None
+    to_recipients = latest[6] if latest else None
+    party = party_sender(thread.mailbox, sender, direction, to_recipients)
     teaching_notes = await draft_repo.latest_teaching_notes_by_threads(session, [thread.id])
     finished = await draft_repo.review_finished_by_threads(session, [thread.id])
     summary = ThreadSummary(
@@ -1248,18 +1261,18 @@ async def build_thread_summary(
         mailbox=thread.mailbox,
         mailbox_key=infer_mailbox_key(thread.mailbox),
         subject=thread.subject,
-        state=_display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
+        state=display_state(thread.state, mailbox=thread.mailbox, last_sender=party),
         urgency=thread.urgency,
         urgency_reason=thread.urgency_reason,
         category=thread.category,
         last_message_at=thread.last_message_at,
         last_sender=party,
-        preview=preview,
+        preview=card_preview(body_text, unique_body_text, body_preview),
         staleness_hours=_staleness_hours(thread.last_message_at, now),
         message_count=count,
         has_draft=thread.id in await _thread_ids_with_drafts(session, [thread.id]),
         teaching_note=teaching_notes.get(thread.id),
-        triage=_enriched_triage(
+        triage=enriched_triage(
             await audit_repo.get_latest_triage_flags(
                 session,
                 thread.conversation_id,

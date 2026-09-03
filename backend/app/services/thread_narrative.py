@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,34 @@ _FALLBACK_TITLES: dict[str, str] = {
     "thread.reopened.inbound_followup": "Reopened after new inbound",
     "thread.resolved.wrong_reason": "Resolution reason corrected",
 }
+
+
+_RESOLVE_MODES: dict[str, Literal["auto", "manual"]] = {
+    "thread.resolved.reviewer": "manual",
+    "thread.resolved.sent_reply_detected": "auto",
+    "thread.resolved.closing_mail": "auto",
+    "thread.outcome.closing_inbound": "auto",
+}
+_REOPEN_EVENTS = frozenset(
+    {
+        "thread.reopened.resolution_feedback",
+        "thread.reopened.inbound_followup",
+    }
+)
+
+
+def resolution_mode_from_events(
+    events: list[Mapping[str, Any]],
+) -> Literal["auto", "manual"] | None:
+    """Latest resolution provenance after any reopen clears prior auto/manual state."""
+    mode: Literal["auto", "manual"] | None = None
+    for row in events:
+        event_type = str(row.get("event_type") or row.get("event") or "")
+        if event_type in _REOPEN_EVENTS:
+            mode = None
+        elif event_type in _RESOLVE_MODES:
+            mode = _RESOLVE_MODES[event_type]
+    return mode
 
 
 def _fallback_body(event_type: str, payload: Mapping[str, Any]) -> str:

@@ -47,6 +47,8 @@ type ThreadTriageSidebarViewProps = {
   approveOpen: boolean
   rejectOpen: boolean
   resolvePromptOpen: boolean
+  resolveActionsTaken: string
+  resolveInvolved: string
   approveBody: string
   approvalNote: string
   approvalScope: "once" | "similar" | ""
@@ -59,6 +61,9 @@ type ThreadTriageSidebarViewProps = {
   onApproveOpenChange: (open: boolean) => void
   onRejectOpenChange: (open: boolean) => void
   onResolvePromptOpenChange: (open: boolean) => void
+  onResolveActionsTakenChange: (value: string) => void
+  onResolveInvolvedChange: (value: string) => void
+  onMarkResolved: () => void
   onApproveBodyChange: (value: string) => void
   onApprovalNoteChange: (value: string) => void
   onApprovalScopeChange: (value: "once" | "similar" | "") => void
@@ -95,6 +100,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     approveOpen,
     rejectOpen,
     resolvePromptOpen,
+    resolveActionsTaken,
+    resolveInvolved,
     approveBody,
     approvalNote,
     approvalScope,
@@ -107,6 +114,9 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onApproveOpenChange,
     onRejectOpenChange,
     onResolvePromptOpenChange,
+    onResolveActionsTakenChange,
+    onResolveInvolvedChange,
+    onMarkResolved,
     onApproveBodyChange,
     onApprovalNoteChange,
     onApprovalScopeChange,
@@ -133,6 +143,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
         feedbackDone={feedbackDone}
         busy={busy}
         activity={activity}
+        resolvePending={resolvePending}
+        onMarkResolved={onMarkResolved}
         onUrgencySaved={(payload) => {
           void siblings.prompt("urgency", payload.reason, payload.urgency)
         }}
@@ -206,6 +218,10 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
       <ResolvePromptDialog
         open={resolvePromptOpen}
         onOpenChange={onResolvePromptOpenChange}
+        actionsTaken={resolveActionsTaken}
+        onActionsTakenChange={onResolveActionsTakenChange}
+        involved={resolveInvolved}
+        onInvolvedChange={onResolveInvolvedChange}
         isPending={resolvePending}
         onConfirm={onConfirmResolve}
       />

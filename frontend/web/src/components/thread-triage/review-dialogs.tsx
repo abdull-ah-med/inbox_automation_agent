@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
@@ -250,6 +251,10 @@ export const RejectDraftDialog = ({
 type ResolvePromptDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
+  actionsTaken: string
+  onActionsTakenChange: (value: string) => void
+  involved: string
+  onInvolvedChange: (value: string) => void
   isPending: boolean
   onConfirm: () => void
 }
@@ -257,6 +262,10 @@ type ResolvePromptDialogProps = {
 export const ResolvePromptDialog = ({
   open,
   onOpenChange,
+  actionsTaken,
+  onActionsTakenChange,
+  involved,
+  onInvolvedChange,
   isPending,
   onConfirm,
 }: ResolvePromptDialogProps) => (
@@ -265,10 +274,41 @@ export const ResolvePromptDialog = ({
       <DialogHeader>
         <DialogTitle>Mark this thread resolved?</DialogTitle>
         <DialogDescription>
-          Review is done. Mark resolved to leave Needs Attention, or keep it open if you are still
-          waiting on someone.
+          Tell DraftAssistant what you did so it can learn. This removes the thread from Needs Attention.
         </DialogDescription>
       </DialogHeader>
+      <div className="space-y-4">
+        <div>
+          <label htmlFor="resolve-actions-taken" className="text-sm font-medium">
+            Actions taken
+          </label>
+          <Textarea
+            id="resolve-actions-taken"
+            value={actionsTaken}
+            onChange={(event) => onActionsTakenChange(event.target.value)}
+            rows={4}
+            className="mt-1 min-h-24"
+            placeholder="What did you do to resolve this?"
+            aria-label="Actions taken"
+            aria-required="true"
+            maxLength={2000}
+          />
+        </div>
+        <div>
+          <label htmlFor="resolve-involved" className="text-sm font-medium">
+            With who
+          </label>
+          <Input
+            id="resolve-involved"
+            value={involved}
+            onChange={(event) => onInvolvedChange(event.target.value)}
+            className="mt-1"
+            placeholder="Person, team, or n/a"
+            aria-label="With who"
+            maxLength={500}
+          />
+        </div>
+      </div>
       <DialogFooter>
         <Button
           type="button"
@@ -283,7 +323,7 @@ export const ResolvePromptDialog = ({
           type="button"
           tabIndex={0}
           aria-label="Mark thread resolved"
-          disabled={isPending}
+          disabled={isPending || !actionsTaken.trim()}
           onClick={onConfirm}
         >
           {isPending ? "Resolving…" : "Mark resolved"}

@@ -69,6 +69,7 @@ class ThreadPresentationView(BaseModel):
     triage_history: TriageHistoryView = Field(default_factory=TriageHistoryView)
     suggest_resolve_default: bool = False
     show_resolution_banner: bool = False
+    resolution_mode: Literal["auto", "manual"] | None = None
 
 
 class ActivityEntryView(BaseModel):

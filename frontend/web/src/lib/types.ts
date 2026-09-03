@@ -49,6 +49,7 @@ export interface ThreadPresentation {
   triage_history: TriageHistory
   suggest_resolve_default: boolean
   show_resolution_banner: boolean
+  resolution_mode?: "auto" | "manual" | null
 }
 
 export interface ActivityEntry {

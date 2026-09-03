@@ -348,6 +348,146 @@ async def test_thread_view_includes_sent_reply_and_diff() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thread_view_omits_sent_reply_when_newer_inbound_is_tip() -> None:
+    """Manual resolve after new mail must not resurrect an older Outlook send panel."""
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.sent_reply_repo import SentReplySchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sales@example.com",
+        salute_directory_enabled=False,
+    )
+    thread_id = uuid.uuid4()
+    outbound_id = uuid.uuid4()
+    inbound_id = uuid.uuid4()
+    sent_at = datetime(2026, 9, 2, 10, 0, tzinfo=UTC)
+    inbound_at = datetime(2026, 9, 3, 11, 0, tzinfo=UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sales@example.com",
+        conversation_id="conv-followup",
+        subject="Re: ticket",
+        state="RESOLVED",
+        urgency="NORMAL",
+        category=None,
+        last_message_at=inbound_at,
+        last_updated_at=inbound_at,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sales@example.com",
+        mailbox_key="sales",
+        subject="Re: ticket",
+        state="RESOLVED",
+        urgency="NORMAL",
+        last_message_at=inbound_at,
+        last_sender="client@example.com",
+        preview="New question",
+        staleness_hours=0,
+        message_count=2,
+    )
+    outbound = MessageSchema(
+        id=outbound_id,
+        thread_id=thread_id,
+        graph_message_id="AAMk-out",
+        direction="outbound",
+        sender="sales@example.com",
+        body_text="We sent the packet yesterday.",
+        body_preview="We sent the packet yesterday.",
+        received_at=sent_at,
+        to_recipients=["client@example.com"],
+        cc_recipients=[],
+    )
+    inbound = MessageSchema(
+        id=inbound_id,
+        thread_id=thread_id,
+        graph_message_id="AAMk-in",
+        direction="inbound",
+        sender="client@example.com",
+        body_text="Thanks — one more question about billing.",
+        body_preview="Thanks — one more question about billing.",
+        received_at=inbound_at,
+        to_recipients=["sales@example.com"],
+        cc_recipients=[],
+    )
+    sent = SentReplySchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        message_id=outbound_id,
+        draft_id=None,
+        sent_body_snapshot="We sent the packet yesterday.",
+        sent_at=sent_at,
+        matched_by="time_window",
+        created_at=sent_at,
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[outbound, inbound]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_proposed_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
+            AsyncMock(
+                return_value=[
+                    {
+                        "event_type": "thread.resolved.reviewer",
+                        "created_at": inbound_at,
+                        "payload": {
+                            "human": {
+                                "title": "Marked resolved",
+                                "body": "You marked this thread resolved. Actions taken: Handled offline.",
+                                "actor_kind": "elise",
+                            }
+                        },
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=sent),
+        ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+    assert detail.sent_reply is None
+    assert detail.draft_vs_sent_diff is None
+    assert detail.thread.presentation is not None
+    assert detail.thread.presentation.resolution_mode == "manual"
+
+
+@pytest.mark.asyncio
 async def test_thread_view_heals_blank_sent_snapshot_from_linked_message() -> None:
     """Historical empty snapshots must surface the linked message unique reply."""
     from app.models.schemas.draft import DraftResponseSchema

@@ -102,6 +102,28 @@ async def list_by_thread(
     return [MessageSchema.model_validate(m) for m in result.scalars().all()]
 
 
+async def latest_inbound_body_snippet(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    *,
+    max_chars: int = 1_500,
+) -> str | None:
+    stmt = (
+        select(Message.body_clean, Message.body_text)
+        .where(Message.thread_id == thread_id, Message.direction == "inbound")
+        .order_by(Message.received_at.desc())
+        .limit(1)
+    )
+    row = (await session.execute(stmt)).one_or_none()
+    if row is None:
+        return None
+    body_clean, body_text = row
+    body = (body_clean or body_text or "").strip()
+    if not body:
+        return None
+    return body[:max_chars]
+
+
 async def list_by_thread_ids(
     session: AsyncSession,
     thread_ids: list[uuid.UUID],

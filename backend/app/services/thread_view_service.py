@@ -39,8 +39,8 @@ from app.repositories import (
     sent_reply_repo,
     thread_repo,
 )
-from app.services import related_thread_service
-from app.services.thread_narrative import build_activity
+from app.services import related_thread_service, sent_reply_service
+from app.services.thread_narrative import build_activity, resolution_mode_from_events
 
 # Meeting types hide the sent-vs-draft learning panel (calendar mail is not a letter).
 _MEETING_MESSAGE_TYPES = frozenset(
@@ -136,6 +136,31 @@ def reply_text_for_message(
     if not raw and unique_body_text is None:
         raw = (body_preview or "").strip()
     return strip_plain_text_artifacts(raw)
+
+
+_CARD_PREVIEW_MAX_LEN = 200
+
+
+def preview_text_for_message(
+    *,
+    body_text: str,
+    unique_body_text: str | None,
+    body_preview: str | None,
+) -> str | None:
+    """One-line mailbox card preview from the same reply_text pipeline as thread view."""
+    reply = reply_text_for_message(
+        body_text=body_text,
+        unique_body_text=unique_body_text,
+        body_preview=body_preview,
+    ).strip()
+    if not reply:
+        return None
+    one_line = " ".join(line.strip() for line in reply.split("\n") if line.strip())
+    if not one_line:
+        return None
+    if len(one_line) <= _CARD_PREVIEW_MAX_LEN:
+        return one_line
+    return one_line[: _CARD_PREVIEW_MAX_LEN - 1].rstrip() + "…"
 
 
 def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
@@ -242,7 +267,10 @@ async def get_thread_detail(
     sent_row = await sent_reply_repo.get_by_thread(session, thread_id)
     sent_reply: SentReplyView | None = None
     draft_vs_sent_diff: DraftVsSentDiff | None = None
-    if sent_row is not None:
+    tip_matches_sent = sent_row is not None and await sent_reply_service.thread_tip_already_replied(
+        session, thread_id
+    )
+    if sent_row is not None and tip_matches_sent:
         matched_by: Literal["approved_draft", "time_window", "manual"]
         if sent_row.matched_by == "approved_draft":
             matched_by = "approved_draft"
@@ -318,6 +346,13 @@ async def get_thread_detail(
         closing_signal=closing,
         resolution_reason_corrected=reason_corrected,
     )
+    if summary.presentation is not None:
+        mode = resolution_mode_from_events(raw_events)
+        summary = summary.model_copy(
+            update={
+                "presentation": summary.presentation.model_copy(update={"resolution_mode": mode})
+            }
+        )
 
     reply_addressee = await _resolve_reply_addressee_view(
         session,

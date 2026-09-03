@@ -81,8 +81,11 @@ describe("ThreadEmailPanel", () => {
     const user = userEvent.setup()
     renderPanel()
     await user.click(screen.getByRole("button", { name: "Hide" }))
-    expect(screen.queryByText(BODY)).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Show" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Rich view" })).not.toBeInTheDocument()
+    expect(screen.getByText(BODY)).toBeInTheDocument()
     await user.click(screen.getByRole("button", { name: "Show" }))
+    expect(screen.getByRole("button", { name: "Rich view" })).toBeInTheDocument()
     expect(screen.getByText(BODY)).toBeInTheDocument()
   })
 
@@ -215,18 +218,18 @@ describe("ThreadEmailPanel", () => {
 
     expect(screen.getByText("The GitHub action is failing on main.")).toBeInTheDocument()
     expect(screen.queryByText("No new text in this reply")).not.toBeInTheDocument()
-    expect(screen.queryByText("Can you check the Vercel deploy?")).not.toBeInTheDocument()
+    expect(screen.getByText("Can you check the Vercel deploy?")).toBeInTheDocument()
     expect(screen.getByText("From: Alice")).toBeInTheDocument()
     expect(screen.getAllByRole("button", { name: "Show" })).toHaveLength(2)
     expect(screen.getByRole("button", { name: "Hide" })).toBeInTheDocument()
   })
 
-  it("keeps a one-line peek of the preview when a message is hidden", async () => {
+  it("keeps a one-line peek of the reply when a message is hidden", async () => {
     const user = userEvent.setup()
     renderPanel()
     await user.click(screen.getByRole("button", { name: "Hide" }))
-    expect(screen.queryByText(BODY)).not.toBeInTheDocument()
-    expect(screen.getByText("Please review")).toBeInTheDocument()
+    expect(screen.getByText(BODY)).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Rich view" })).not.toBeInTheDocument()
   })
 
   it("labels empty Graph meeting accepts instead of a blank body", () => {
