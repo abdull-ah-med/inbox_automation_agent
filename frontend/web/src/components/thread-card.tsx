@@ -14,15 +14,19 @@ import {
 } from "@/lib/design-tokens"
 import { cn, textLinkClass } from "@/lib/utils"
 import type { ThreadSummary } from "@/lib/types"
+import { threadHrefWithMailboxReturn } from "@/lib/mailbox-list-return"
 
 export const ThreadCard = ({
   thread,
   selected = false,
+  returnTo,
 }: {
   thread: ThreadSummary
   selected?: boolean
+  returnTo?: string
 }) => {
   const label = inboxLabel(thread.mailbox_key)
+  const threadHref = threadHrefWithMailboxReturn(thread.id, returnTo)
 
   return (
     <Card
@@ -33,7 +37,7 @@ export const ThreadCard = ({
     >
       <CardContent className="p-5">
         <Link
-          href={`/threads/${thread.id}`}
+          href={threadHref}
           aria-label={`Open thread ${thread.subject || "untitled"}`}
           className="focus-visible:ring-ring block cursor-pointer text-left outline-none focus-visible:ring-2"
         >

@@ -126,4 +126,26 @@ describe("ThreadCard internal tag", () => {
     )
     expect(screen.queryByRole("button", { name: "Mark as not spam" })).toBeNull()
   })
+
+  it("preserves the mailbox filter in the thread link", () => {
+    render(
+      <ThreadCard
+        thread={thread({
+          is_spam: false,
+          has_action_items: true,
+          needs_context: false,
+          spam_reason: null,
+          context_reason: null,
+          action_items_summary: "Review checklist",
+          outcome: "triage.action_needed",
+          is_internal: false,
+        })}
+        returnTo="/mailboxes/sales?state=REPLY_REVIEW"
+      />,
+    )
+    expect(screen.getByRole("link", { name: /open thread/i })).toHaveAttribute(
+      "href",
+      "/threads/e25cc63b-9db9-4c2d-af45-e598a639eaec?returnTo=%2Fmailboxes%2Fsales%3Fstate%3DREPLY_REVIEW",
+    )
+  })
 })

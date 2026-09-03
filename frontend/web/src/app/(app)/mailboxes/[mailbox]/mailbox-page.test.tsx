@@ -208,4 +208,39 @@ describe("Mailbox page — useSearchParams Suspense boundary", () => {
       expect.objectContaining({ from: "2026-08-01", to: "2026-08-28" }),
     )
   })
+
+  it("embeds the active filter in thread links", async () => {
+    searchParamsString.mockReturnValue("state=REPLY_REVIEW")
+    listThreads.mockResolvedValue({
+      items: [
+        {
+          id: "thread-1",
+          mailbox: "sales@example.com",
+          mailbox_key: "sales",
+          subject: "Needs reply review",
+          state: "DRAFTED",
+          urgency: "NORMAL",
+          urgency_reason: null,
+          category: null,
+          last_message_at: "2026-08-01T00:00:00Z",
+          last_sender: "vendor@example.com",
+          preview: null,
+          staleness_hours: 1,
+          message_count: 1,
+          has_draft: true,
+          teaching_note: null,
+          triage: null,
+          outlook_url: null,
+        },
+      ],
+      next_cursor: null,
+    })
+    renderPage()
+    expect(
+      await screen.findByRole("link", { name: /open thread needs reply review/i }),
+    ).toHaveAttribute(
+      "href",
+      "/threads/thread-1?returnTo=%2Fmailboxes%2Fsales%3Fstate%3DREPLY_REVIEW",
+    )
+  })
 })
