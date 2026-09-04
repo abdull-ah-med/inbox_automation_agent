@@ -17,7 +17,7 @@ from app.llm.chat_tools import ChatToolExecution
 from app.llm.email_clean import clean_email_body
 from app.llm.pii_redact import scrub_text
 from app.models.schemas.search import SearchHit
-from app.repositories import message_repo, thread_repo, thread_summary_repo
+from app.repositories import message_repo, thread_context_repo, thread_repo, thread_summary_repo
 from app.services import search_service
 from app.services.mailbox_scope import resolve_scoped_mailboxes
 
@@ -165,15 +165,32 @@ async def _get_thread(
     window = _message_page(messages, page=page)
     parts: list[str] = []
     if page == 0:
-        summary = None
-        try:
-            summary = await thread_summary_repo.get(session, thread_id)
-        except Exception:
-            with suppress(Exception):
-                await session.rollback()
+        used_context = False
+        if settings.thread_context_enabled:
+            try:
+                pointer = await thread_context_repo.get(session, thread_id)
+                facts = await thread_context_repo.list_active_facts(session, thread_id)
+            except Exception:
+                with suppress(Exception):
+                    await session.rollback()
+                pointer = None
+                facts = []
+            if pointer is not None and ((pointer.user_notes or "").strip() or facts):
+                if (pointer.user_notes or "").strip():
+                    parts.append(f"Thread pins: {pointer.user_notes.strip()}")
+                for fact in facts:
+                    parts.append(f"Thread fact: {fact.body}")
+                used_context = True
+        if not used_context:
             summary = None
-        if summary is not None and len(messages) >= 5:
-            parts.append(f"Thread summary: {summary.summary_text}")
+            try:
+                summary = await thread_summary_repo.get(session, thread_id)
+            except Exception:
+                with suppress(Exception):
+                    await session.rollback()
+                summary = None
+            if summary is not None and len(messages) >= 5:
+                parts.append(f"Thread summary: {summary.summary_text}")
     sender = ""
     for message in window:
         raw = message.body_text or message.body_preview or ""
