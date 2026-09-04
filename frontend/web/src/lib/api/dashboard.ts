@@ -48,7 +48,7 @@ export const draftsApi = {
     body?: {
       edited_body?: string
       approval_note?: string
-      approval_scope?: "once" | "similar"
+      approval_scope?: "once" | "similar" | "sender_address" | "mailbox"
     },
   ) {
     return apiFetch<DraftView>(`/api/drafts/${id}/approve`, {

@@ -7,6 +7,7 @@ import { api } from "@/lib/api-client"
 import type { RejectReasonCode } from "@/lib/routing"
 import type { DraftView } from "@/lib/types"
 import type { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
+import type { ApprovalScope } from "@/components/thread-triage/review-dialogs"
 
 type SiblingsApi = ReturnType<typeof useSiblingsPrompt>
 
@@ -16,12 +17,12 @@ type UseThreadReviewMutationsArgs = {
   queryClient: QueryClient
   approveBody: string
   approvalNote: string
-  approvalScope: "once" | "similar" | ""
+  approvalScope: ApprovalScope | ""
   rejectNote: string
   rejectReason: RejectReasonCode | ""
   setApproveOpen: Dispatch<SetStateAction<boolean>>
   setApprovalNote: Dispatch<SetStateAction<string>>
-  setApprovalScope: Dispatch<SetStateAction<"once" | "similar" | "">>
+  setApprovalScope: Dispatch<SetStateAction<ApprovalScope | "">>
   setRejectOpen: Dispatch<SetStateAction<boolean>>
   setRejectNote: Dispatch<SetStateAction<string>>
   setRejectReason: Dispatch<SetStateAction<RejectReasonCode | "">>
@@ -71,7 +72,7 @@ export const useThreadReviewMutations = ({
     mutationFn: (body?: {
       edited_body?: string
       approval_note?: string
-      approval_scope?: "once" | "similar"
+      approval_scope?: ApprovalScope
     }) => {
       if (!draftId) {
         throw new Error("No draft available to approve")
@@ -145,7 +146,7 @@ export const useThreadReviewMutations = ({
     const payload: {
       edited_body?: string
       approval_note?: string
-      approval_scope?: "once" | "similar"
+      approval_scope?: ApprovalScope
     } = {}
     if (trimmed !== draft.body.trim()) {
       payload.edited_body = trimmed

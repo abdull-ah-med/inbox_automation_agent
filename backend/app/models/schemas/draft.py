@@ -69,3 +69,5 @@ class DraftResponseSchema(DraftSchema):
     approval_scope: str | None = None
     applied_skills: list[AppliedSkillSchema] = Field(default_factory=list)
     tool_calls: list[DraftToolCallSchema] | None = None
+    retrieved_atom_ids: list[UUID] = Field(default_factory=list)
+    retrieved_note_ids: list[UUID] = Field(default_factory=list)

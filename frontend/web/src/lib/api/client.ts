@@ -198,7 +198,11 @@ export async function apiFetch<T>(
   if (resp.status === 204) {
     return undefined as T
   }
-  return (await resp.json()) as T
+  const text = await resp.text()
+  if (!text) {
+    return undefined as T
+  }
+  return JSON.parse(text) as T
 }
 
 /** Multipart upload helper — surfaces server `detail` text verbatim for import UX. */

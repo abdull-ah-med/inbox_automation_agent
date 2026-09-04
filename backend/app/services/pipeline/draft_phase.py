@@ -5,13 +5,17 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import Settings
 from app.core.tenant_scope import TenantScope
 from app.llm.prompts import PROMPT_VERSION
 from app.models.schemas.email import ThreadStateEnum
 from app.models.schemas.email_triage_state import EmailTriageState
 from app.repositories import thread_repo
+from app.services import slack_service
+from app.services.pipeline.audit_helpers import safe_audit
 from app.services.pipeline.triage_phase import _invalidate_chat_cache_threads
 
 logger = structlog.get_logger(__name__)
@@ -129,3 +133,49 @@ def _draft_audit_payload(state: EmailTriageState) -> dict[str, object]:
     if state.error_logs:
         payload["error_logs"] = list(state.error_logs)
     return payload
+
+
+async def post_slack_card_after_commit(
+    state: EmailTriageState,
+    *,
+    redis: Redis,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> EmailTriageState:
+    """Post Slack only after draft/audit rows are committed; audit in a fresh txn."""
+    from app.core.dependencies import slack_app_from_settings
+
+    slack_app = slack_app_from_settings(settings)
+    email = state.original_email
+    result = await slack_service.post_review_card(
+        state,
+        redis=redis,
+        slack_app=slack_app,
+        settings=settings,
+    )
+    state.slack_delivery = result.slack_delivery
+
+    if result.status == "failed":
+        logger.warning(
+            "slack_card_post_failed",
+            conversation_id=email.conversation_id,
+            mailbox=email.mailbox,
+            message_id=email.message_id,
+        )
+        return state
+
+    if result.message_ts is None:
+        return state
+
+    async with session_factory() as session, session.begin():
+        await safe_audit(
+            session,
+            state=state,
+            event_type="slack.card_posted",
+            payload={
+                "message_id": email.message_id,
+                "message_ts": result.message_ts,
+                "draft_status": state.draft_status,
+            },
+        )
+    return state

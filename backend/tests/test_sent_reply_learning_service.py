@@ -1002,7 +1002,7 @@ async def test_phased_pipeline_redrafts_when_inbound_follows_sent_reply() -> Non
         )
         stack.enter_context(
             patch(
-                "app.services.pipeline.service.rejection_memory_service.find_negative_constraints",
+                "app.services.pipeline.service.load_legacy_negative_constraints",
                 new=AsyncMock(return_value=[]),
             )
         )

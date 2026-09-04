@@ -32,6 +32,7 @@ from app.llm.prompts import (
     UNTRUSTED_CONSTRAINTS_TAG,
     UNTRUSTED_EMAIL_TAG,
     UNTRUSTED_INSTRUCTION_TAG,
+    UNTRUSTED_PAIRED_EXAMPLES_TAG,
     UNTRUSTED_SKILLS_TAG,
     UNTRUSTED_TONE_PROFILE_TAG,
     UNTRUSTED_TONE_REFS_TAG,
@@ -91,6 +92,69 @@ class DraftCallResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
+def _none_if_empty(lines: list[str]) -> str:
+    return "\n".join(lines) if lines else "(none)"
+
+
+def _bullet_block(items: list[str] | None) -> str:
+    if not items:
+        return "(none)"
+    return _none_if_empty([f"- {item.strip()}" for item in items if item.strip()])
+
+
+def _skills_block(skills: list[str] | None) -> str:
+    if not skills:
+        return "(none)"
+    lines = [skill.strip() for skill in skills if skill.strip()]
+    return "\n\n".join(lines) if lines else "(none)"
+
+
+def _paired_examples_block(paired_examples: list[Mapping[str, str | None]] | None) -> str:
+    if not paired_examples:
+        return "(none)"
+    chunks: list[str] = []
+    for example in paired_examples:
+        scope = (example.get("scope_source") or "").strip() or "mailbox"
+        chosen = (example.get("chosen") or "").strip()
+        rejected = (example.get("rejected") or "").strip()
+        if not chosen and not rejected:
+            continue
+        parts = [f"[{scope}]"]
+        if chosen:
+            parts.append(f"Chosen:\n{chosen}")
+        if rejected:
+            parts.append(f"Rejected:\n{rejected}")
+        chunks.append("\n".join(parts))
+    return "\n\n".join(chunks) if chunks else "(none)"
+
+
+def _confirmed_cross_block(
+    cross_block: str,
+    confirmed_associations: list[CrossThreadContextSchema] | None,
+) -> str:
+    if not confirmed_associations:
+        return cross_block
+    extra_blocks: list[str] = []
+    mailboxes: list[str] = []
+    for assoc in confirmed_associations:
+        extra_blocks.append(pack_cross_thread(assoc))
+        for msg in assoc.thread_messages:
+            if msg.mailbox and msg.mailbox not in mailboxes:
+                mailboxes.append(msg.mailbox)
+    hints = ""
+    if mailboxes:
+        others = ", ".join(mailboxes)
+        hints = (
+            f"\nSuggestion only (do not send mail): reply on this thread; "
+            f"consider emailing {others}."
+        )
+    packed = "\n\n".join(extra_blocks)
+    header = f"Confirmed associated threads:\n{packed}{hints}"
+    if cross_block == "(none)":
+        return header
+    return f"{cross_block}\n\n{header}"
+
+
 def _build_user_content(
     email: EmailMessageSchema,
     thread_context: ThreadContextSchema,
@@ -101,6 +165,7 @@ def _build_user_content(
     tone_profile: str | None = None,
     skills: list[str] | None = None,
     negative_constraints: list[str] | None = None,
+    paired_examples: list[Mapping[str, str | None]] | None = None,
     urgency_hints: list[str] | None = None,
     instruction: str | None = None,
     confirmed_associations: list[CrossThreadContextSchema] | None = None,
@@ -109,12 +174,20 @@ def _build_user_content(
     mailbox_owner: str | None = None,
     directory: Mapping[str, str] | None = None,
     suppress_local_part: bool = True,
+    user_notes: str = "",
+    facts: list[dict[str, Any]] | None = None,
+    prior_sends: list[dict[str, Any]] | None = None,
+    org_identity: str = "",
 ) -> str:
     thread_block = pack_same_thread(
         thread_context,
         current_message_id=email.message_id,
         verbatim_tail=verbatim_tail,
         full_if_at_most=full_if_at_most,
+        user_notes=user_notes,
+        facts=facts,
+        prior_sends=prior_sends,
+        org_identity=org_identity,
     )
     to_list = ", ".join(email.to_recipients) if email.to_recipients else "(none)"
     cc_list = ", ".join(email.cc_recipients) if email.cc_recipients else "(none)"
@@ -128,53 +201,16 @@ def _build_user_content(
     spam_reason = triage.spam_reason or "(none)"
     context_reason = triage.context_reason or "(none)"
 
-    cross_block = pack_cross_thread(cross_thread_context)
-    if confirmed_associations:
-        extra_blocks: list[str] = []
-        mailboxes: list[str] = []
-        for assoc in confirmed_associations:
-            extra_blocks.append(pack_cross_thread(assoc))
-            for msg in assoc.thread_messages:
-                if msg.mailbox and msg.mailbox not in mailboxes:
-                    mailboxes.append(msg.mailbox)
-        hints = ""
-        if mailboxes:
-            others = ", ".join(mailboxes)
-            hints = (
-                f"\nSuggestion only (do not send mail): reply on this thread; "
-                f"consider emailing {others}."
-            )
-        packed = "\n\n".join(extra_blocks)
-        if cross_block == "(none)":
-            cross_block = f"Confirmed associated threads:\n{packed}{hints}"
-        else:
-            cross_block = f"{cross_block}\n\nConfirmed associated threads:\n{packed}{hints}"
-    if tone_references:
-        tone_block = "\n".join(f"- {ref}" for ref in tone_references if ref.strip())
-        if not tone_block:
-            tone_block = "(none)"
-    else:
-        tone_block = "(none)"
-
+    cross_block = _confirmed_cross_block(
+        pack_cross_thread(cross_thread_context),
+        confirmed_associations,
+    )
+    tone_block = _bullet_block(tone_references)
     profile_block = tone_profile.strip() if tone_profile and tone_profile.strip() else "(none)"
-
-    if skills:
-        skill_lines = [skill.strip() for skill in skills if skill.strip()]
-        skills_block = "\n\n".join(skill_lines) if skill_lines else "(none)"
-    else:
-        skills_block = "(none)"
-
-    if negative_constraints:
-        constraint_lines = [f"- {item.strip()}" for item in negative_constraints if item.strip()]
-        constraints_block = "\n".join(constraint_lines) if constraint_lines else "(none)"
-    else:
-        constraints_block = "(none)"
-
-    if urgency_hints:
-        urgency_lines = [f"- {item.strip()}" for item in urgency_hints if item.strip()]
-        urgency_block = "\n".join(urgency_lines) if urgency_lines else "(none)"
-    else:
-        urgency_block = "(none)"
+    skills_block = _skills_block(skills)
+    constraints_block = _bullet_block(negative_constraints)
+    paired_block = _paired_examples_block(paired_examples)
+    urgency_block = _bullet_block(urgency_hints)
 
     instruction_block = ""
     if instruction and instruction.strip():
@@ -184,12 +220,16 @@ def _build_user_content(
         )
 
     owner_signoff_block = ""
+    owner_line = ""
     if mailbox_owner and mailbox_owner.strip():
         name = mailbox_owner.strip()
         owner_signoff_block = (
             f"\nPersonal mailbox sign-as (hard constraint):\n"
             f'Sign the reply as {name}. Closing name must be exactly "{name}" '
             f"(not the mailbox local-part, not a team name).\n"
+        )
+        owner_line = (
+            f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
         )
 
     addressee = resolve_reply_addressee(
@@ -202,13 +242,6 @@ def _build_user_content(
     addressee_block = ""
     if addressee is not None:
         addressee_block = f"\n{format_reply_addressee_block(addressee)}"
-
-    owner_line = ""
-    if mailbox_owner and mailbox_owner.strip():
-        name = mailbox_owner.strip()
-        owner_line = (
-            f"Mailbox owner: {name} (personal inbox — mail here is for {name} specifically)\n"
-        )
 
     email_block = (
         f"Mailbox: {email.mailbox}\n"
@@ -232,6 +265,8 @@ def _build_user_content(
         f"{wrap_untrusted(UNTRUSTED_SKILLS_TAG, skills_block)}\n\n"
         f"Previously flagged issues to avoid:\n"
         f"{wrap_untrusted(UNTRUSTED_CONSTRAINTS_TAG, constraints_block)}\n\n"
+        f"paired_examples:\n"
+        f"{wrap_untrusted(UNTRUSTED_PAIRED_EXAMPLES_TAG, paired_block)}\n\n"
         f"Tone profile:\n"
         f"{wrap_untrusted(UNTRUSTED_TONE_PROFILE_TAG, profile_block)}\n\n"
         f"Tone references (similar past replies):\n"
@@ -523,11 +558,16 @@ async def generate_draft(
     tone_profile: str | None = None,
     skills: list[str] | None = None,
     negative_constraints: list[str] | None = None,
+    paired_examples: list[Mapping[str, str | None]] | None = None,
     urgency_hints: list[str] | None = None,
     instruction: str | None = None,
     reference_loader: SkillReferenceLoader | None = None,
     confirmed_associations: list[CrossThreadContextSchema] | None = None,
     directory: Mapping[str, str] | None = None,
+    user_notes: str = "",
+    facts: list[dict[str, Any]] | None = None,
+    prior_sends: list[dict[str, Any]] | None = None,
+    org_identity: str = "",
 ) -> DraftCallResult:
     """Call Sonnet (tool loop when loader provided) and return a structured draft."""
     if not settings.anthropic_api_key.strip():
@@ -561,6 +601,7 @@ async def generate_draft(
             tone_profile=tone_profile,
             skills=skills,
             negative_constraints=negative_constraints,
+            paired_examples=paired_examples,
             urgency_hints=urgency_hints,
             instruction=instruction,
             confirmed_associations=scrubbed_confirmed,
@@ -569,6 +610,10 @@ async def generate_draft(
             mailbox_owner=settings.owner_for_mailbox(email.mailbox),
             directory=directory if salute_on else None,
             suppress_local_part=salute_on,
+            user_notes=user_notes,
+            facts=facts,
+            prior_sends=prior_sends,
+            org_identity=org_identity,
         )
     started = time.perf_counter()
     last_error: Exception | None = None

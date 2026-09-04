@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,6 +98,38 @@ async def list_by_thread(
     thread_id: uuid.UUID,
 ) -> list[MessageSchema]:
     stmt = select(Message).where(Message.thread_id == thread_id).order_by(Message.received_at.asc())
+    result = await session.execute(stmt)
+    return [MessageSchema.model_validate(m) for m in result.scalars().all()]
+
+
+async def list_recent_outbound_to_recipient(
+    session: AsyncSession,
+    *,
+    mailbox: str,
+    recipient: str,
+    exclude_thread_id: uuid.UUID,
+    limit: int = 3,
+) -> list[MessageSchema]:
+    """Elise's recent sent bodies to this address, excluding the current thread."""
+    address = recipient.strip()
+    if not address:
+        return []
+    lowered = address.lower()
+    stmt = (
+        select(Message)
+        .join(Thread, Message.thread_id == Thread.id)
+        .where(
+            Thread.mailbox == mailbox,
+            Message.direction == "outbound",
+            Message.thread_id != exclude_thread_id,
+            or_(
+                Message.to_recipients.contains([address]),
+                Message.to_recipients.contains([lowered]),
+            ),
+        )
+        .order_by(Message.received_at.desc())
+        .limit(limit)
+    )
     result = await session.execute(stmt)
     return [MessageSchema.model_validate(m) for m in result.scalars().all()]
 

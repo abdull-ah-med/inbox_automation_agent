@@ -138,3 +138,15 @@ class SearchError(InboxTriageError):
 
 class ChatError(InboxTriageError):
     """Raised when the grounded chat answer call fails after retry."""
+
+
+class ThreadContextVersionConflict(InboxTriageError):
+    """Raised when pin save expected_version does not match the stored pointer."""
+
+
+class ProposalNotFoundError(InboxTriageError):
+    """Raised when a promotion proposal id does not exist."""
+
+
+class ProposalConflictError(InboxTriageError):
+    """Raised when a proposal is not in the state required for the action."""

@@ -158,3 +158,28 @@ async def test_summary_regenerated_when_count_doubles(db_session) -> None:
     assert second is not None
     assert second.message_count == 10
     assert second.summary_text == "Updated summary after ten messages."
+
+
+@pytest.mark.asyncio
+async def test_maybe_refresh_noops_when_thread_context_enabled(db_session) -> None:
+    """Doubling summaries stop when thread working memory is on."""
+    from app.services import thread_summary_service
+
+    thread_id = await _seed_thread(db_session, n=5)
+    client = _haiku_client("Must not be written")
+    settings = Settings(
+        environment="local",
+        anthropic_api_key="sk-ant-test",
+        classification_model="claude-haiku-4-5",
+        target_mailboxes="sales@example.com",
+        thread_context_enabled=True,
+        _env_file=None,
+    )
+    stored = await thread_summary_service.maybe_refresh(
+        db_session,
+        thread_id=thread_id,
+        client=client,
+        settings=settings,
+    )
+    assert stored is None
+    client.messages.create.assert_not_called()

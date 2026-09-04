@@ -1,7 +1,7 @@
 /** Parse backend manual-resolve audit bodies into banner lines (see resolution_service). */
 
 const HEADER_PREFIX_RE =
-  /^(?:You marked this thread resolved\.|Recorded how you resolved this thread\.)\s*/i
+  /^(?:You marked this thread resolved\.|You closed this and took it off Needs Attention\.|Recorded how you resolved this thread\.)\s*/i
 
 const REMOVED_LINE = "Removed from Needs Attention."
 

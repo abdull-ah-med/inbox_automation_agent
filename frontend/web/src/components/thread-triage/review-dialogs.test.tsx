@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
-import { ResolvePromptDialog } from "@/components/thread-triage/review-dialogs"
+import { ApproveDraftDialog, ResolvePromptDialog } from "@/components/thread-triage/review-dialogs"
 
 const noop = () => undefined
 
@@ -45,5 +45,49 @@ describe("ResolvePromptDialog", () => {
     await user.click(screen.getByRole("button", { name: "Mark thread resolved" }))
 
     expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+})
+
+const renderApprove = (overrides: Partial<Parameters<typeof ApproveDraftDialog>[0]> = {}) => {
+  const onApprovalScopeChange = vi.fn()
+  render(
+    <ApproveDraftDialog
+      open
+      onOpenChange={noop}
+      approveBody="Happy to help."
+      onApproveBodyChange={noop}
+      approvalNote=""
+      onApprovalNoteChange={noop}
+      approvalScope=""
+      onApprovalScopeChange={onApprovalScopeChange}
+      busy={false}
+      isPending={false}
+      onConfirm={noop}
+      {...overrides}
+    />,
+  )
+  return { onApprovalScopeChange }
+}
+
+describe("ApproveDraftDialog", () => {
+  it("offers once, similar, sender, and mailbox learning scopes", () => {
+    renderApprove()
+
+    expect(
+      screen.getByRole("radio", { name: "Apply learning to this thread only" }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("radio", { name: "Apply learning to similar emails" }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("radio", {
+        name: "Apply learning to similar emails from this sender",
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("radio", { name: "Apply learning always in this mailbox" }),
+    ).toBeInTheDocument()
+    expect(screen.getByText("Similar emails from this sender")).toBeInTheDocument()
+    expect(screen.getByText("Always in this mailbox")).toBeInTheDocument()
   })
 })

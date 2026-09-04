@@ -189,7 +189,12 @@ async def db_session(migrated_test_database: str) -> AsyncIterator[AsyncSession]
                     "TRUNCATE sent_replies, drafts, messages, audit_events, spam_allowlist, "
                     "thread_summaries, chat_response_cache, "
                     "alert_fingerprint_feedbacks, thread_association_reviews, "
-                    "mailbox_contacts, threads "
+                    "mailbox_contacts, "
+                    "preference_pairs, feedback_atoms, teaching_notes, "
+                    "urgency_predictions, urgency_rules, promotion_proposals, "
+                    "golden_set_cases, "
+                    "thread_context_facts, thread_contexts, "
+                    "threads "
                     "RESTART IDENTITY CASCADE"
                 )
             )

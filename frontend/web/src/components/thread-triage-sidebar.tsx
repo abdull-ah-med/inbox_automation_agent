@@ -1,6 +1,6 @@
 "use client"
 
-import { useMutation, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import {
@@ -11,6 +11,7 @@ import {
   teachingNoteFor,
 } from "@/components/thread-triage/sidebar-helpers"
 import { ThreadTriageSidebarView } from "@/components/thread-triage/sidebar-view"
+import type { ApprovalScope } from "@/components/thread-triage/review-dialogs"
 import { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
 import { useThreadReviewMutations } from "@/hooks/use-thread-review-mutations"
 import { api } from "@/lib/api-client"
@@ -20,6 +21,7 @@ import type {
   AuditEntry,
   ClassificationView,
   DraftView,
+  MessageDetail,
   ReplyAddresseeView,
   ThreadSummary,
   TriageFlags,
@@ -33,6 +35,7 @@ export const ThreadTriageSidebar = ({
   triage,
   auditLog,
   activity = [],
+  messages = [],
   replyAddressee = null,
 }: {
   threadId: string
@@ -42,6 +45,7 @@ export const ThreadTriageSidebar = ({
   triage: TriageFlags | null
   auditLog: AuditEntry[]
   activity?: ActivityEntry[]
+  messages?: MessageDetail[]
   replyAddressee?: ReplyAddresseeView | null
 }) => {
   const queryClient = useQueryClient()
@@ -52,12 +56,18 @@ export const ThreadTriageSidebar = ({
   const [resolveInvolved, setResolveInvolved] = useState("")
   const [approveBody, setApproveBody] = useState("")
   const [approvalNote, setApprovalNote] = useState("")
-  const [approvalScope, setApprovalScope] = useState<"once" | "similar" | "">("")
+  const [approvalScope, setApprovalScope] = useState<ApprovalScope | "">("")
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
   const [actionError, setActionError] = useState<string | null>(null)
   const siblings = useSiblingsPrompt(threadId)
   const presentation = thread.presentation
+  const contextQuery = useQuery({
+    queryKey: ["thread", threadId, "context"],
+    queryFn: () => api.threads.getContext(threadId),
+    retry: false,
+  })
+  const threadContextEnabled = contextQuery.isSuccess
 
   const openResolvePrompt = () => {
     setResolveActionsTaken("")
@@ -157,6 +167,7 @@ export const ThreadTriageSidebar = ({
       triage={triage}
       auditLog={auditLog}
       activity={activity}
+      messages={messages}
       teachingNote={teachingNoteFor(thread.teaching_note, draft?.teaching_note)}
       urgency={firstUrgency(
         presentation?.urgency_assessed,
@@ -211,6 +222,7 @@ export const ThreadTriageSidebar = ({
       onConfirmResolve={handleConfirmResolve}
       onGenerateDraft={handleGenerateDraft}
       onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
+      threadContextEnabled={threadContextEnabled}
     />
   )
 }

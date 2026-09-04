@@ -22,6 +22,8 @@ from app.core.exceptions import (
     InvalidCursorError,
     InvalidDateRangeError,
     InvalidTokenError,
+    ProposalConflictError,
+    ProposalNotFoundError,
     RejectionMemoryNotFoundError,
     ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
@@ -63,6 +65,7 @@ def test_auth_errors_never_echo_internal_strings(exc: AuthError, expected: str) 
     [
         (DraftNotFoundError(f"Draft not found: {uuid.uuid4()}"), "Draft not found"),
         (ThreadNotFoundError(f"Thread not found: {uuid.uuid4()}"), "Thread not found"),
+        (ProposalNotFoundError(f"Proposal not found: {uuid.uuid4()}"), "Proposal not found"),
         (SkillNotFoundError(f"Skill not found: {uuid.uuid4()}"), "Skill not found"),
         (
             ReplyMemoryNotFoundError(f"missing reply {uuid.uuid4()}"),
@@ -98,6 +101,10 @@ def test_not_found_errors_omit_ids(exc: InboxTriageError, expected: str) -> None
             "Skill budget exceeded",
         ),
         (ThreadStateError("Association was not proposed"), "Invalid thread state"),
+        (
+            ProposalConflictError(f"Proposal {uuid.uuid4()} is not pending"),
+            "Proposal is not in the required state",
+        ),
     ],
 )
 def test_validation_errors_use_stable_phrases(exc: InboxTriageError, expected: str) -> None:

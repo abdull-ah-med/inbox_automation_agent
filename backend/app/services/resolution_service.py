@@ -59,15 +59,12 @@ def _resolve_audit_body(
     *,
     resolved_actions: str,
     involved: str | None,
-    urgency: str | None,
     already_resolved: bool,
 ) -> str:
     if already_resolved:
         body = "Recorded how you resolved this thread."
     else:
-        body = "You marked this thread resolved. Removed from Needs Attention."
-        if urgency:
-            body = f"{body} Assessed urgency was {urgency}; it no longer drives priority."
+        body = "You closed this and took it off Needs Attention."
     body = f"{body} Actions taken: {resolved_actions}"
     if involved and involved.strip():
         body = f"{body} With: {involved.strip()}"
@@ -90,7 +87,6 @@ async def _record_resolve_capture(
     body = _resolve_audit_body(
         resolved_actions=resolved_actions,
         involved=involved,
-        urgency=thread.urgency,
         already_resolved=already_resolved,
     )
     snapshot = build_resolve_snapshot(
@@ -116,7 +112,7 @@ async def _record_resolve_capture(
                 "resolution_summary": RESOLUTION_SUMMARIES["manual"],
                 "resolve_snapshot": snapshot,
                 "human": {
-                    "title": "Marked resolved",
+                    "title": "You resolved this",
                     "body": body,
                     "actor_kind": "elise",
                 },

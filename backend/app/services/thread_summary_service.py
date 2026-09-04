@@ -34,6 +34,8 @@ async def maybe_refresh(
     client: AsyncAnthropic,
     settings: Settings,
 ) -> thread_summary_repo.ThreadSummarySchema | None:
+    if settings.thread_context_enabled:
+        return None
     messages = await message_repo.list_by_thread(session, thread_id)
     stored = await thread_summary_repo.get(session, thread_id)
     stored_count = stored.message_count if stored is not None else None

@@ -52,18 +52,20 @@ const DraftSkills = ({ draft }: { draft: DraftView }) => {
   )
 }
 
+const approvalScopeLabel = (scope: DraftView["approval_scope"]): string => {
+  if (scope === "similar") return "Applies to similar emails"
+  if (scope === "sender_address") return "Applies to this sender"
+  if (scope === "mailbox") return "Applies to this mailbox"
+  return "This thread only"
+}
+
 const DraftApprovalNote = ({ draft }: { draft: DraftView }) => {
   if (!draft.approval_note) return null
   return (
     <div className="space-y-1">
       <Field label="Learning context" value={draft.approval_note} />
       {draft.approval_scope ? (
-        <StatusBadge
-          label={
-            draft.approval_scope === "similar" ? "Applies to similar emails" : "This thread only"
-          }
-          tone="blue"
-        />
+        <StatusBadge label={approvalScopeLabel(draft.approval_scope)} tone="blue" />
       ) : null}
     </div>
   )

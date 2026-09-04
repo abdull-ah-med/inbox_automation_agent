@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
+from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +23,7 @@ from app.models.schemas.urgency_feedback import (
 )
 from app.repositories import draft_repo, thread_repo, urgency_feedback_repo
 from app.services import audit_service, embedding_service
+from app.services.feedback_atom_service import atomize_and_persist
 
 logger = structlog.get_logger(__name__)
 
@@ -127,6 +129,17 @@ async def apply_manual_urgency_edit(
         actor=actor,
         mailbox=thread.mailbox,
     )
+    try:
+        from app.services.urgency_rule_service import record_overrides_if_edited
+
+        await record_overrides_if_edited(
+            session,
+            draft_id=draft_id,
+            previous_urgency=previous,
+            new_urgency=request.new_urgency,
+        )
+    except Exception:
+        logger.warning("urgency_override_record_failed", draft_id=str(draft_id))
     return UrgencyEditResult(
         response=UrgencyEditResponseSchema(
             urgency=request.new_urgency,
@@ -153,6 +166,7 @@ async def store_urgency_feedback_memory(
     edited_by_user_id: uuid.UUID | None,
     settings: Settings,
     openai_client: AsyncOpenAI | None,
+    anthropic_client: AsyncAnthropic | None = None,
 ) -> None:
     """Best-effort embed + persist urgency feedback. Never raises to HTTP."""
     if openai_client is None or not settings.openai_api_key.strip():
@@ -184,7 +198,7 @@ async def store_urgency_feedback_memory(
     try:
         factory = get_session_factory()
         async with factory() as session:
-            await urgency_feedback_repo.insert_urgency_feedback(
+            stored = await urgency_feedback_repo.insert_urgency_feedback(
                 session,
                 draft_id=draft_id,
                 thread_id=thread_id,
@@ -196,6 +210,28 @@ async def store_urgency_feedback_memory(
                 embedding=vector,
                 edited_by_user_id=edited_by_user_id,
             )
+            if anthropic_client is not None:
+                try:
+                    await atomize_and_persist(
+                        session,
+                        anthropic_client,
+                        settings,
+                        openai_client,
+                        source_kind="urgency_edit",
+                        source_id=stored.id,
+                        mailbox=mailbox,
+                        text=scrubbed,
+                        thread_id=thread_id,
+                        sender_address=None,
+                        sender_domain=None,
+                        routing_category=routing_category,
+                    )
+                except Exception:
+                    logger.warning(
+                        "urgency_edit_atomize_failed",
+                        draft_id=str(draft_id),
+                        mailbox=mailbox,
+                    )
             if session.in_transaction():
                 await session.commit()
         logger.info(

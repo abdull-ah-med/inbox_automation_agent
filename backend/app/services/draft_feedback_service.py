@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 
 import structlog
@@ -15,17 +16,51 @@ from app.core.draftassistant_resolve import RESOLUTION_SUMMARIES, build_resolve_
 from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
-from app.models.schemas.email import ThreadStateEnum
-from app.repositories import draft_repo, thread_repo
+from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadStateEnum
+from app.repositories import draft_repo, message_repo, preference_pair_repo, thread_repo
 from app.services import (
     audit_service,
+    embedding_service,
     rejection_memory_service,
     reply_memory_service,
     skill_candidate_service,
     tone_profile_service,
 )
+from app.services.feedback_atom_service import atomize_and_persist, record_outcome
 
 logger = structlog.get_logger(__name__)
+
+
+async def _extract_thread_context_after_feedback(
+    *,
+    thread_id: uuid.UUID,
+    settings: Settings,
+    anthropic_client: AsyncAnthropic | None,
+    source: str,
+) -> None:
+    """Best-effort Haiku extract after approve/reject. Dedicated session. Never raises."""
+    if settings.thread_context_enabled is not True or anthropic_client is None:
+        return
+    try:
+        from app.services import thread_context_service
+
+        factory = get_session_factory()
+        async with factory() as session:
+            await thread_context_service.extract_if_needed(
+                session,
+                thread_id,
+                client=anthropic_client,
+                settings=settings,
+                source=source,
+            )
+            if session.in_transaction():
+                await session.commit()
+    except Exception:
+        logger.exception(
+            "thread_context_extract_after_feedback_failed",
+            thread_id=str(thread_id),
+            source=source,
+        )
 
 
 async def _load_thread(
@@ -59,6 +94,79 @@ async def _require_thread_meta(
     if settings is not None and not settings.mailbox_allowed(thread.mailbox):
         raise DraftNotFoundError(f"Draft not found for thread: {thread_id}")
     return (thread.conversation_id, thread.mailbox)
+
+
+async def _latest_inbound_email(
+    session: AsyncSession,
+    thread: thread_repo.ThreadSchema,
+) -> EmailMessageSchema | None:
+    """Build an EmailMessageSchema from the newest inbound message on *thread*."""
+    messages = await message_repo.list_by_thread(session, thread.id)
+    inbound = [m for m in messages if m.direction == EmailDirectionEnum.INBOUND]
+    if not inbound:
+        return None
+    latest = inbound[-1]
+    return EmailMessageSchema(
+        message_id=latest.graph_message_id,
+        conversation_id=thread.conversation_id,
+        mailbox=thread.mailbox,
+        sender=latest.sender,
+        subject=thread.subject,
+        body_text=latest.body_text or "",
+        body_preview=latest.body_preview,
+        body_content_type=latest.body_content_type,
+        body_clean=latest.body_clean,
+        unique_body_text=latest.unique_body_text,
+        received_at=latest.received_at,
+        direction=EmailDirectionEnum.INBOUND,
+        to_recipients=list(latest.to_recipients or []),
+        cc_recipients=list(latest.cc_recipients or []),
+        bcc_recipients=list(latest.bcc_recipients or []),
+        has_attachments=latest.has_attachments,
+        sender_display_name=latest.sender_name,
+        is_automated=latest.is_automated,
+    )
+
+
+async def _insert_preference_pair_for_decision(
+    session: AsyncSession,
+    *,
+    draft: DraftResponseSchema,
+    thread: thread_repo.ThreadSchema,
+    settings: Settings,
+    openai_client: AsyncOpenAI,
+    decision: str,
+    chosen_body: str | None,
+    rejected_body: str | None,
+) -> preference_pair_repo.PreferencePairSchema | None:
+    source = await _latest_inbound_email(session, thread)
+    if source is None:
+        return None
+    source_text = embedding_service.preference_pair_source_text(
+        source,
+        max_tokens=settings.embedding_max_input_tokens,
+    )
+    if not source_text.strip():
+        return None
+    email_embed = await embedding_service.embed_text(
+        source_text, client=openai_client, settings=settings
+    )
+    sender_addr = (thread.alert_sender_norm or source.sender or "").strip().lower()
+    sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+    return await preference_pair_repo.insert_preference_pair(
+        session,
+        draft_id=draft.id,
+        thread_id=draft.thread_id,
+        mailbox=thread.mailbox,
+        sender_address=sender_addr,
+        sender_domain=sender_dom,
+        routing_category=draft.routing_category or "general",
+        email_text_hash=hashlib.sha256(source_text.encode()).hexdigest(),
+        email_embedding=email_embed,
+        decision=decision,
+        chosen_body=chosen_body,
+        rejected_body=rejected_body,
+    )
 
 
 async def approve_draft(
@@ -154,6 +262,78 @@ async def approve_draft(
     return updated
 
 
+async def _shadow_preference_and_atoms_on_approve(
+    *,
+    draft: DraftResponseSchema,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+    anthropic_client: AsyncAnthropic | None,
+) -> None:
+    """Best-effort: write preference_pairs + atoms + record_outcome for any approval scope.
+
+    Called on BOTH ``once`` and ``similar`` paths (and any future scopes).
+    Reply embeddings (dual-write) are handled separately — only on ``similar``.
+    Never raises.
+    """
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            thread = await _load_thread(session, draft.thread_id, settings)
+            if thread is not None:
+                fb_mailbox = thread.mailbox
+                sender_addr = thread.alert_sender_norm or ""
+                sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+                routing_cat = draft.routing_category or "general"
+                final_body = draft.edited_body or draft.reply_body
+
+                pair = None
+                if openai_client and settings.openai_api_key.strip():
+                    try:
+                        pair = await _insert_preference_pair_for_decision(
+                            session,
+                            draft=draft,
+                            thread=thread,
+                            settings=settings,
+                            openai_client=openai_client,
+                            decision="approve",
+                            chosen_body=final_body,
+                            rejected_body=None,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "preference_pair_approve_embed_failed",
+                            draft_id=str(draft.id),
+                        )
+
+                if draft.approval_note and anthropic_client:
+                    await atomize_and_persist(
+                        session,
+                        anthropic_client,
+                        settings,
+                        openai_client,
+                        source_kind="preference_pair",
+                        source_id=pair.id if pair is not None else draft.id,
+                        mailbox=fb_mailbox,
+                        text=draft.approval_note,
+                        thread_id=draft.thread_id,
+                        sender_address=sender_addr,
+                        sender_domain=sender_dom,
+                        routing_category=routing_cat,
+                        draft_body=final_body,
+                        approval_scope=draft.approval_scope,
+                    )
+
+                await record_outcome(session, draft.id, was_approved=True)
+
+                if session.in_transaction():
+                    await session.commit()
+    except Exception:
+        logger.exception(
+            "feedback_atoms_approve_failed",
+            draft_id=str(draft.id),
+        )
+
+
 async def store_approved_reply_memory(
     *,
     draft: DraftResponseSchema,
@@ -164,8 +344,8 @@ async def store_approved_reply_memory(
     """Best-effort reply memory after the approve txn has committed.
 
     Stores ``reply_embeddings`` only when ``approval_scope == "similar"``.
-    Scope ``once`` or ``None`` (plain approve) skips embedding per the
-    five-feature plan.
+    Preference pairs + atoms run for ALL scopes (once, similar, sender_address,
+    mailbox) via ``_shadow_preference_and_atoms_on_approve``.
 
     Uses a **dedicated** DB session so embed/DB failures cannot leave the
     request session in SQLAlchemy's inactive/pending-rollback state.
@@ -197,6 +377,19 @@ async def store_approved_reply_memory(
             anthropic_client=anthropic_client,
             mailbox=mailbox,
             routing_category=draft.routing_category,
+        )
+        # preference_pairs + atoms still run for once / sender_address / mailbox
+        await _shadow_preference_and_atoms_on_approve(
+            draft=draft,
+            settings=settings,
+            openai_client=openai_client,
+            anthropic_client=anthropic_client,
+        )
+        await _extract_thread_context_after_feedback(
+            thread_id=draft.thread_id,
+            settings=settings,
+            anthropic_client=anthropic_client,
+            source="draft_approve",
         )
         return
 
@@ -234,6 +427,20 @@ async def store_approved_reply_memory(
         anthropic_client=anthropic_client,
         mailbox=mailbox,
         routing_category=draft.routing_category,
+    )
+
+    # --- Feedback Loops v2: preference_pairs + atoms + outcome (similar path) ---
+    await _shadow_preference_and_atoms_on_approve(
+        draft=draft,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=anthropic_client,
+    )
+    await _extract_thread_context_after_feedback(
+        thread_id=draft.thread_id,
+        settings=settings,
+        anthropic_client=anthropic_client,
+        source="draft_approve",
     )
 
 
@@ -278,7 +485,6 @@ async def store_rejection_memory(
             "rejection_memory_post_reject_failed",
             draft_id=str(draft.id),
         )
-        return
 
     await skill_candidate_service.maybe_propose_from_rejects(
         settings=settings,
@@ -286,6 +492,71 @@ async def store_rejection_memory(
         mailbox=mailbox,
         routing_category=routing_category,
         reason_code=reason_code,
+    )
+
+    # --- Feedback Loops v2: preference_pairs + atoms + outcome (best-effort) ---
+    try:
+        factory = get_session_factory()
+        async with factory() as session:
+            thread = await _load_thread(session, draft.thread_id, settings)
+            if thread is not None:
+                fb_mailbox = thread.mailbox
+                sender_addr = thread.alert_sender_norm or ""
+                sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+                routing_cat = draft.routing_category or "general"
+                rejected_body = draft.edited_body or draft.reply_body
+
+                pair = None
+                if openai_client and settings.openai_api_key.strip():
+                    try:
+                        pair = await _insert_preference_pair_for_decision(
+                            session,
+                            draft=draft,
+                            thread=thread,
+                            settings=settings,
+                            openai_client=openai_client,
+                            decision="reject",
+                            chosen_body=None,
+                            rejected_body=rejected_body,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "preference_pair_reject_embed_failed",
+                            draft_id=str(draft.id),
+                        )
+
+                if draft.feedback_note and anthropic_client:
+                    await atomize_and_persist(
+                        session,
+                        anthropic_client,
+                        settings,
+                        openai_client,
+                        source_kind="preference_pair",
+                        source_id=pair.id if pair is not None else draft.id,
+                        mailbox=fb_mailbox,
+                        text=draft.feedback_note,
+                        thread_id=draft.thread_id,
+                        sender_address=sender_addr,
+                        sender_domain=sender_dom,
+                        routing_category=routing_cat,
+                        draft_body=rejected_body,
+                    )
+
+                await record_outcome(session, draft.id, was_approved=False)
+
+                if session.in_transaction():
+                    await session.commit()
+    except Exception:
+        logger.exception(
+            "feedback_atoms_reject_failed",
+            draft_id=str(draft.id),
+        )
+
+    await _extract_thread_context_after_feedback(
+        thread_id=draft.thread_id,
+        settings=settings,
+        anthropic_client=anthropic_client,
+        source="draft_reject",
     )
 
 
@@ -432,7 +703,7 @@ async def mark_wrong(
                     "resolution_summary": RESOLUTION_SUMMARIES["wrong_action"],
                     "resolve_snapshot": snapshot,
                     "human": {
-                        "title": "Marked resolved",
+                        "title": "You resolved this",
                         "body": RESOLUTION_SUMMARIES["wrong_action"],
                         "actor_kind": "elise",
                     },

@@ -229,6 +229,67 @@ def _message(
 
 
 @pytest.mark.asyncio
+async def test_get_thread_prefers_context_pins_and_facts_over_summary() -> None:
+    from app.services.chat_tools import execute_chat_tool
+
+    pointer = SimpleNamespace(user_notes="Do not CC legal")
+    fact = SimpleNamespace(body="Check 11111 cancelled", source_message_id=uuid.uuid4())
+    with (
+        patch(
+            "app.services.chat_tools.thread_repo.get_by_id",
+            AsyncMock(return_value=_thread()),
+        ),
+        patch(
+            "app.services.chat_tools.message_repo.list_by_thread",
+            AsyncMock(return_value=[_message(body="Please cancel check 11111")]),
+        ),
+        patch(
+            "app.services.chat_tools.thread_context_repo.get",
+            AsyncMock(return_value=pointer),
+        ),
+        patch(
+            "app.services.chat_tools.thread_context_repo.list_active_facts",
+            AsyncMock(return_value=[fact]),
+        ),
+        patch(
+            "app.services.chat_tools.thread_summary_repo.get",
+            AsyncMock(
+                return_value=SimpleNamespace(summary_text="OLD ESSAY SUMMARY MUST NOT APPEAR")
+            ),
+        ),
+    ):
+        settings = Settings(
+            environment="local",
+            jwt_secret="c" * 64,
+            frontend_origin="http://localhost:3000",
+            cookie_secure=False,
+            target_mailboxes=f"{SALES},{CR}",
+            anthropic_api_key="sk-ant-test",
+            chat_model="claude-haiku-4-5",
+            database_url=(
+                "postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test"
+            ),
+            redis_url="redis://localhost:6379/15",
+            thread_context_enabled=True,
+        )
+        result = await execute_chat_tool(
+            AsyncMock(),
+            settings,
+            openai_client=None,
+            name="get_thread",
+            arguments={"thread_id": str(THREAD_A)},
+            mailbox=SALES,
+            limit=10,
+        )
+
+    assert result.hits
+    snippet = result.hits[0].snippet
+    assert "Do not CC legal" in snippet
+    assert "Check 11111 cancelled" in snippet
+    assert "OLD ESSAY SUMMARY MUST NOT APPEAR" not in snippet
+
+
+@pytest.mark.asyncio
 async def test_get_thread_hides_threads_outside_the_mailbox_filter() -> None:
     from app.services.chat_tools import execute_chat_tool
 

@@ -87,6 +87,24 @@ class Settings(BaseSettings):
     chat_semantic_cache_enabled: bool = True
     # Global contact greeting names + bare "Hi," when no personal name is known.
     salute_directory_enabled: bool = False
+    # Feedback Loops v2 — default False until evals pass.
+    feedback_atoms_enabled: bool = False
+    # CSV of mailboxes for which paired retrieval is active (empty = disabled).
+    paired_retrieval_mailboxes: str = ""
+    applies_when_gate_enabled: bool = False
+    draft_validator_enabled: bool = False
+    # Urgency rules — post-model LF evaluation (PagerDuty pattern). Default off.
+    urgency_rules_enabled: bool = False
+    # Emit per-level probability vector from triage; required for calibration worker.
+    urgency_probs_enabled: bool = False
+    # Nightly clustering of urgency edits into promotion proposals. Default off.
+    promotion_proposals_enabled: bool = False
+    # Dev-only: empty golden set may pass. Production must stay fail-closed.
+    allow_empty_golden_set: bool = False
+    # Per-thread working memory (pins + ADD-only facts). Default off.
+    thread_context_enabled: bool = False
+    # Tiny always-on org identity string for the draft pack. Empty omits the block.
+    org_identity: str = ""
     chat_semantic_cache_threshold: float = Field(default=0.92, ge=0.5, le=0.999)
     chat_semantic_cache_ttl_overview_sec: int = Field(default=300, ge=30, le=86_400)
     chat_semantic_cache_ttl_search_sec: int = Field(default=300, ge=30, le=86_400)
@@ -170,6 +188,14 @@ class Settings(BaseSettings):
         "graph_webhooks_enabled",
         "poll_enabled",
         "heal_threads_enabled",
+        "feedback_atoms_enabled",
+        "applies_when_gate_enabled",
+        "draft_validator_enabled",
+        "urgency_rules_enabled",
+        "urgency_probs_enabled",
+        "promotion_proposals_enabled",
+        "allow_empty_golden_set",
+        "thread_context_enabled",
         mode="before",
     )
     @classmethod
@@ -371,6 +397,8 @@ class Settings(BaseSettings):
                 errors.append("SLACK_REVIEW_CHANNEL_ID must be set when ENVIRONMENT is not local")
         if self.enable_dev_routes:
             errors.append("ENABLE_DEV_ROUTES must be false outside local")
+        if self.allow_empty_golden_set:
+            errors.append("ALLOW_EMPTY_GOLDEN_SET must be false outside local")
         return errors
 
     def _production_host_auth_errors(self) -> list[str]:

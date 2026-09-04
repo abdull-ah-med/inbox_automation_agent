@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -18,7 +18,7 @@ from app.core.dependencies import (
 )
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ThreadNotFoundError
-from app.core.rate_limit import limiter
+from app.core.rate_limit import context_rebuild_rate_limit_key, limiter
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     AuditEntry,
@@ -44,6 +44,10 @@ from app.models.schemas.resolution import (
     ResolveThreadSchema,
 )
 from app.models.schemas.spam import NotSpamResponseSchema
+from app.models.schemas.thread_context import (
+    ThreadContextNotesUpdate,
+    ThreadContextView,
+)
 from app.models.schemas.urgency_hitl import (
     UrgencyHitlFeedbackResponse,
     UrgencyHitlFeedbackSchema,
@@ -56,6 +60,7 @@ from app.services import (
     recurrence_service,
     related_thread_service,
     resolution_service,
+    thread_context_service,
     thread_view_service,
 )
 
@@ -447,3 +452,143 @@ async def mark_thread_not_spam(
         client=client,
         openai_client=openai_client,
     )
+
+
+async def _require_context_thread(
+    session: AsyncSession,
+    settings: Settings,
+    thread_id: uuid.UUID,
+) -> None:
+    if not settings.thread_context_enabled:
+        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
+        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+
+
+async def _run_context_rebuild(thread_id: uuid.UUID, settings: Settings) -> None:
+    from app.core.dependencies import anthropic_client_from_settings
+    from app.db.session import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        client = anthropic_client_from_settings(settings)
+        async with factory() as session:
+            outcome = await thread_context_service.extract_if_needed(
+                session,
+                thread_id,
+                client=client,
+                settings=settings,
+                source="rebuild",
+                force=True,
+            )
+            await thread_context_service.complete_rebuild_after_extract(session, thread_id, outcome)
+            if session.in_transaction():
+                await session.commit()
+    except Exception:
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                await thread_context_service.finish_rebuild(
+                    session,
+                    thread_id,
+                    error="Rebuild failed. Try again.",
+                )
+                if session.in_transaction():
+                    await session.commit()
+        except Exception:
+            return
+
+
+@router.get(
+    "/{thread_id}/context",
+    response_model=ThreadContextView,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("120/minute")
+async def get_thread_context(
+    thread_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    _user: CurrentUser,
+) -> ThreadContextView:
+    _ = request, response
+    await _require_context_thread(session, settings, thread_id)
+    return await thread_context_service.present_context(session, thread_id)
+
+
+@router.put(
+    "/{thread_id}/context/user_notes",
+    response_model=ThreadContextView,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def put_thread_context_user_notes(
+    thread_id: uuid.UUID,
+    body: ThreadContextNotesUpdate,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    _user: CurrentUser,
+) -> ThreadContextView:
+    _ = request, response
+    await _require_context_thread(session, settings, thread_id)
+    await thread_context_service.save_user_notes(
+        session,
+        thread_id,
+        notes=body.user_notes,
+        expected_version=body.expected_version,
+    )
+    view = await thread_context_service.present_context(session, thread_id)
+    await session.commit()
+    return view
+
+
+@router.post(
+    "/{thread_id}/context/rebuild",
+    response_model=ThreadContextView,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+@limiter.limit("12/minute", key_func=context_rebuild_rate_limit_key)
+async def rebuild_thread_context(
+    thread_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    background_tasks: BackgroundTasks,
+    _user: CurrentUser,
+) -> ThreadContextView:
+    _ = request, response
+    await _require_context_thread(session, settings, thread_id)
+    spawned = await thread_context_service.begin_rebuild(session, thread_id)
+    await session.commit()
+    if spawned:
+        background_tasks.add_task(_run_context_rebuild, thread_id, settings)
+    return await thread_context_service.present_context(session, thread_id)
+
+
+@router.delete(
+    "/{thread_id}/context/facts/{fact_id}",
+    response_model=ThreadContextView,
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+async def discard_thread_context_fact(
+    thread_id: uuid.UUID,
+    fact_id: uuid.UUID,
+    request: Request,
+    response: Response,
+    session: DbSession,
+    settings: AppSettings,
+    _user: CurrentUser,
+) -> ThreadContextView:
+    _ = request, response
+    await _require_context_thread(session, settings, thread_id)
+    await thread_context_service.discard_fact(session, thread_id, fact_id)
+    view = await thread_context_service.present_context(session, thread_id)
+    await session.commit()
+    return view

@@ -203,6 +203,7 @@ const ThreadDetailLoaded = ({
             triage={triage}
             auditLog={audit_log}
             activity={activity ?? []}
+            messages={messages}
             replyAddressee={reply_addressee ?? null}
           />
         </aside>

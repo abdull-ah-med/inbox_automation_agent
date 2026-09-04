@@ -21,18 +21,22 @@ from app.api.simulate.ingest import router as simulate_ingest_router
 from app.api.web.chat import router as chat_router
 from app.api.web.dashboard import router as dashboard_router
 from app.api.web.drafts import router as drafts_router
+from app.api.web.feedback_atoms import router as feedback_atoms_router
 from app.api.web.mailbox_contacts import router as mailbox_contacts_router
 from app.api.web.mailboxes import router as mailboxes_router
+from app.api.web.promotion_proposals import router as promotion_proposals_router
 from app.api.web.rejection_memory import router as rejection_memory_router
 from app.api.web.reply_memory import router as reply_memory_router
 from app.api.web.reports import router as reports_router
 from app.api.web.search import router as search_router
 from app.api.web.skill_candidates import router as skill_candidates_router
 from app.api.web.skills import router as skills_router
+from app.api.web.teaching_notes import router as teaching_notes_router
 from app.api.web.threads import router as threads_router
 from app.api.web.tone_profiles import router as tone_profiles_router
+from app.api.web.urgency_rules import router as urgency_rules_router
 from app.api.webhooks.graph import router as graph_webhook_router
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.dependencies import (
     close_graph_client,
     close_openai_client,
@@ -55,6 +59,8 @@ from app.core.exceptions import (
     InvalidCursorError,
     InvalidDateRangeError,
     InvalidTokenError,
+    ProposalConflictError,
+    ProposalNotFoundError,
     RejectionMemoryNotFoundError,
     ReplyMemoryNotFoundError,
     ReusedRefreshTokenError,
@@ -63,6 +69,7 @@ from app.core.exceptions import (
     SkillBudgetExceededError,
     SkillNameConflictError,
     SkillNotFoundError,
+    ThreadContextVersionConflict,
     ThreadNotFoundError,
     ThreadStateError,
     TriageError,
@@ -74,6 +81,9 @@ from app.core.middleware.slowapi_asgi import SlowAPIStreamingMiddleware
 from app.core.public_errors import public_detail
 from app.core.rate_limit import limiter
 from app.db.session import dispose_engine, get_session_factory
+from app.workers.calibration_worker import run_calibration
+from app.workers.canary_sweeper_worker import run_canary_sweeper
+from app.workers.feedback_rollup_worker import run_weekly_feedback_rollup
 from app.workers.graph_subscription_worker import (
     run_subscription_reconcile,
     run_subscription_renewal,
@@ -84,6 +94,8 @@ from app.workers.heal_threads_worker import (
 )
 from app.workers.ops_report_worker import run_weekly_ops_report
 from app.workers.poll_fallback_worker import run_poll_all_mailboxes
+from app.workers.scope_decay_worker import run_scope_decay
+from app.workers.urgency_proposal_worker import run_urgency_proposals
 from app.workers.webhook_stream_worker import run_webhook_stream_worker
 
 logger = structlog.get_logger(__name__)
@@ -96,12 +108,15 @@ EXCEPTION_STATUS_MAP: dict[type[InboxTriageError], int] = {
     DraftGenerationError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     DraftNotFoundError: status.HTTP_404_NOT_FOUND,
     ThreadNotFoundError: status.HTTP_404_NOT_FOUND,
+    ProposalNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNotFoundError: status.HTTP_404_NOT_FOUND,
     ReplyMemoryNotFoundError: status.HTTP_404_NOT_FOUND,
     RejectionMemoryNotFoundError: status.HTTP_404_NOT_FOUND,
     SkillNameConflictError: status.HTTP_409_CONFLICT,
     SkillBudgetExceededError: status.HTTP_422_UNPROCESSABLE_CONTENT,
     ThreadStateError: status.HTTP_409_CONFLICT,
+    ThreadContextVersionConflict: status.HTTP_409_CONFLICT,
+    ProposalConflictError: status.HTTP_409_CONFLICT,
     AuditError: status.HTTP_500_INTERNAL_SERVER_ERROR,
     InvalidCredentialsError: status.HTTP_401_UNAUTHORIZED,
     InvalidTokenError: status.HTTP_401_UNAUTHORIZED,
@@ -142,6 +157,44 @@ async def _purge_expired_chat_cache() -> None:
             logger.info("chat_cache_purged_expired", count=purged)
     except Exception:
         logger.warning("chat_cache_purge_expired_failed")
+
+
+def _schedule_feedback_loop_jobs(scheduler: AsyncIOScheduler, settings: Settings) -> None:
+    """Register Feedback Loops workers. Each job is gated by the flag that owns its tables."""
+    if settings.feedback_atoms_enabled:
+        scheduler.add_job(
+            run_scope_decay,
+            trigger=CronTrigger(hour=2, minute=30, timezone="UTC"),
+            id="scope_decay",
+            replace_existing=True,
+        )
+    if settings.promotion_proposals_enabled:
+        scheduler.add_job(
+            run_urgency_proposals,
+            trigger=CronTrigger(hour=3, minute=0, timezone="UTC"),
+            id="urgency_proposals",
+            replace_existing=True,
+        )
+    if settings.urgency_probs_enabled:
+        scheduler.add_job(
+            run_calibration,
+            trigger=CronTrigger(hour=4, minute=0, timezone="UTC"),
+            id="urgency_calibration",
+            replace_existing=True,
+        )
+    if settings.urgency_rules_enabled:
+        scheduler.add_job(
+            run_canary_sweeper,
+            trigger=CronTrigger(hour=4, minute=15, timezone="UTC"),
+            id="urgency_canary_sweeper",
+            replace_existing=True,
+        )
+    scheduler.add_job(
+        run_weekly_feedback_rollup,
+        trigger=CronTrigger(day_of_week="sun", hour=5, minute=0, timezone="UTC"),
+        id="feedback_weekly_rollup",
+        replace_existing=True,
+    )
 
 
 @asynccontextmanager
@@ -243,6 +296,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             id="heal_threads",
             replace_existing=True,
         )
+    _schedule_feedback_loop_jobs(_scheduler, settings)
     _scheduler.start()
     logger.info(
         "scheduler_started",
@@ -377,6 +431,10 @@ def create_app() -> FastAPI:
     app.include_router(reply_memory_router)
     app.include_router(rejection_memory_router)
     app.include_router(tone_profiles_router)
+    app.include_router(teaching_notes_router)
+    app.include_router(feedback_atoms_router)
+    app.include_router(promotion_proposals_router)
+    app.include_router(urgency_rules_router)
     app.include_router(graph_webhook_router)
     if mount_dev_routes:
         if not settings.dev_api_key.strip():

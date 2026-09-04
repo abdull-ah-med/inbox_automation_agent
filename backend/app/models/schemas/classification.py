@@ -32,7 +32,7 @@ class ClassificationResultSchema(BaseModel):
 
 
 class TriageResultSchema(BaseModel):
-    """Haiku triage output — boolean flags + routing category (no numeric score)."""
+    """Haiku triage output — boolean flags + routing category + optional urgency probs."""
 
     is_spam: bool
     spam_reason: str | None = None
@@ -43,6 +43,9 @@ class TriageResultSchema(BaseModel):
     routing_category: RoutingCategory
     draft_needed: bool = True
     is_automated: bool = False
+    # Urgency prediction fields — optional; emitted when urgency_probs_enabled flag is on.
+    urgency: str | None = None
+    probs: dict[str, float] | None = None
 
     @model_validator(mode="before")
     @classmethod

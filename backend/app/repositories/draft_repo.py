@@ -195,6 +195,8 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
         applied_skills=_parse_applied_skills(row.applied_skills_json),
         tool_calls=_parse_tool_calls(row.tool_calls_json),
+        retrieved_atom_ids=list(row.retrieved_atom_ids or []),
+        retrieved_note_ids=list(row.retrieved_note_ids or []),
     )
 
 
@@ -234,6 +236,8 @@ async def create_draft(
     routing_category: str | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
     applied_skills: list[AppliedSkillSchema] | list[dict[str, Any]] | None = None,
+    retrieved_atom_ids: list[uuid.UUID] | None = None,
+    retrieved_note_ids: list[uuid.UUID] | None = None,
 ) -> DraftResponseSchema:
     """Insert a draft or return the existing row on ``message_id`` conflict.
 
@@ -256,6 +260,8 @@ async def create_draft(
         routing_category=routing_category,
         tool_calls_json=tool_calls,
         applied_skills_json=_applied_skills_payload(applied_skills),
+        retrieved_atom_ids=retrieved_atom_ids or [],
+        retrieved_note_ids=retrieved_note_ids or [],
     )
     upsert_stmt = insert_stmt.on_conflict_do_nothing(
         index_elements=["message_id"],
@@ -281,6 +287,8 @@ async def create_regenerated_draft(
     context_match_confidence: float | None = None,
     tool_calls: list[dict[str, Any]] | None = None,
     applied_skills: list[AppliedSkillSchema] | list[dict[str, Any]] | None = None,
+    retrieved_atom_ids: list[uuid.UUID] | None = None,
+    retrieved_note_ids: list[uuid.UUID] | None = None,
 ) -> DraftResponseSchema:
     """Insert a new draft row for regeneration (unique message_id required)."""
     row = Draft(
@@ -296,6 +304,8 @@ async def create_regenerated_draft(
         suggested_actions=_suggested_actions_payload(draft),
         tool_calls_json=tool_calls,
         applied_skills_json=_applied_skills_payload(applied_skills),
+        retrieved_atom_ids=retrieved_atom_ids or [],
+        retrieved_note_ids=retrieved_note_ids or [],
     )
     session.add(row)
     await session.flush()

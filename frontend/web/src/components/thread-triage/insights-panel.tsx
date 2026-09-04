@@ -158,7 +158,10 @@ export const InsightsPanel = ({
                     <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
                       {entry.title}
                     </p>
-                    <p className="text-muted-foreground mt-0.5 text-xs">{entry.body}</p>
+                    {entry.body.trim() &&
+                    entry.body.trim().toLowerCase() !== entry.title.trim().toLowerCase() ? (
+                      <p className="text-muted-foreground mt-0.5 text-xs">{entry.body.trim()}</p>
+                    ) : null}
                     <p className="text-muted-foreground mt-1 text-[11px]">
                       {formatRelativeTime(entry.timestamp)}
                     </p>

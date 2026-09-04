@@ -120,6 +120,21 @@ def test_build_user_content_includes_owner_signoff_when_set() -> None:
     assert 'Closing name must be exactly "Elise"' in content
 
 
+def test_build_user_content_includes_working_memory_pin_literal() -> None:
+    email = _email()
+    content = draft_llm._build_user_content(
+        email,
+        _context(email),
+        _triage(),
+        user_notes="Do not CC legal",
+        facts=[{"text": "Check 11111 cancelled", "source_message_id": "m1"}],
+        org_identity="We are SampleSite Support, not SAMPLERECORDS.",
+    )
+    assert "Do not CC legal" in content
+    assert "Check 11111 cancelled" in content
+    assert "We are SampleSite Support, not SAMPLERECORDS." in content
+
+
 def test_build_user_content_omits_owner_signoff_when_unset() -> None:
     content = draft_llm._build_user_content(_email(), _context(_email()), _triage())
     assert "Sign the reply as" not in content
@@ -197,6 +212,38 @@ def test_build_user_content_includes_urgency_hints() -> None:
     )
     assert "Past urgency corrections" in content
     assert "[HIGH] Client has an SLA deadline tomorrow" in content
+
+
+def test_build_user_content_puts_paired_examples_in_own_slot() -> None:
+    """ICDPO demonstrations live under paired_examples, not the constraints list."""
+    from app.llm.prompts import UNTRUSTED_CONSTRAINTS_TAG, UNTRUSTED_PAIRED_EXAMPLES_TAG
+
+    chosen = "Thanks — the POD is attached."
+    rejected = "Sorry we cannot help with this request."
+    content = draft_llm._build_user_content(
+        _email(),
+        _context(_email()),
+        _triage(),
+        negative_constraints=["Always greet by first name"],
+        paired_examples=[
+            {
+                "chosen": chosen,
+                "rejected": rejected,
+                "scope_source": "sender_address",
+            }
+        ],
+    )
+    assert "paired_examples" in content
+    assert f"<{UNTRUSTED_PAIRED_EXAMPLES_TAG}>" in content
+    assert chosen in content
+    assert rejected in content
+    # Chosen/rejected must not be mixed into the negative-constraints block.
+    start = content.find(f"<{UNTRUSTED_CONSTRAINTS_TAG}>")
+    end = content.find(f"</{UNTRUSTED_CONSTRAINTS_TAG}>")
+    constraints_block = content[start:end]
+    assert chosen not in constraints_block
+    assert "Always greet by first name" in constraints_block
+    assert "sender_address" in content
 
 
 def test_build_user_content_uses_cleaned_body_not_quotes() -> None:

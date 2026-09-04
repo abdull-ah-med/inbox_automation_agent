@@ -155,6 +155,10 @@ class MessageDetail(BaseModel):
     outlook_url: str | None = None
     meeting_message_type: str | None = None
     meeting_response_type: str | None = None
+    sender_name: str | None = None
+    summary_one_line: str | None = None
+    summary_ask: str | None = None
+    summary_intent: str | None = None
 
 
 class MessageHtmlBody(BaseModel):

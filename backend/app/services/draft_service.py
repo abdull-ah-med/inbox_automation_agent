@@ -162,6 +162,17 @@ async def run_draft(
             current=state.original_email,
         )
 
+    from app.core.internal_mail import extract_email_address
+    from app.services import thread_context_service
+
+    working_memory = await thread_context_service.load_draft_working_memory(
+        session,
+        thread_id,
+        settings=settings,
+        mailbox=state.original_email.mailbox,
+        recipient=extract_email_address(state.original_email.sender),
+    )
+
     try:
         result = await draft_llm.generate_draft(
             state.original_email,
@@ -178,6 +189,10 @@ async def run_draft(
             reference_loader=reference_loader,
             confirmed_associations=confirmed_associations,
             directory=directory,
+            user_notes=working_memory.get("user_notes", ""),
+            facts=working_memory.get("facts") or None,
+            prior_sends=working_memory.get("prior_sends") or None,
+            org_identity=working_memory.get("org_identity", ""),
         )
     except DraftGenerationError as exc:
         logger.warning(

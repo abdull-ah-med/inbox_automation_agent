@@ -151,7 +151,7 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
             new=AsyncMock(return_value=(None, [])),
         ),
         patch(
-            "app.services.pipeline.service.rejection_memory_service.find_negative_constraints",
+            "app.services.pipeline.service.load_legacy_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -183,6 +183,7 @@ async def test_phased_skips_graph_and_context_when_openai_unconfigured() -> None
                 environment="local",
                 openai_api_key="",
                 salute_directory_enabled=False,
+                thread_context_enabled=False,
             ),
             client=AsyncMock(),
             openai_client=None,

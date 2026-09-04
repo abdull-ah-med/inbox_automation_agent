@@ -142,6 +142,10 @@ export interface MessageDetail {
   outlook_url: string | null
   meeting_message_type?: string | null
   meeting_response_type?: string | null
+  sender_name?: string | null
+  summary_one_line?: string | null
+  summary_ask?: string | null
+  summary_intent?: string | null
 }
 
 export interface ClassificationView {
@@ -190,7 +194,7 @@ export interface DraftView {
   feedback_reason_code: string | null
   routing_category: string | null
   approval_note: string | null
-  approval_scope: "once" | "similar" | null
+  approval_scope: "once" | "similar" | "sender_address" | "mailbox" | null
   applied_skills: AppliedSkill[]
   tool_calls: DraftToolCall[] | null
 }
@@ -386,6 +390,23 @@ export interface MailboxContactPatch {
   notes?: string | null
 }
 
+export interface ThreadContextFact {
+  id: string
+  body: string
+  source_message_id: string | null
+  created_at: string | null
+  source_received_at?: string | null
+}
+
+export interface ThreadContextView {
+  version: number
+  user_notes: string
+  facts: ThreadContextFact[]
+  updated_at: string | null
+  rebuild_in_progress?: boolean
+  rebuild_error?: string | null
+}
+
 export interface ThreadDetail {
   thread: ThreadSummary
   messages: MessageDetail[]
@@ -484,4 +505,98 @@ export interface SearchResponse {
   query: string
   mailbox: string | null
   hits: SearchHit[]
+}
+
+export type TeachingNoteCreateScope =
+  | "sender_address"
+  | "sender_domain"
+  | "mailbox+routing_category"
+  | "mailbox"
+
+export type TeachingNoteStatus = "active" | "paused" | "archived"
+
+export interface TeachingNote {
+  id: string
+  mailbox: string
+  title: string
+  body: string
+  applies_when: string | null
+  scope: string
+  scope_key: string
+  status: TeachingNoteStatus
+  origin: string
+  origin_atom_id: string | null
+  person_bound: boolean
+  hit_count: number
+  precision_num: number
+  precision_den: number
+  created_at: string | null
+  updated_at: string | null
+  proposal_id?: string | null
+}
+
+export type FeedbackAtomRole = "Fix" | "Spec" | "Null"
+
+export interface FeedbackAtom {
+  id: string
+  source_kind: string
+  source_id: string
+  mailbox: string
+  atom_text: string
+  role: FeedbackAtomRole
+  applies_when: string | null
+  scope: string
+  scope_key: string
+  is_active: boolean
+  hit_count: number
+  precision_num: number
+  precision_den: number
+  expires_at: string | null
+  person_bound: boolean
+  promoted_from_atom_id: string | null
+  created_at: string | null
+}
+
+export type PromotionProposalKind = "atom_widening" | "urgency_rule" | "note_widening"
+export type PromotionProposalStatus = "pending" | "accepted" | "dismissed" | "expired" | "reverted"
+
+export interface PromotionProposal {
+  id: string
+  mailbox: string
+  kind: PromotionProposalKind
+  payload: Record<string, unknown>
+  impact_num: number
+  impact_den: number
+  precision_num: number | null
+  precision_den: number | null
+  evidence_ids: string[]
+  status: PromotionProposalStatus
+  expires_at: string
+  created_at: string | null
+  dedupe_key?: string | null
+}
+
+export type UrgencyRuleStatus = "canary" | "active" | "paused" | "archived"
+
+export interface UrgencyRule {
+  id: string
+  mailbox: string
+  scope: string
+  scope_key: string
+  condition: Record<string, unknown>
+  action: Record<string, unknown>
+  status: UrgencyRuleStatus
+  canary_until: string | null
+  activated_at: string | null
+  paused_at: string | null
+  impact_num: number | null
+  impact_den: number | null
+  precision_num: number | null
+  precision_den: number | null
+  hit_count: number
+  override_count: number
+  person_bound: boolean
+  previous_status: string | null
+  created_at: string | null
+  updated_at: string | null
 }

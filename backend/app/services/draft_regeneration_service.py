@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError, ThreadNotFoundError, ThreadStateError
 from app.core.tenant_scope import TenantScope
 from app.llm import draft_generator as draft_llm
+from app.llm.draft_generator import DraftCallResult
 from app.models.schemas.classification import TriageResultSchema
 from app.models.schemas.dashboard import TriageFlags
 from app.models.schemas.draft import DraftResponseSchema
@@ -31,11 +32,15 @@ from app.repositories import (
 )
 from app.services import (
     audit_service,
-    rejection_memory_service,
     sent_reply_service,
     skill_selection_service,
     tone_profile_service,
     urgency_feedback_service,
+)
+from app.services.feedback_atom_service import atomize_and_persist, record_retrieval_hits
+from app.services.feedback_draft_context import (
+    load_legacy_negative_constraints,
+    load_paired_constraints,
 )
 
 logger = structlog.get_logger(__name__)
@@ -124,6 +129,54 @@ def _build_triage_from_flags(
     return triage
 
 
+async def _select_skills_for_regen(
+    session: AsyncSession,
+    *,
+    client: AsyncAnthropic,
+    settings: Settings,
+    openai_client: AsyncOpenAI | None,
+    email: EmailMessageSchema,
+    triage: TriageResultSchema,
+    conversation_id: str,
+    thread_id: uuid.UUID,
+) -> tuple[list[str], list[uuid.UUID], list]:
+    try:
+        selected = await skill_selection_service.select_skills(
+            session,
+            client=client,
+            settings=settings,
+            openai_client=openai_client,
+            email=email,
+            triage=triage,
+            conversation_id=conversation_id,
+        )
+        return selected.blocks, selected.skill_ids, list(selected.applied)
+    except Exception:
+        logger.exception("skill_load_failed_on_regenerate", thread_id=str(thread_id))
+        return [], [], []
+
+
+async def _load_regen_side_context(
+    session: AsyncSession,
+    *,
+    thread_id: uuid.UUID,
+    settings: Settings,
+    mailbox: str,
+    thread_context: ThreadContextSchema,
+    email: EmailMessageSchema,
+) -> tuple[list, dict[str, str] | None, dict]:
+    from app.services.pipeline.feedback_context import load_draft_side_context
+
+    return await load_draft_side_context(
+        session,
+        thread_id=thread_id,
+        settings=settings,
+        mailbox=mailbox,
+        thread_context=thread_context,
+        current_email=email,
+    )
+
+
 async def regenerate_draft(
     session: AsyncSession,
     *,
@@ -202,30 +255,16 @@ async def regenerate_draft(
         force_letter=force_letter,
     )
 
-    active_skills_contents: list[str] = []
-    skill_ids: list[uuid.UUID] = []
-    applied_skills: list = []
-    try:
-        selected = await skill_selection_service.select_skills(
-            session,
-            client=client,
-            settings=settings,
-            openai_client=openai_client,
-            email=email,
-            triage=triage,
-            conversation_id=thread.conversation_id,
-        )
-        active_skills_contents = selected.blocks
-        skill_ids = selected.skill_ids
-        applied_skills = list(selected.applied)
-    except Exception:
-        logger.exception(
-            "skill_load_failed_on_regenerate",
-            thread_id=str(thread_id),
-        )
-        active_skills_contents = []
-        skill_ids = []
-        applied_skills = []
+    active_skills_contents, skill_ids, applied_skills = await _select_skills_for_regen(
+        session,
+        client=client,
+        settings=settings,
+        openai_client=openai_client,
+        email=email,
+        triage=triage,
+        conversation_id=thread.conversation_id,
+        thread_id=thread_id,
+    )
 
     mailbox = thread.mailbox
     conversation_id = thread.conversation_id
@@ -243,15 +282,39 @@ async def regenerate_draft(
         routing_category=routing_category,
         email_text=email_text,
     )
-    negative_constraints = await rejection_memory_service.find_negative_constraints(
+    negative_constraints = await load_legacy_negative_constraints(
         session,
-        openai_client=openai_client,
         settings=settings,
-        email_text=email_text,
+        openai_client=openai_client,
         mailbox=mailbox,
+        email_text=email_text,
         routing_category=routing_category,
-        limit=3,
     )
+    sender_addr = (getattr(thread, "alert_sender_norm", None) or latest.sender or "").strip()
+    sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+    paired_ctx = await load_paired_constraints(
+        session,
+        settings=settings,
+        openai_client=openai_client,
+        anthropic_client=client,
+        mailbox=mailbox,
+        email_text=email_text,
+        sender_address=sender_addr or None,
+        sender_domain=sender_dom or None,
+        routing_category=routing_category,
+    )
+    if paired_ctx.fix_constraints:
+        negative_constraints = [*paired_ctx.fix_constraints, *negative_constraints]
+    retrieved_atom_ids = paired_ctx.atom_ids
+    retrieved_note_ids = paired_ctx.note_ids
+    paired_examples = [
+        {
+            "chosen": block.chosen,
+            "rejected": block.rejected,
+            "scope_source": block.scope_source,
+        }
+        for block in paired_ctx.pair_blocks
+    ]
     urgency_hints = await urgency_feedback_service.find_urgency_hints(
         session,
         openai_client=openai_client,
@@ -262,23 +325,14 @@ async def regenerate_draft(
         limit=3,
     )
 
-    from app.services import related_thread_service
-
-    confirmed_associations = await related_thread_service.load_confirmed_contexts(
+    confirmed_associations, directory, working_memory = await _load_regen_side_context(
         session,
-        thread_id,
+        thread_id=thread_id,
+        settings=settings,
+        mailbox=mailbox,
+        thread_context=thread_context,
+        email=email,
     )
-
-    directory: dict[str, str] | None = None
-    if settings.salute_directory_enabled:
-        from app.services import directory_lookup_service
-
-        directory = await directory_lookup_service.build_directory(
-            session,
-            mailbox,
-            thread_context,
-            current=email,
-        )
 
     if session.in_transaction():
         await session.commit()
@@ -300,12 +354,36 @@ async def regenerate_draft(
         tone_references=tone_references,
         tone_profile=tone_profile_block,
         negative_constraints=negative_constraints,
+        paired_examples=paired_examples,
         urgency_hints=urgency_hints,
         instruction=instruction_text,
         reference_loader=reference_loader,
         confirmed_associations=confirmed_associations,
         directory=directory,
+        user_notes=working_memory.get("user_notes", ""),
+        facts=working_memory.get("facts") or None,
+        prior_sends=working_memory.get("prior_sends") or None,
+        org_identity=working_memory.get("org_identity", ""),
     )
+    from app.services.draft_validator_service import validate_and_maybe_retry
+
+    validated = await validate_and_maybe_retry(
+        client,
+        settings,
+        draft_body=result.draft.reply_body,
+        fix_atoms=paired_ctx.fix_atom_payloads,
+        email_text=email_text,
+    )
+    if validated.body != result.draft.reply_body:
+        result = DraftCallResult(
+            draft=result.draft.model_copy(update={"reply_body": validated.body}),
+            prompt_version=result.prompt_version,
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            latency_ms=result.latency_ms,
+            tool_calls=result.tool_calls,
+        )
 
     regen_message_id = f"{latest_graph_id}:regen:{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
     async with session.begin():
@@ -316,7 +394,37 @@ async def regenerate_draft(
             draft=result.draft,
             tool_calls=result.tool_calls or None,
             applied_skills=applied_skills or None,
+            retrieved_atom_ids=retrieved_atom_ids,
+            retrieved_note_ids=retrieved_note_ids,
         )
+        await record_retrieval_hits(
+            session,
+            atom_ids=retrieved_atom_ids,
+            note_ids=retrieved_note_ids,
+        )
+        if instruction_text:
+            try:
+                await atomize_and_persist(
+                    session,
+                    client,
+                    settings,
+                    openai_client,
+                    source_kind="regenerate_instruction",
+                    source_id=persisted.id,
+                    mailbox=mailbox,
+                    text=instruction_text,
+                    thread_id=thread_id,
+                    sender_address=sender_addr or None,
+                    sender_domain=sender_dom or None,
+                    routing_category=routing_category,
+                    email_text_for_context=email_text,
+                )
+            except Exception:
+                logger.warning(
+                    "regenerate_instruction_atomize_failed",
+                    thread_id=str(thread_id),
+                    draft_id=str(persisted.id),
+                )
 
         audit_payload: dict[str, object] = {
             "draft_id": str(persisted.id),

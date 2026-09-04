@@ -21,6 +21,12 @@ import {
   searchApi,
   toneProfilesApi,
 } from "@/lib/api/dashboard"
+import {
+  feedbackAtomsApi,
+  promotionProposalsApi,
+  teachingNotesApi,
+  urgencyRulesApi,
+} from "@/lib/api/feedback-loops"
 import { mailboxContactsApi } from "@/lib/api/mailbox-contacts"
 import { mailboxesApi } from "@/lib/api/mailboxes"
 import { skillCandidatesApi, skillsApi } from "@/lib/api/skills"
@@ -41,4 +47,8 @@ export const api = {
   rejectionMemory: rejectionMemoryApi,
   toneProfiles: toneProfilesApi,
   skillCandidates: skillCandidatesApi,
+  teachingNotes: teachingNotesApi,
+  feedbackAtoms: feedbackAtomsApi,
+  promotionProposals: promotionProposalsApi,
+  urgencyRules: urgencyRulesApi,
 }

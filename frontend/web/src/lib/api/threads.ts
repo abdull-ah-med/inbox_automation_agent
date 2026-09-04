@@ -1,5 +1,11 @@
 import { apiFetch } from "@/lib/api/client"
-import type { MarkNotSpamResponse, RelatedThreadList, ThreadDetail, DraftView } from "@/lib/types"
+import type {
+  DraftView,
+  MarkNotSpamResponse,
+  RelatedThreadList,
+  ThreadContextView,
+  ThreadDetail,
+} from "@/lib/types"
 
 export type MessageHtmlBody = {
   content_type: "html" | "text"
@@ -82,5 +88,24 @@ export const threadsApi = {
         body: JSON.stringify(body),
       },
     )
+  },
+  getContext(id: string) {
+    return apiFetch<ThreadContextView>(`/api/threads/${id}/context`)
+  },
+  saveUserNotes(id: string, body: { user_notes: string; expected_version: number }) {
+    return apiFetch<ThreadContextView>(`/api/threads/${id}/context/user_notes`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    })
+  },
+  rebuildContext(id: string) {
+    return apiFetch<ThreadContextView>(`/api/threads/${id}/context/rebuild`, {
+      method: "POST",
+    })
+  },
+  discardContextFact(id: string, factId: string) {
+    return apiFetch<ThreadContextView>(`/api/threads/${id}/context/facts/${factId}`, {
+      method: "DELETE",
+    })
   },
 }
