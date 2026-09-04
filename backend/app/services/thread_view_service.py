@@ -167,7 +167,18 @@ def preview_text_for_message(
     return one_line[: _CARD_PREVIEW_MAX_LEN - 1].rstrip() + "…"
 
 
+def _summary_fields(m: message_repo.MessageSchema) -> tuple[str | None, str | None, str | None]:
+    blob = m.summary_json if isinstance(m.summary_json, dict) else {}
+    one = (m.summary_one_line or str(blob.get("one_line") or "")).strip() or None
+    ask = blob.get("ask")
+    intent = blob.get("intent")
+    ask_text = ask.strip() if isinstance(ask, str) and ask.strip() else None
+    intent_text = intent.strip() if isinstance(intent, str) and intent.strip() else None
+    return one, ask_text, intent_text
+
+
 def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
+    one, ask, intent = _summary_fields(m)
     return MessageDetail(
         id=m.id,
         direction=m.direction,
@@ -187,6 +198,10 @@ def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
         outlook_url=outlook_web_link(m.graph_message_id),
         meeting_message_type=m.meeting_message_type,
         meeting_response_type=m.meeting_response_type,
+        sender_name=m.sender_name,
+        summary_one_line=one,
+        summary_ask=ask,
+        summary_intent=intent,
     )
 
 

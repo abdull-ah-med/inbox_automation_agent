@@ -129,6 +129,7 @@ async def edit_draft_urgency(
     session: DbSession,
     settings: AppSettings,
     openai_client: OpenAIClientDep,
+    anthropic_client: AnthropicClientDep,
     user: CurrentUser,
 ) -> UrgencyEditResponseSchema:
     """Manually edit draft urgency with a required reason. Does not send email."""
@@ -154,6 +155,7 @@ async def edit_draft_urgency(
         edited_by_user_id=user.id,
         settings=settings,
         openai_client=openai_client,
+        anthropic_client=anthropic_client,
     )
     return result.response
 
