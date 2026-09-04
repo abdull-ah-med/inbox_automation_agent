@@ -150,3 +150,60 @@ async def test_store_urgency_feedback_memory_best_effort_on_embed_failure() -> N
         )
     assert result is None
     assert any(entry.get("event") == "urgency_feedback_embed_failed" for entry in entries)
+
+
+@pytest.mark.asyncio
+async def test_store_urgency_feedback_atomizes_reason_as_urgency_edit() -> None:
+    """Plan §4.1: urgency edits are atomized with source_kind=urgency_edit."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    draft_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    thread_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    feedback_id = uuid.UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
+    session = AsyncMock()
+    session.in_transaction = MagicMock(return_value=False)
+    cm = MagicMock()
+    cm.__aenter__ = AsyncMock(return_value=session)
+    cm.__aexit__ = AsyncMock(return_value=None)
+    factory = MagicMock(return_value=cm)
+    anthropic = AsyncMock()
+
+    with (
+        patch(
+            "app.services.urgency_feedback_service.embedding_service.embed_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ),
+        patch(
+            "app.services.urgency_feedback_service.get_session_factory",
+            return_value=factory,
+        ),
+        patch(
+            "app.services.urgency_feedback_service.urgency_feedback_repo.insert_urgency_feedback",
+            AsyncMock(return_value=SimpleNamespace(id=feedback_id)),
+        ),
+        patch(
+            "app.services.urgency_feedback_service.atomize_and_persist",
+            AsyncMock(return_value=[]),
+        ) as atomize,
+    ):
+        await urgency_feedback_service.store_urgency_feedback_memory(
+            draft_id=draft_id,
+            thread_id=thread_id,
+            mailbox="elise@example.com",
+            routing_category="billing",
+            previous_urgency="HIGH",
+            new_urgency="LOW",
+            reason="statuspage resolved notices are never urgent",
+            edited_by_user_id=None,
+            settings=_settings(),
+            openai_client=AsyncMock(),
+            anthropic_client=anthropic,
+        )
+
+    atomize.assert_awaited_once()
+    kwargs = atomize.await_args.kwargs
+    assert kwargs["source_kind"] == "urgency_edit"
+    assert kwargs["source_id"] == feedback_id
+    assert kwargs["text"] == "statuspage resolved notices are never urgent"
+    assert kwargs["mailbox"] == "elise@example.com"
