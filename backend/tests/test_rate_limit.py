@@ -63,6 +63,20 @@ def test_client_ip_key_ignores_spoofed_leftmost_xff() -> None:
         assert client_ip_key(request) == "203.0.113.50"
 
 
+def test_context_rebuild_key_scopes_bucket_to_thread_and_ip() -> None:
+    """Rebuild budget is per thread plus client IP, not a shared mailbox bucket."""
+    from app.core.rate_limit import context_rebuild_rate_limit_key
+
+    thread_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    settings = Settings(environment="local", trust_x_forwarded_for=False)
+    request = _request(headers={}, peer="10.0.0.1")
+    request.path_params = {"thread_id": thread_id}
+    with patch("app.core.rate_limit.get_settings", return_value=settings):
+        assert context_rebuild_rate_limit_key(request) == (
+            "ctx-rebuild:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:10.0.0.1"
+        )
+
+
 def test_limiter_storage_uri_injects_ssl_ca_for_rediss() -> None:
     from app.core.rate_limit import limiter_storage_uri
 

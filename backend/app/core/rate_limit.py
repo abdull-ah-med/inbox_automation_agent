@@ -66,6 +66,16 @@ def client_ip_key(request: Request) -> str:
     return resolve_client_ip(request, get_settings())
 
 
+def context_rebuild_bucket(thread_id: str, ip: str) -> str:
+    return "ctx-rebuild:" + thread_id + ":" + ip
+
+
+def context_rebuild_rate_limit_key(request: Request) -> str:
+    """Per-thread rebuild budget; IP fallback keeps anonymous hammering cheap."""
+    thread_id = str(request.path_params.get("thread_id") or "")
+    return context_rebuild_bucket(thread_id, client_ip_key(request))
+
+
 def invalidate_user_auth_cache(user_id: uuid.UUID) -> None:
     """Drop a cached (is_active, token_version) after password / revoke."""
     with _auth_cache_lock:

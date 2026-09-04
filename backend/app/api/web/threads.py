@@ -18,7 +18,7 @@ from app.core.dependencies import (
 )
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ThreadNotFoundError
-from app.core.rate_limit import client_ip_key, limiter
+from app.core.rate_limit import context_rebuild_rate_limit_key, limiter
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     AuditEntry,
@@ -454,11 +454,6 @@ async def mark_thread_not_spam(
     )
 
 
-def _context_rebuild_key(request: Request) -> str:
-    thread_id = str(request.path_params.get("thread_id") or "")
-    return "ctx-rebuild:" + thread_id + ":" + client_ip_key(request)
-
-
 async def _require_context_thread(
     session: AsyncSession,
     settings: Settings,
@@ -557,7 +552,7 @@ async def put_thread_context_user_notes(
     response_model=ThreadContextView,
     status_code=status.HTTP_202_ACCEPTED,
 )
-@limiter.limit("12/minute", key_func=_context_rebuild_key)
+@limiter.limit("12/minute", key_func=context_rebuild_rate_limit_key)
 async def rebuild_thread_context(
     thread_id: uuid.UUID,
     request: Request,
