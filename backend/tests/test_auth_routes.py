@@ -151,6 +151,53 @@ async def test_refresh_with_csrf(app, local_settings: Settings) -> None:
 
 
 @pytest.mark.asyncio
+async def test_refresh_grace_failure_still_sets_cookies(app, local_settings: Settings) -> None:
+    """Redis grace failure after rotation still returns 200 and Set-Cookie."""
+    result = AuthResult(
+        response=_token_result().response,
+        refresh_plaintext="opaque-refresh-token-value",
+        rotated_from_hash="old-refresh-hash",
+    )
+    csrf = mint_csrf(local_settings.jwt_secret)
+    mock_session = AsyncMock()
+    mock_session.begin = lambda: AsyncMock(
+        __aenter__=AsyncMock(return_value=None),
+        __aexit__=AsyncMock(return_value=None),
+    )
+
+    async def fake_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = fake_db
+    with (
+        patch("app.api.auth.routes.auth_service.refresh", AsyncMock(return_value=result)),
+        patch(
+            "app.api.auth.routes.auth_service.store_refresh_grace",
+            AsyncMock(side_effect=RuntimeError("redis down")),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.cookies.set(local_settings.refresh_cookie_name, "opaque", path="/auth")
+            client.cookies.set(local_settings.csrf_cookie_name, csrf, path="/")
+            resp = await client.post(
+                "/auth/refresh",
+                headers={
+                    **_origin_headers(local_settings),
+                    local_settings.csrf_header_name: csrf,
+                },
+            )
+    assert resp.status_code == 200
+    assert resp.json()["access_token"] == "access.jwt.token"
+    set_cookie = " ".join(
+        v.decode() if isinstance(v, bytes) else str(v)
+        for k, v in resp.headers.multi_items()
+        if k.lower() == "set-cookie"
+    )
+    assert local_settings.refresh_cookie_name in set_cookie.lower()
+
+
+@pytest.mark.asyncio
 async def test_login_records_nginx_x_real_ip_when_proxy_trusted() -> None:
     """Behind nginx, persist X-Real-IP ($remote_addr), not the Uvicorn peer.
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Request, Response, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,8 @@ from app.models.schemas.auth import (
     UserMe,
 )
 from app.services import auth_service
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -166,13 +169,17 @@ async def refresh(
             ip=resolve_client_ip(request, settings),
         )
     # Commit succeeded — only then write Redis grace (avoids phantom tokens).
+    # Grace is best-effort: rotation already committed, so still issue cookies.
     if result.rotated_from_hash is not None:
-        await auth_service.store_refresh_grace(
-            redis,
-            settings,
-            result.rotated_from_hash,
-            result,
-        )
+        try:
+            await auth_service.store_refresh_grace(
+                redis,
+                settings,
+                result.rotated_from_hash,
+                result,
+            )
+        except Exception:
+            logger.exception("refresh_grace_store_failed")
     _set_refresh_cookie(response, settings, result.refresh_plaintext)
     _set_csrf_cookie(response, settings)
     return result.response
