@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.config import Settings
 from app.models.schemas.graph import GraphMessageSchema
+
+# CI has no backend/.env. Pin off-by-default flags so a developer .env cannot
+# turn on extra I/O in mocked-session tests.
+os.environ["THREAD_CONTEXT_ENABLED"] = "false"
 
 pytest_plugins = ["tests.ops_metrics_fixtures", "tests.api_fixtures"]
 
