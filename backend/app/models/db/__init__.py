@@ -6,8 +6,12 @@ from app.models.db.chat_session import ChatSession
 from app.models.db.classification import Classification
 from app.models.db.draft import Draft
 from app.models.db.email_embedding import EmailEmbedding
+from app.models.db.feedback_atom import FeedbackAtom
+from app.models.db.golden_set_case import GoldenSetCase
 from app.models.db.mailbox_contact import MailboxContact
 from app.models.db.message import Message
+from app.models.db.preference_pair import PreferencePair
+from app.models.db.promotion_proposal import PromotionProposal
 from app.models.db.refresh_token import RefreshToken
 from app.models.db.rejection_memory import RejectionMemory
 from app.models.db.reply_embedding import ReplyEmbedding
@@ -16,12 +20,16 @@ from app.models.db.skill import Skill
 from app.models.db.skill_candidate import SkillCandidate
 from app.models.db.skill_file import SkillFile
 from app.models.db.spam_allowlist import SpamAllowlist
+from app.models.db.teaching_note import TeachingNote
 from app.models.db.thread import Thread
 from app.models.db.thread_association_review import ThreadAssociationReview
+from app.models.db.thread_context import ThreadContext, ThreadContextFact
 from app.models.db.thread_link import ThreadLink
 from app.models.db.thread_summary import ThreadSummary
 from app.models.db.tone_profile import ToneProfile
 from app.models.db.urgency_feedback import UrgencyFeedback
+from app.models.db.urgency_prediction import UrgencyPrediction
+from app.models.db.urgency_rule import UrgencyRule
 from app.models.db.user import User
 
 __all__ = [
@@ -33,8 +41,12 @@ __all__ = [
     "Classification",
     "Draft",
     "EmailEmbedding",
+    "FeedbackAtom",
+    "GoldenSetCase",
     "MailboxContact",
     "Message",
+    "PreferencePair",
+    "PromotionProposal",
     "RefreshToken",
     "RejectionMemory",
     "ReplyEmbedding",
@@ -43,11 +55,16 @@ __all__ = [
     "SkillCandidate",
     "SkillFile",
     "SpamAllowlist",
+    "TeachingNote",
     "Thread",
     "ThreadAssociationReview",
+    "ThreadContext",
+    "ThreadContextFact",
     "ThreadLink",
     "ThreadSummary",
     "ToneProfile",
     "UrgencyFeedback",
+    "UrgencyPrediction",
+    "UrgencyRule",
     "User",
 ]
