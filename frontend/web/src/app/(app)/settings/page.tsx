@@ -4,11 +4,14 @@ import { Breadcrumbs } from "@/components/breadcrumbs"
 
 import { AccountSection } from "./_sections/account-section"
 import { ContactsSection } from "./_sections/contacts-section"
+import { PromotionProposalsSection } from "./_sections/promotion-proposals-section"
 import { RejectionMemorySection } from "./_sections/rejection-memory-section"
 import { SkillCandidatesSection } from "./_sections/skill-candidates-section"
 import { SkillsSection } from "./_sections/skills-section"
+import { TeachingNotesSection } from "./_sections/teaching-notes-section"
 import { ToneMemorySection } from "./_sections/tone-memory-section"
 import { ToneProfilesSection } from "./_sections/tone-profiles-section"
+import { UrgencyRulesSection } from "./_sections/urgency-rules-section"
 
 export default function SettingsPage() {
   return (
@@ -30,6 +33,9 @@ export default function SettingsPage() {
       <div className="mt-10 space-y-10">
         <ToneMemorySection />
         <RejectionMemorySection />
+        <TeachingNotesSection />
+        <PromotionProposalsSection />
+        <UrgencyRulesSection />
       </div>
     </>
   )
