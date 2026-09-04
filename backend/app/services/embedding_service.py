@@ -96,6 +96,11 @@ def _build_embed_text(email: EmailMessageSchema, *, max_tokens: int) -> str:
     return f"{prefix}{body_truncated}".strip()
 
 
+def preference_pair_source_text(email: EmailMessageSchema, *, max_tokens: int = 8000) -> str:
+    """Scrubbed subject+body document used as the preference-pair hash and embed key."""
+    return _build_embed_text(email, max_tokens=max_tokens)
+
+
 def _body_preview_for_store(email: EmailMessageSchema) -> str:
     preview = (
         email.body_preview

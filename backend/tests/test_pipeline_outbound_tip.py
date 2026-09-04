@@ -223,7 +223,7 @@ def _pipeline_patches(
             new=AsyncMock(return_value=(None, [])),
         ),
         patch(
-            "app.services.pipeline.service.rejection_memory_service.find_negative_constraints",
+            "app.services.pipeline.service.load_legacy_negative_constraints",
             new=AsyncMock(return_value=[]),
         ),
         patch(

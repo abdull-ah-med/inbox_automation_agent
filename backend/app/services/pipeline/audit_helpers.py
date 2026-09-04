@@ -6,7 +6,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AuditError
-from app.models.schemas.email_triage_state import EmailTriageState
+from app.models.schemas.email_triage_state import CrossThreadContextSchema, EmailTriageState
 from app.services import audit_service
 
 logger = structlog.get_logger(__name__)
@@ -36,3 +36,12 @@ async def safe_audit(
             mailbox=email.mailbox,
             event_type=event_type,
         )
+
+
+def context_audit_payload(cross: CrossThreadContextSchema | None) -> dict[str, object]:
+    if cross is None:
+        return {}
+    return {
+        "similarity_score": cross.similarity_score,
+        "matched_conversation_id": cross.matched_conversation_id,
+    }

@@ -15,6 +15,7 @@ from app.models.schemas.dashboard import TriageFlags
 from app.models.schemas.draft import DraftResponseSchema, DraftSchema
 from app.repositories.message_repo import MessageSchema
 from app.services import draft_regeneration_service
+from app.services.feedback_draft_context import PairedDraftContext
 
 
 def _settings() -> Settings:
@@ -23,6 +24,7 @@ def _settings() -> Settings:
         anthropic_api_key="test-key",
         target_mailboxes="elise@example.com",
         salute_directory_enabled=False,
+        thread_context_enabled=False,
     )
 
 
@@ -126,7 +128,7 @@ async def test_regenerate_creates_new_draft() -> None:
             AsyncMock(return_value=(None, ["Thanks — sending the packet now."])),
         ),
         patch(
-            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            "app.services.draft_regeneration_service.load_legacy_negative_constraints",
             AsyncMock(return_value=[]),
         ),
         patch(
@@ -231,7 +233,7 @@ async def test_force_letter_overrides_briefing_triage() -> None:
             AsyncMock(return_value=(None, [])),
         ),
         patch(
-            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            "app.services.draft_regeneration_service.load_legacy_negative_constraints",
             AsyncMock(return_value=[]),
         ),
         patch(
@@ -539,7 +541,7 @@ async def test_regenerate_letter_when_graph_has_newer_inbound() -> None:
             AsyncMock(return_value=(None, [])),
         ),
         patch(
-            "app.services.draft_regeneration_service.rejection_memory_service.find_negative_constraints",
+            "app.services.draft_regeneration_service.load_legacy_negative_constraints",
             AsyncMock(return_value=[]),
         ),
         patch(
@@ -590,3 +592,273 @@ async def test_regenerate_letter_when_graph_has_newer_inbound() -> None:
         )
     assert result.reply_body == "Dear client, here is a draft."
     gen_mock.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_regenerate_merges_paired_constraints_and_persists_retrieved_ids() -> None:
+    """Paired retrieval constraints prepend negatives; atom/note ids persist on draft.
+
+    Oracle: fixed UUID literals and constraint text from the mock — not recomputed.
+    """
+    atom_id = uuid.UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    note_id = uuid.UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    thread = _thread()
+    message = _message(thread.id)
+    persisted = DraftResponseSchema(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        created_at=datetime.now(UTC),
+        subject_line="Re: Need docs",
+        reply_body="Acknowledged only.",
+        teaching_note="Acknowledge path",
+        urgency="NORMAL",
+        urgency_reason="Routine",
+        suggested_actions=[],
+        retrieved_atom_ids=[atom_id],
+        retrieved_note_ids=[note_id],
+    )
+    session = AsyncMock()
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
+    session.in_transaction = MagicMock(return_value=False)
+    client = AsyncMock()
+    instruction = "tighten the salutation"
+
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.skill_selection_service.select_skills",
+            AsyncMock(return_value=MagicMock(blocks=[], skill_ids=[], applied=[])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",
+            AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.load_legacy_negative_constraints",
+            AsyncMock(return_value=["legacy rejection constraint"]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.urgency_feedback_service.find_urgency_hints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.load_paired_constraints",
+            AsyncMock(
+                return_value=PairedDraftContext(
+                    fix_constraints=["Never promise an SLA in writing"],
+                    pair_blocks=[],
+                    atom_ids=[atom_id],
+                    note_ids=[note_id],
+                )
+            ),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_llm.generate_draft",
+            AsyncMock(
+                return_value=DraftCallResult(
+                    draft=_draft_schema(),
+                    prompt_version="2026-09-01.3",
+                    model="claude-sonnet-4-6",
+                    input_tokens=10,
+                    output_tokens=20,
+                    latency_ms=50,
+                )
+            ),
+        ) as gen_mock,
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.create_regenerated_draft",
+            AsyncMock(return_value=persisted),
+        ) as create_mock,
+        patch(
+            "app.services.draft_regeneration_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.atomize_and_persist",
+            AsyncMock(return_value=[]),
+        ) as atomize_mock,
+    ):
+        await draft_regeneration_service.regenerate_draft(
+            session,
+            client=client,
+            settings=_settings(),
+            thread_id=thread.id,
+            instruction=instruction,
+            actor="elise@example.com",
+        )
+
+    negatives = gen_mock.await_args.kwargs["negative_constraints"]
+    assert negatives[0] == "Never promise an SLA in writing"
+    assert "legacy rejection constraint" in negatives
+    assert create_mock.await_args.kwargs["retrieved_atom_ids"] == [atom_id]
+    assert create_mock.await_args.kwargs["retrieved_note_ids"] == [note_id]
+    assert atomize_mock.await_args.kwargs["source_kind"] == "regenerate_instruction"
+    assert atomize_mock.await_args.kwargs["text"] == instruction
+
+
+@pytest.mark.asyncio
+async def test_regen_persists_validator_retry_body() -> None:
+    """draft_validator_enabled + Haiku violation → persisted body is the Sonnet retry."""
+    import json
+
+    retry_body = "Hi,\n\nPlease see attached invoice #2026-001.\n\nRegards"
+    atom_id = uuid.UUID("cccccccc-0000-0000-0000-000000000001")
+    thread = _thread()
+    message = _message(thread.id)
+    persisted = DraftResponseSchema(
+        id=uuid.uuid4(),
+        thread_id=thread.id,
+        created_at=datetime.now(UTC),
+        subject_line="Re: Need docs",
+        reply_body=retry_body,
+        teaching_note="Acknowledge path",
+        urgency="NORMAL",
+        urgency_reason="Routine",
+        suggested_actions=[],
+    )
+    session = AsyncMock()
+    begin_cm = MagicMock()
+    begin_cm.__aenter__ = AsyncMock(return_value=None)
+    begin_cm.__aexit__ = AsyncMock(return_value=None)
+    session.begin = MagicMock(return_value=begin_cm)
+    session.in_transaction = MagicMock(return_value=False)
+
+    haiku = MagicMock()
+    haiku.content = [
+        MagicMock(
+            text=json.dumps(
+                {"violations": [{"atom_id": str(atom_id), "reason": "invoice number missing"}]}
+            )
+        )
+    ]
+    sonnet = MagicMock()
+    sonnet.content = [MagicMock(text=retry_body)]
+    client = AsyncMock()
+    client.messages.create = AsyncMock(side_effect=[haiku, sonnet])
+
+    settings = Settings(
+        draft_model="claude-sonnet-4-6",
+        classification_model="claude-haiku-4-5",
+        anthropic_api_key="test-key",
+        target_mailboxes="elise@example.com",
+        salute_directory_enabled=False,
+        draft_validator_enabled=True,
+        thread_context_enabled=False,
+    )
+
+    with (
+        patch(
+            "app.services.draft_regeneration_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[message]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.get_latest_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.skill_selection_service.select_skills",
+            AsyncMock(return_value=MagicMock(blocks=[], skill_ids=[], applied=[])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.tone_profile_service.load_for_draft",
+            AsyncMock(return_value=(None, [])),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.load_legacy_negative_constraints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.urgency_feedback_service.find_urgency_hints",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.load_paired_constraints",
+            AsyncMock(
+                return_value=PairedDraftContext(
+                    fix_constraints=["Always include the invoice number"],
+                    pair_blocks=[],
+                    atom_ids=[atom_id],
+                    note_ids=[],
+                    fix_atom_payloads=[
+                        {
+                            "id": str(atom_id),
+                            "atom_text": "Always include the invoice number explicitly",
+                            "applies_when": None,
+                        }
+                    ],
+                )
+            ),
+        ),
+        patch(
+            "app.services.related_thread_service.load_confirmed_contexts",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_llm.generate_draft",
+            AsyncMock(
+                return_value=DraftCallResult(
+                    draft=DraftSchema(
+                        subject_line="Re: Need docs",
+                        reply_body="Hi there,\n\nPlease see attached.\n\nRegards",
+                        teaching_note="Follow up",
+                        urgency="NORMAL",
+                        urgency_reason="Routine",
+                        suggested_actions=[],
+                    ),
+                    prompt_version="2026-09-04.2",
+                    model="claude-sonnet-4-6",
+                    input_tokens=10,
+                    output_tokens=20,
+                    latency_ms=50,
+                )
+            ),
+        ),
+        patch(
+            "app.services.draft_regeneration_service.draft_repo.create_regenerated_draft",
+            AsyncMock(return_value=persisted),
+        ) as create_mock,
+        patch(
+            "app.services.draft_regeneration_service.audit_service.log_event",
+            AsyncMock(),
+        ),
+    ):
+        await draft_regeneration_service.regenerate_draft(
+            session,
+            client=client,
+            settings=settings,
+            thread_id=thread.id,
+            actor="elise@example.com",
+        )
+
+    persisted_draft = create_mock.await_args.kwargs["draft"]
+    assert persisted_draft.reply_body == retry_body

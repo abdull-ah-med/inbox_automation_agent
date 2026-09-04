@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
 from app.core.exceptions import DraftGenerationError
-from app.core.tenant_scope import TenantScope
 from app.graph.client import GraphClient
 from app.llm import draft_generator as draft_llm
 from app.models.schemas.draft import DraftSchema
@@ -26,31 +25,48 @@ from app.repositories import (
     message_repo,
     sent_reply_repo,  # noqa: F401 — tests patch pipeline.service.sent_reply_repo
     skill_repo,
-    thread_repo,
+    thread_repo,  # noqa: F401 — tests patch pipeline.service.thread_repo
 )
 from app.services import (
     audit_service,
     context_service,
     draft_service,
     embedding_service,
-    rejection_memory_service,
     reply_memory_service,
     sent_reply_service,
     skill_selection_service,
-    slack_service,
     summary_service,
     tone_profile_service,
     triage_service,
     urgency_feedback_service,
 )
+from app.services.feedback_atom_service import record_retrieval_hits
+from app.services.feedback_draft_context import load_legacy_negative_constraints
 from app.services.pipeline.already_replied import (
     latest_proposed_has_teaching_note,
     promote_and_resolve_sent_tip,
 )
+from app.services.pipeline.already_replied import (
+    select_original_email as _select_original_email,
+)
+from app.services.pipeline.audit_helpers import context_audit_payload as _context_audit_payload
 from app.services.pipeline.audit_helpers import safe_audit
 from app.services.pipeline.draft_phase import (
     _apply_draft_outcome_state,
     _draft_audit_payload,
+)
+from app.services.pipeline.draft_phase import (
+    post_slack_card_after_commit as _post_slack_card_after_commit,
+)
+from app.services.pipeline.feedback_context import (
+    append_recurrence_hint as _phased_append_recurrence_hint,
+)
+from app.services.pipeline.feedback_context import (
+    extract_thread_context_safe as _extract_thread_context_safe,
+)
+from app.services.pipeline.feedback_context import (
+    load_draft_side_context,
+    load_paired_draft_pack,
 )
 from app.services.pipeline.thread_lifecycle import (
     apply_draftassistant_auto_resolve,
@@ -63,6 +79,8 @@ from app.services.pipeline.triage_phase import (
     _audit_payload,
     _invalidate_chat_cache_mailbox,
 )
+from app.services.urgency_prediction_service import log_prediction
+from app.services.urgency_rule_service import apply_after_model
 
 _safe_audit = safe_audit  # tests patch pipeline.service._safe_audit
 
@@ -79,11 +97,8 @@ _SLACK_OK_FOR_DEDUP = frozenset(
 def pipeline_ready_for_dedup(state: EmailTriageState) -> bool:
     """True when webhook/poll may mark ingest dedup completed.
 
-    ``REQUIRES_HUMAN`` (draft/triage failure) must NOT complete dedup so poll
-    can retry. Spam / no-action skips are terminal. Successful drafts complete
-    only when Slack delivery is OK (posted, already posted, intentionally
-    unconfigured, or not required on the simulate path). Slack post failure
-    must leave dedup open for retry.
+    REQUIRES_HUMAN stays open for retry. SKIPPED is terminal. DRAFTED completes
+    only when Slack delivery is posted, already posted, unconfigured, or not required.
     """
     if state.triage is None:
         return False
@@ -99,31 +114,6 @@ def slack_review_card_required(state: EmailTriageState) -> bool:
     if state.draft_status != "DRAFTED" or state.draft is None:
         return False
     return bool((state.draft.reply_body or "").strip())
-
-
-def _select_original_email(
-    *,
-    message_id: str,
-    thread_context: ThreadContextSchema,
-) -> EmailMessageSchema:
-    for msg in thread_context.messages:
-        if msg.message_id == message_id:
-            return msg
-    raise ValueError(
-        f"message_id={message_id} not found in thread_context "
-        f"({len(thread_context.messages)} messages)"
-    )
-
-
-def _context_audit_payload(
-    cross: CrossThreadContextSchema | None,
-) -> dict[str, object]:
-    if cross is None:
-        return {}
-    return {
-        "similarity_score": cross.similarity_score,
-        "matched_conversation_id": cross.matched_conversation_id,
-    }
 
 
 async def _resolve_graph_client(
@@ -264,55 +254,6 @@ async def _embed_in_fresh_session(
         )
 
 
-async def _post_slack_card_after_commit(
-    state: EmailTriageState,
-    *,
-    redis: Redis,
-    settings: Settings,
-    session_factory: async_sessionmaker[AsyncSession],
-) -> EmailTriageState:
-    """Post Slack only after draft/audit rows are committed; audit in a fresh txn.
-
-    Updates ``state.slack_delivery`` so callers can decide ingest dedup.
-    """
-    from app.core.dependencies import slack_app_from_settings
-
-    slack_app = slack_app_from_settings(settings)
-    email = state.original_email
-    result = await slack_service.post_review_card(
-        state,
-        redis=redis,
-        slack_app=slack_app,
-        settings=settings,
-    )
-    state.slack_delivery = result.slack_delivery
-
-    if result.status == "failed":
-        logger.warning(
-            "slack_card_post_failed",
-            conversation_id=email.conversation_id,
-            mailbox=email.mailbox,
-            message_id=email.message_id,
-        )
-        return state
-
-    if result.message_ts is None:
-        return state
-
-    async with session_factory() as session, session.begin():
-        await safe_audit(
-            session,
-            state=state,
-            event_type="slack.card_posted",
-            payload={
-                "message_id": email.message_id,
-                "message_ts": result.message_ts,
-                "draft_status": state.draft_status,
-            },
-        )
-    return state
-
-
 async def run_after_ingest(
     *,
     session: AsyncSession,
@@ -411,6 +352,12 @@ async def run_after_ingest(
         )
         if parsed_thread_id is not None:
             await _refresh_thread_summary_safe(
+                thread_id=parsed_thread_id,
+                client=client,
+                settings=settings,
+                session_factory=factory,
+            )
+            await _extract_thread_context_safe(
                 thread_id=parsed_thread_id,
                 client=client,
                 settings=settings,
@@ -571,7 +518,11 @@ class _DraftPhaseInputs:
     tone_references: list[str]
     tone_profile_block: str | None
     negative_constraints: list[str]
+    paired_examples: list[dict[str, str | None]]
     urgency_hints: list[str]
+    retrieved_atom_ids: list[uuid.UUID]
+    retrieved_note_ids: list[uuid.UUID]
+    fix_atom_payloads: list[dict]
 
 
 async def _phased_triage_summarize(
@@ -620,6 +571,12 @@ async def _phased_triage_summarize(
         )
         if parsed_thread_id is not None:
             await _refresh_thread_summary_safe(
+                thread_id=parsed_thread_id,
+                client=client,
+                settings=settings,
+                session_factory=session_factory,
+            )
+            await _extract_thread_context_safe(
                 thread_id=parsed_thread_id,
                 client=client,
                 settings=settings,
@@ -758,44 +715,6 @@ async def _phased_resolve_cross_thread(
     return cross_thread
 
 
-async def _phased_append_recurrence_hint(
-    session: AsyncSession,
-    *,
-    email: EmailMessageSchema,
-    thread_id: uuid.UUID,
-    urgency_hints: list[str],
-) -> list[str]:
-    from app.services import recurrence_service
-
-    try:
-        count = await recurrence_service.count_automated_inbound_48h(session, thread_id)
-        similar = None
-        thread_row = await thread_repo.get_by_id(
-            session, thread_id, TenantScope.single(email.mailbox)
-        )
-        if thread_row is not None and thread_row.alert_fingerprint:
-            from datetime import UTC, datetime
-
-            cluster = await thread_repo.list_open_alert_cluster(
-                session,
-                mailbox=thread_row.mailbox,
-                fingerprint=thread_row.alert_fingerprint,
-                signature=thread_row.alert_signature,
-                sender_norm=thread_row.alert_sender_norm,
-                now=datetime.now(UTC),
-            )
-            similar = len(cluster) if cluster else None
-        hint = recurrence_service.recurrence_hint(count, similar_thread_count=similar)
-        if hint:
-            return [hint, *urgency_hints]
-    except Exception:
-        logger.warning(
-            "recurrence_hint_failed",
-            thread_id=str(thread_id),
-        )
-    return urgency_hints
-
-
 async def _phased_load_draft_inputs(
     *,
     state: EmailTriageState,
@@ -837,7 +756,11 @@ async def _phased_load_draft_inputs(
             tone_references=[],
             tone_profile_block=None,
             negative_constraints=[],
+            paired_examples=[],
             urgency_hints=[],
+            retrieved_atom_ids=[],
+            retrieved_note_ids=[],
+            fix_atom_payloads=[],
         )
 
     try:
@@ -883,14 +806,30 @@ async def _phased_load_draft_inputs(
             routing_category=routing_category,
             email_text=email_text,
         )
-        negative_constraints = await rejection_memory_service.find_negative_constraints(
+        negative_constraints = await load_legacy_negative_constraints(
             session,
-            openai_client=openai_client,
             settings=settings,
-            email_text=email_text,
+            openai_client=openai_client,
             mailbox=email.mailbox,
+            email_text=email_text,
             routing_category=routing_category,
-            limit=3,
+        )
+        (
+            negative_constraints,
+            retrieved_atom_ids,
+            retrieved_note_ids,
+            fix_atom_payloads,
+            paired_examples,
+        ) = await load_paired_draft_pack(
+            session,
+            settings=settings,
+            openai_client=openai_client,
+            anthropic_client=client,
+            mailbox=email.mailbox,
+            email_text=email_text,
+            sender=email.sender or "",
+            routing_category=routing_category,
+            negative_constraints=negative_constraints,
         )
         urgency_hints = await urgency_feedback_service.find_urgency_hints(
             session,
@@ -917,7 +856,11 @@ async def _phased_load_draft_inputs(
         tone_references=tone_references,
         tone_profile_block=tone_profile_block,
         negative_constraints=negative_constraints,
+        paired_examples=paired_examples,
         urgency_hints=urgency_hints,
+        retrieved_atom_ids=retrieved_atom_ids,
+        retrieved_note_ids=retrieved_note_ids,
+        fix_atom_payloads=fix_atom_payloads,
     )
 
 
@@ -935,6 +878,7 @@ async def _phased_generate_and_persist_draft(
     tone_references: list[str] | None = None,
     tone_profile: str | None = None,
     negative_constraints: list[str] | None = None,
+    paired_examples: list[dict[str, str | None]] | None = None,
     urgency_hints: list[str] | None = None,
 ) -> EmailTriageState:
     if inputs.existing is not None:
@@ -955,28 +899,22 @@ async def _phased_generate_and_persist_draft(
         reference_loader = None
         confirmed_associations: list = []
         directory: dict[str, str] | None = None
+        working_memory: dict = {}
         if current.triage.draft_needed:
             if inputs.skill_ids:
                 reference_loader, _ = make_reference_loader(
                     active_skill_ids=set(inputs.skill_ids),
                     session_factory=session_factory,
                 )
-            from app.services import related_thread_service
-
             async with session_factory() as assoc_session:
-                confirmed_associations = await related_thread_service.load_confirmed_contexts(
+                confirmed_associations, directory, working_memory = await load_draft_side_context(
                     assoc_session,
-                    thread_id,
+                    thread_id=thread_id,
+                    settings=settings,
+                    mailbox=email.mailbox,
+                    thread_context=current.thread_context,
+                    current_email=current.original_email,
                 )
-                if settings.salute_directory_enabled:
-                    from app.services import directory_lookup_service
-
-                    directory = await directory_lookup_service.build_directory(
-                        assoc_session,
-                        email.mailbox,
-                        current.thread_context,
-                        current=current.original_email,
-                    )
         generated = await draft_llm.generate_draft(
             current.original_email,
             current.thread_context,
@@ -988,11 +926,28 @@ async def _phased_generate_and_persist_draft(
             tone_profile=tone_profile,
             skills=inputs.skill_contents,
             negative_constraints=negative_constraints,
+            paired_examples=paired_examples,
             urgency_hints=urgency_hints,
             reference_loader=reference_loader,
             confirmed_associations=confirmed_associations,
             directory=directory,
+            user_notes=working_memory.get("user_notes", ""),
+            facts=working_memory.get("facts") or None,
+            prior_sends=working_memory.get("prior_sends") or None,
+            org_identity=working_memory.get("org_identity", ""),
         )
+        from app.services.draft_validator_service import validate_and_maybe_retry
+
+        email_text = f"{email.subject}\n\n{email.body_clean or email.body_text or ''}"
+        validated = await validate_and_maybe_retry(
+            client,
+            settings,
+            draft_body=generated.draft.reply_body,
+            fix_atoms=inputs.fix_atom_payloads,
+            email_text=email_text,
+        )
+        if validated.body != generated.draft.reply_body:
+            generated.draft = generated.draft.model_copy(update={"reply_body": validated.body})
     except DraftGenerationError as exc:
         logger.warning(
             "draft_generation_failed",
@@ -1004,6 +959,25 @@ async def _phased_generate_and_persist_draft(
         current.draft_status = "REQUIRES_HUMAN"
         current.error_logs.append(f"draft_failed:{type(exc).__name__}")
         return current
+
+    predicted = generated.draft.urgency
+    sender_addr = (email.sender or "").strip()
+    sender_dom = sender_addr.split("@")[-1] if "@" in sender_addr else ""
+    body_text = email.body_clean or email.body_text or ""
+    async with session_factory() as rule_session:
+        decision = await apply_after_model(
+            rule_session,
+            mailbox=email.mailbox,
+            predicted_urgency=predicted,
+            sender_domain=sender_dom,
+            alert_fingerprint=None,
+            body_text=body_text,
+            settings=settings,
+        )
+        if rule_session.in_transaction():
+            await rule_session.commit()
+    if decision.final_urgency != predicted:
+        generated.draft = generated.draft.model_copy(update={"urgency": decision.final_urgency})
 
     confidence = cross_thread_context.similarity_score if cross_thread_context is not None else None
     async with session_factory() as session, session.begin():
@@ -1019,6 +993,27 @@ async def _phased_generate_and_persist_draft(
             ),
             tool_calls=generated.tool_calls or None,
             applied_skills=inputs.applied_skills or None,
+            retrieved_atom_ids=inputs.retrieved_atom_ids,
+            retrieved_note_ids=inputs.retrieved_note_ids,
+        )
+        await record_retrieval_hits(
+            session,
+            atom_ids=inputs.retrieved_atom_ids,
+            note_ids=inputs.retrieved_note_ids,
+        )
+        await log_prediction(
+            session,
+            draft_id=persisted.id,
+            thread_id=thread_id,
+            mailbox=email.mailbox,
+            sender_domain=sender_dom or "",
+            predicted_urgency=predicted,
+            final_urgency=decision.final_urgency,
+            probs=current.triage.probs if current.triage is not None else None,
+            routing_category=(
+                current.triage.routing_category if current.triage is not None else None
+            ),
+            applied_rule_ids=decision.applied_rule_ids,
         )
         if generated.tool_calls:
             try:
@@ -1248,6 +1243,7 @@ async def _run_phased_post_ingest(
         "tone_references": inputs.tone_references,
         "tone_profile": inputs.tone_profile_block,
         "negative_constraints": inputs.negative_constraints,
+        "paired_examples": inputs.paired_examples,
         "urgency_hints": inputs.urgency_hints,
     }
     if needs_context:

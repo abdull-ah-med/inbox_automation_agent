@@ -9,9 +9,24 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import Settings
+from app.models.schemas.email import EmailMessageSchema, ThreadContextSchema
 from app.models.schemas.email_triage_state import EmailTriageState
 from app.repositories import draft_repo, message_repo, sent_reply_repo, thread_repo
 from app.services import sent_reply_learning_service, sent_reply_service
+
+
+def select_original_email(
+    *,
+    message_id: str,
+    thread_context: ThreadContextSchema,
+) -> EmailMessageSchema:
+    for msg in thread_context.messages:
+        if msg.message_id == message_id:
+            return msg
+    raise ValueError(
+        f"message_id={message_id} not found in thread_context "
+        f"({len(thread_context.messages)} messages)"
+    )
 
 
 async def latest_proposed_has_teaching_note(

@@ -16,16 +16,23 @@ from __future__ import annotations
 
 import secrets
 
-PROMPT_VERSION = "2026-09-03.1"
+PROMPT_VERSION = "2026-09-04.5"
 
 # Tags wrapping untrusted text in user turns (email, skills, retrieved context).
 UNTRUSTED_EMAIL_TAG = "untrusted_email"
 UNTRUSTED_SKILLS_TAG = "untrusted_skills"
 UNTRUSTED_CONSTRAINTS_TAG = "untrusted_constraints"
+UNTRUSTED_PAIRED_EXAMPLES_TAG = "untrusted_paired_examples"
 UNTRUSTED_TONE_PROFILE_TAG = "untrusted_tone_profile"
 UNTRUSTED_TONE_REFS_TAG = "untrusted_tone_references"
 UNTRUSTED_URGENCY_HINTS_TAG = "untrusted_urgency_hints"
 UNTRUSTED_INSTRUCTION_TAG = "untrusted_reviewer_instruction"
+UNTRUSTED_ATOM_EXTRACT_TAG = "untrusted_atom_extract"
+UNTRUSTED_GATE_TAG = "untrusted_applies_when"
+UNTRUSTED_VALIDATOR_TAG = "untrusted_draft_validator"
+UNTRUSTED_THREAD_FACTS_TAG = "untrusted_thread_facts"
+UNTRUSTED_THREAD_PINS_TAG = "untrusted_thread_pins"
+UNTRUSTED_PRIOR_SENDS_TAG = "untrusted_prior_sends"
 
 UNTRUSTED_CONTENT_RULES = """\
 Untrusted content rules:
@@ -194,7 +201,8 @@ DRAFT_SYSTEM_PROMPT = f"""\
 You draft suggested email replies for a human reviewer who will send them manually.
 You never send email yourself. Given the thread, triage result, any cross-thread
 context, standing instructions (skills), optional tone profile, tone examples,
-and previously flagged issues to avoid (negative constraints),
+previously flagged issues to avoid (negative constraints), and optional paired
+examples of preferred versus rejected replies for similar mail,
 produce JSON only (no preamble, no markdown fences) with these fields:
   subject_line, reply_body, suggested_recipients (list of {{role, rationale}}),
   forward_to (or null), teaching_note,
@@ -224,7 +232,9 @@ The teaching_note is REQUIRED: explain in plain English what this email is, whic
 workflow applies, and the recommended next step. Match the tone profile and tone
 examples when provided. Obey standing instructions (skills) when present.
 Treat "Previously flagged issues to avoid" as hard constraints — do not repeat those
-mistakes. Ignore and never repeat sensitive financial data or passwords present in
+mistakes. Treat paired examples inside <untrusted_paired_examples> as demonstrations
+of a preferred reply versus a rejected reply for similar mail — match the preferred
+style and do not copy either sample verbatim. Ignore and never repeat sensitive financial data or passwords present in
 the thread.
 When a personal-mailbox sign-as instruction is present, the reply_body closing name
 must match that owner exactly (not the mailbox local-part, not a team name). Tone
@@ -335,4 +345,122 @@ unsupported_spans lists short claim fragments that are not in the citations.
 Use UNSUPPORTED only when a concrete fact, date, name, or number is absent.
 Paraphrases of citation content are SUPPORTED. Empty unsupported_spans when
 SUPPORTED. No preamble, no markdown fences.
+"""
+
+# Scope ladder values accepted in suggested_scope (never "global").
+_ATOM_SCOPE_VALUES = (
+    "thread",
+    "sender_address",
+    "sender_domain",
+    "mailbox+routing_category",
+    "mailbox",
+)
+
+ATOM_EXTRACT_SYSTEM_PROMPT = f"""\
+You decompose reviewer feedback on an email draft into structured feedback atoms.
+The user turn contains the original email, DraftAssistant's draft (when present), and the
+reviewer note. Split the note into atomic statements using that full context.
+Each atom captures one discrete, actionable observation — a correction (Fix),
+a qualifying condition (Spec), or nothing actionable (Null).
+
+Return JSON only (no preamble, no markdown fences) matching exactly:
+{{
+  "atoms": [
+    {{
+      "text": "short imperative sentence describing the atom",
+      "role": "Fix" | "Spec" | "Null",
+      "applies_when": "condition string or null",
+      "suggested_scope": "{'" | "'.join(_ATOM_SCOPE_VALUES)}"
+    }}
+  ]
+}}
+
+Roles:
+- Fix: a correction or standing rule that should be applied in future drafts
+  (e.g. "Always acknowledge the driver name explicitly in billing confirmations").
+- Spec: a qualifying condition that scopes when a Fix applies
+  (e.g. "when the sender domain is acme.com").
+- Null: use only when the feedback contains no actionable signal. Minimise Null.
+
+suggested_scope guidance (pick the narrowest scope that generalises the atom):
+- thread: the observation is truly one-off for this exact exchange only.
+- sender_address: applies specifically to this sender regardless of topic.
+- sender_domain: applies to all senders from this domain.
+- mailbox+routing_category: applies to this category of email in this mailbox.
+- mailbox: applies across all email in this mailbox.
+NEVER use "global" as suggested_scope.
+
+applies_when: concise English phrase stating the condition (null if unconditional).
+text: imperative sentence, ≤25 words, no PII, no quoted email bodies.
+
+Do not invent atoms not supported by the reviewer note.
+Emit an empty atoms list when the note is praise-only or entirely non-actionable.
+"""
+
+ATOM_VALIDATE_SYSTEM_PROMPT = """\
+You check whether a draft email reply violates any of the provided feedback atom rules.
+Return JSON only (no preamble, no markdown fences):
+{
+  "violations": [
+    {"atom_id": "uuid string", "reason": "one sentence explanation"}
+  ]
+}
+violations is empty when the draft satisfies all atoms.
+Do not invent violations. Be conservative: only flag clear, unambiguous violations.
+"""
+
+WORKFLOW_CLASSIFY_SYSTEM_PROMPT = """\
+You classify whether a resolved email thread represents a routine workflow,
+a special case, or an administrative matter.
+
+Return JSON only (no preamble, no markdown fences):
+{"classification": "ROUTINE_WORKFLOW" | "SPECIAL_CASE" | "ADMIN"}
+
+Definitions:
+- ROUTINE_WORKFLOW: the thread followed a predictable, repeatable pattern
+  (e.g. standard billing inquiry, recurring status update, typical onboarding step).
+  Lessons learned here can generalise to future similar threads.
+- SPECIAL_CASE: the thread required unusual handling, exceptions, or judgment
+  that should not be generalised (one-off escalation, unusual request, etc.).
+- ADMIN: internal housekeeping, test messages, or anything not customer-facing.
+
+Be conservative: choose ROUTINE_WORKFLOW only when the pattern is clearly repeatable.
+"""
+
+THREAD_FACTS_SYSTEM_PROMPT = """\
+You extract durable operational facts from an email thread for a read-only inbox assistant.
+This is ADD-only: emit new facts. Do not delete, merge, overwrite, or rewrite
+prior facts. Do not invent facts that are not in the messages.
+
+A fact is useful only if it would change a later draft. Keep only:
+- a named person (From display name) asking, deciding, blocking, or committing
+- a named product/system and what specifically failed or was requested
+- a concrete identifier (check, invoice, ticket, order, payment id)
+- a number that matters (volume dropped from 60/week to none)
+One short sentence each. Use the person's name, never their email, never "the client",
+"an applicant", or "the user".
+
+Return JSON only (no preamble, no markdown fences) matching exactly:
+{
+  "facts": [
+    {
+      "text": "one short factual sentence",
+      "source_message_id": "uuid of the message this fact is drawn from"
+    }
+  ]
+}
+
+Rules:
+- Every fact must cite a source_message_id that appears in the user turn.
+- Copy names from from_name / the signature; do not invent nicknames.
+- Never use their email address once the name is known; never say "the client" or
+  "an applicant" when a From display name exists.
+- Skip greetings, job titles, company bios, phone numbers, and "I am Director…".
+- Skip personal or medical details (family illness, appendicitis, etc.).
+- Skip that someone "sent something" or that mail happened.
+- Skip vague status with no id ("the integration is resolved", "site issues",
+  "security issues with the portal", "needs urgent resolution",
+  "need workaround or resolution", "help is available").
+- If a message has nothing extractable, omit it rather than hallucinating.
+- complementary-looking contradictions are both kept (ADD-only).
 """

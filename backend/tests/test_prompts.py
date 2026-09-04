@@ -10,10 +10,13 @@ from collections import Counter
 from typing import get_args
 
 from app.llm.prompts import (
+    ATOM_EXTRACT_SYSTEM_PROMPT,
+    ATOM_VALIDATE_SYSTEM_PROMPT,
     BRIEFING_SYSTEM_PROMPT,
     DRAFT_SYSTEM_PROMPT,
     MESSAGE_SUMMARY_SYSTEM_PROMPT,
     PROMPT_VERSION,
+    THREAD_FACTS_SYSTEM_PROMPT,
     THREAD_SUMMARY_SYSTEM_PROMPT,
     TRIAGE_SYSTEM_PROMPT,
     URGENCY_EXAMPLES,
@@ -65,7 +68,10 @@ def test_triage_prompt_documents_output_fields() -> None:
         "routing_category",
     ):
         assert field in TRIAGE_SYSTEM_PROMPT
-    assert "confidence" not in TRIAGE_SYSTEM_PROMPT.lower()
+    # Guard: the prompt must not ask for a standalone "certainty score" per message.
+    # ("confidence weights" is acceptable for the optional urgency_probs field.)
+    assert "certainty score" not in TRIAGE_SYSTEM_PROMPT.lower()
+    assert "confidence" not in ClassificationSchema.model_fields
     assert "outbound email from this mailbox" in TRIAGE_SYSTEM_PROMPT.lower() or (
         "draft_needed" in TRIAGE_SYSTEM_PROMPT and "calendar" in TRIAGE_SYSTEM_PROMPT.lower()
     )
@@ -179,7 +185,7 @@ def test_draft_prompt_requires_reply_addressee_salutation() -> None:
     assert "thread opener" in DRAFT_SYSTEM_PROMPT.lower()
     assert "no personal name known" in DRAFT_SYSTEM_PROMPT
     assert "fabricate a first name from an email address" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-09-03.1"
+    assert PROMPT_VERSION == "2026-09-04.5"
 
 
 def test_triage_prompt_allows_operational_fyi_ack() -> None:
@@ -193,12 +199,12 @@ def test_triage_prompt_documents_cc_observer_vs_inquiries_lead() -> None:
     assert "cc observer" in lowered
     assert "inquiries" in lowered
     assert "daily drivers" in lowered or "pending-change" in lowered
-    assert PROMPT_VERSION == "2026-09-03.1"
+    assert PROMPT_VERSION == "2026-09-04.5"
 
 
 def test_draft_prompt_documents_read_skill_reference_tool() -> None:
     assert "read_skill_reference" in DRAFT_SYSTEM_PROMPT
-    assert PROMPT_VERSION == "2026-09-03.1"
+    assert PROMPT_VERSION == "2026-09-04.5"
     assert "reference" in DRAFT_SYSTEM_PROMPT.lower()
 
 
@@ -262,4 +268,78 @@ def test_briefing_prompt_has_no_letter_fields() -> None:
     )
     assert "reply_body" not in BriefingSchema.model_fields
     assert "suggested_recipients" not in BriefingSchema.model_fields
-    assert PROMPT_VERSION == "2026-09-03.1"
+    assert PROMPT_VERSION == "2026-09-04.5"
+
+
+def test_atom_extract_prompt_present_and_documents_roles() -> None:
+    """ATOM_EXTRACT_SYSTEM_PROMPT must be non-empty and list all three roles."""
+    assert isinstance(ATOM_EXTRACT_SYSTEM_PROMPT, str) and ATOM_EXTRACT_SYSTEM_PROMPT.strip()
+    # All three roles must be documented
+    assert "Fix" in ATOM_EXTRACT_SYSTEM_PROMPT
+    assert "Spec" in ATOM_EXTRACT_SYSTEM_PROMPT
+    assert "Null" in ATOM_EXTRACT_SYSTEM_PROMPT
+
+
+def test_atom_extract_prompt_forbids_global_scope() -> None:
+    """ATOM_EXTRACT_SYSTEM_PROMPT must instruct the model to never use 'global'."""
+    lowered = ATOM_EXTRACT_SYSTEM_PROMPT.lower()
+    assert "never" in lowered
+    assert "global" in lowered
+
+
+def test_atom_extract_prompt_documents_all_valid_scopes() -> None:
+    """Every scope ladder value must appear in ATOM_EXTRACT_SYSTEM_PROMPT."""
+    for scope in (
+        "thread",
+        "sender_address",
+        "sender_domain",
+        "mailbox+routing_category",
+        "mailbox",
+    ):
+        assert scope in ATOM_EXTRACT_SYSTEM_PROMPT, (
+            f"scope '{scope}' missing from ATOM_EXTRACT_SYSTEM_PROMPT"
+        )
+
+
+def test_thread_facts_prompt_is_add_only_with_provenance() -> None:
+    """THREAD_FACTS_SYSTEM_PROMPT must require ADD-only facts with source ids."""
+    lowered = THREAD_FACTS_SYSTEM_PROMPT.lower()
+    assert "add-only" in lowered or "add only" in lowered
+    assert "source_message_id" in THREAD_FACTS_SYSTEM_PROMPT
+    assert "never their email" in lowered or "never their email address" in lowered
+    assert "signature" in lowered
+    assert "personal or medical" in lowered or "appendicitis" in lowered
+    assert "sent something" in lowered
+    assert "json" in lowered
+    assert "no preamble" in lowered or "preamble" in lowered
+    assert "do not" in lowered and ("delete" in lowered or "overwrite" in lowered)
+
+
+def test_atom_extract_prompt_requests_json_only() -> None:
+    """ATOM_EXTRACT_SYSTEM_PROMPT must request JSON-only output."""
+    lowered = ATOM_EXTRACT_SYSTEM_PROMPT.lower()
+    assert "json" in lowered
+    assert "no preamble" in lowered or "preamble" in lowered
+
+
+def test_atom_validate_prompt_present_and_documents_violations() -> None:
+    """ATOM_VALIDATE_SYSTEM_PROMPT must be non-empty and reference 'violations'."""
+    assert isinstance(ATOM_VALIDATE_SYSTEM_PROMPT, str) and ATOM_VALIDATE_SYSTEM_PROMPT.strip()
+    assert "violations" in ATOM_VALIDATE_SYSTEM_PROMPT
+    assert "json" in ATOM_VALIDATE_SYSTEM_PROMPT.lower()
+
+
+def test_prompt_version_bumped_for_paired_examples_slot() -> None:
+    """PROMPT_VERSION must move when the ICDPO paired-examples slot is added."""
+    from app.llm.prompts import UNTRUSTED_PAIRED_EXAMPLES_TAG
+
+    assert PROMPT_VERSION != "2026-09-03.1"
+    assert PROMPT_VERSION == "2026-09-04.5"
+    assert UNTRUSTED_PAIRED_EXAMPLES_TAG == "untrusted_paired_examples"
+    assert (
+        "paired example" in DRAFT_SYSTEM_PROMPT.lower() or "paired_examples" in DRAFT_SYSTEM_PROMPT
+    )
+    assert (
+        UNTRUSTED_PAIRED_EXAMPLES_TAG in DRAFT_SYSTEM_PROMPT
+        or "untrusted_paired_examples" in DRAFT_SYSTEM_PROMPT
+    )

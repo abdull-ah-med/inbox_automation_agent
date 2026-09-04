@@ -52,8 +52,8 @@ async def reopen_finished_if_action_needed(
                 "prior_state": prior.state,
                 "message_id": state.original_email.message_id,
                 "human": {
-                    "title": "Reopened after new inbound",
-                    "body": "New inbound has action items. Thread is open again.",
+                    "title": "Reopened",
+                    "body": "A new inbound email arrived, so this is open again.",
                     "actor_kind": "agent",
                 },
             },

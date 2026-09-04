@@ -265,13 +265,14 @@ async def resolve_thread_from_outbound(
     try:
         thread = await thread_repo.get_by_id(session, thread_id, TenantScope.single(mailbox))
         urgency_assessed = thread.urgency if thread is not None else None
-        matched_label = matched_by.replace("_", " ")
-        human_body = f"Matched your Outlook send ({matched_label}). Removed from Needs Attention."
-        if urgency_assessed:
+        if matched_by == "approved_draft":
+            human_body = "You sent the approved draft from Outlook. Taken off Needs Attention."
+        elif matched_by == "time_window":
             human_body = (
-                f"{human_body} Assessed urgency was {urgency_assessed}; "
-                "it no longer drives priority."
+                "DraftAssistant saw you send from Outlook and closed this. Taken off Needs Attention."
             )
+        else:
+            human_body = "You sent a reply from Outlook. Taken off Needs Attention."
         await audit_service.log_event(
             session,
             event_type="thread.resolved.sent_reply_detected",
