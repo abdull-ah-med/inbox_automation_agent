@@ -370,6 +370,16 @@ async def run_catchup_after_outbound(
                 anthropic_client=client,
             )
 
+        if settings.thread_context_enabled:
+            from app.services import thread_context_service
+
+            await thread_context_service.extract_if_needed(
+                session,
+                thread_id,
+                client=client,
+                settings=settings,
+                source="sent_reply",
+            )
         logger.info(
             "sent_reply_catchup_complete",
             thread_id=str(thread_id),

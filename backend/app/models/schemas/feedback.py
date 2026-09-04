@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.schemas.routing import RejectReasonCode
 
-ApprovalScope = Literal["once", "similar"]
+ApprovalScope = Literal["once", "similar", "sender_address", "mailbox"]
 
 
 class DraftApproveSchema(BaseModel):
