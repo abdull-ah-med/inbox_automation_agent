@@ -29,6 +29,8 @@ const REJECT_ITEMS = [
   })),
 ]
 
+export type ApprovalScope = "once" | "similar" | "sender_address" | "mailbox"
+
 type ApproveDraftDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -36,8 +38,8 @@ type ApproveDraftDialogProps = {
   onApproveBodyChange: (value: string) => void
   approvalNote: string
   onApprovalNoteChange: (value: string) => void
-  approvalScope: "once" | "similar" | ""
-  onApprovalScopeChange: (value: "once" | "similar") => void
+  approvalScope: ApprovalScope | ""
+  onApprovalScopeChange: (value: ApprovalScope) => void
   busy: boolean
   isPending: boolean
   onConfirm: () => void
@@ -74,7 +76,7 @@ export const ApproveDraftDialog = ({
             name="approve_body"
             autoComplete="off"
             rows={14}
-            className="min-h-[16rem]"
+            className="min-h-64"
           />
         </div>
         <div className="space-y-3 border-t border-gray-200 pt-4 dark:border-gray-700">
@@ -98,14 +100,19 @@ export const ApproveDraftDialog = ({
             <legend className="text-xs text-gray-500">
               If you add a note, where should it apply?
             </legend>
-            <div className="flex flex-wrap gap-2">
+            <div
+              className="flex flex-wrap gap-2"
+              role="radiogroup"
+              aria-label="Approval learning scope"
+            >
               <Button
                 type="button"
                 size="sm"
+                role="radio"
                 variant={approvalScope === "once" ? "default" : "outline"}
                 tabIndex={0}
                 aria-label="Apply learning to this thread only"
-                aria-pressed={approvalScope === "once"}
+                aria-checked={approvalScope === "once"}
                 onClick={() => onApprovalScopeChange("once")}
               >
                 Just this thread
@@ -113,13 +120,38 @@ export const ApproveDraftDialog = ({
               <Button
                 type="button"
                 size="sm"
+                role="radio"
                 variant={approvalScope === "similar" ? "default" : "outline"}
                 tabIndex={0}
                 aria-label="Apply learning to similar emails"
-                aria-pressed={approvalScope === "similar"}
+                aria-checked={approvalScope === "similar"}
                 onClick={() => onApprovalScopeChange("similar")}
               >
                 Similar emails in the future
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                role="radio"
+                variant={approvalScope === "sender_address" ? "default" : "outline"}
+                tabIndex={0}
+                aria-label="Apply learning to similar emails from this sender"
+                aria-checked={approvalScope === "sender_address"}
+                onClick={() => onApprovalScopeChange("sender_address")}
+              >
+                Similar emails from this sender
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                role="radio"
+                variant={approvalScope === "mailbox" ? "default" : "outline"}
+                tabIndex={0}
+                aria-label="Apply learning always in this mailbox"
+                aria-checked={approvalScope === "mailbox"}
+                onClick={() => onApprovalScopeChange("mailbox")}
+              >
+                Always in this mailbox
               </Button>
             </div>
             {approvalNote.trim() && !approvalScope ? (

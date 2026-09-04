@@ -22,6 +22,8 @@ const reasonCodeLabel = (code: string | null | undefined): string | null => {
   }
   if (code === "similar") return "Applies to similar emails"
   if (code === "once") return "This thread only"
+  if (code === "sender_address") return "Applies to this sender"
+  if (code === "mailbox") return "Applies to this mailbox"
   return code.replaceAll("_", " ")
 }
 

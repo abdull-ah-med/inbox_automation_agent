@@ -4,12 +4,14 @@ import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ThreadTriageSidebar } from "@/components/thread-triage-sidebar"
+import { ApiError } from "@/lib/api/client"
 import type { DraftView, ThreadSummary } from "@/lib/types"
 
 const approveMock = vi.fn()
 const rejectMock = vi.fn()
 const relatedMock = vi.fn()
 const markWrongMock = vi.fn()
+const getContextMock = vi.fn()
 
 const markNotSpamMock = vi.fn()
 
@@ -23,6 +25,9 @@ vi.mock("@/lib/api-client", () => ({
     threads: {
       related: (...args: unknown[]) => relatedMock(...args),
       markNotSpam: (...args: unknown[]) => markNotSpamMock(...args),
+      getContext: (...args: unknown[]) => getContextMock(...args),
+      rebuildContext: vi.fn(),
+      discardContextFact: vi.fn(),
     },
   },
 }))
@@ -70,6 +75,11 @@ const baseDraft = (): DraftView => ({
   tool_calls: null,
 })
 
+beforeEach(() => {
+  getContextMock.mockReset()
+  getContextMock.mockRejectedValue(new ApiError("Not found", 404))
+})
+
 const renderSidebar = (draft: DraftView | null = baseDraft()) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -101,10 +111,12 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     rejectMock.mockReset()
     markWrongMock.mockReset()
     relatedMock.mockReset()
+    getContextMock.mockReset()
     approveMock.mockResolvedValue(baseDraft())
     rejectMock.mockResolvedValue(baseDraft())
     markWrongMock.mockResolvedValue(baseDraft())
     relatedMock.mockResolvedValue({ items: [] })
+    getContextMock.mockRejectedValue(new ApiError("Not found", 404))
   })
 
   it("renders exactly two action buttons when a draft is present", async () => {
@@ -196,7 +208,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
       "Lead with invoice number",
     )
     await user.click(
-      within(dialog).getByRole("button", { name: "Apply learning to similar emails" }),
+      within(dialog).getByRole("radio", { name: "Apply learning to similar emails" }),
     )
     await user.click(within(dialog).getByRole("button", { name: "Confirm approve draft" }))
     await waitFor(() => {
@@ -216,7 +228,7 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     const dialog = await screen.findByRole("dialog")
     await user.type(within(dialog).getByLabelText("Approval learning note"), "One-off exception")
     await user.click(
-      within(dialog).getByRole("button", {
+      within(dialog).getByRole("radio", {
         name: "Apply learning to this thread only",
       }),
     )
@@ -412,11 +424,48 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(screen.queryByText("references/missing.md")).toBeNull()
   })
 
-  it("exposes classification, draft, and audit tabs", () => {
+  it("exposes classification and draft tabs", () => {
     renderSidebar()
     expect(screen.getByRole("tab", { name: "Classification" })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument()
-    expect(screen.getByRole("tab", { name: "Audit (0)" })).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: /Audit/ })).toBeNull()
+    expect(screen.getByText("Audit log")).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: "Context" })).toBeNull()
+    expect(screen.queryByRole("tab", { name: "Insight" })).toBeNull()
+    expect(screen.queryByRole("tab", { name: "Timeline" })).toBeNull()
+  })
+
+  it("shows Timeline under Insight in the same view when thread context is on", async () => {
+    getContextMock.mockResolvedValue({
+      version: 1,
+      user_notes: "Do not CC legal",
+      facts: [
+        { id: "fact-1", body: "Asked for Friday", source_message_id: "msg-a", created_at: null },
+      ],
+      updated_at: "2026-09-04T12:00:00Z",
+    })
+    const user = userEvent.setup()
+    renderSidebar()
+
+    expect(await screen.findByRole("tab", { name: "Context" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Insight" })).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: "Timeline" })).toBeNull()
+    expect(screen.getByRole("tab", { name: "Classification" })).toBeInTheDocument()
+    expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument()
+    expect(screen.queryByRole("tab", { name: /Audit/ })).toBeNull()
+
+    await user.click(screen.getByRole("tab", { name: "Context" }))
+    expect(screen.queryByText("Acknowledge and resolve.")).toBeNull()
+    expect(screen.queryByText("Timeline")).toBeNull()
+    expect(screen.queryByText("Audit log")).toBeNull()
+
+    await user.click(screen.getByRole("tab", { name: "Insight" }))
+    expect(screen.getByText("Acknowledge and resolve.")).toBeInTheDocument()
+    expect(screen.getByText("Timeline")).toBeInTheDocument()
+    expect(screen.queryByText("Audit log")).toBeNull()
+
+    await user.click(screen.getByRole("tab", { name: "Classification" }))
+    expect(screen.getByText("Audit log")).toBeInTheDocument()
   })
 })
 

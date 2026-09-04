@@ -1,14 +1,15 @@
+"use client"
+
 import { EmailBody } from "@/components/email-body"
 import { PresentationBadges } from "@/components/presentation-badges"
 import { StatusBadge, urgencyTone } from "@/components/status-badge"
 import { Field, Panel } from "@/components/thread-triage/panel"
 import { UrgencyEditPopover } from "@/components/urgency-edit-popover"
 import { Button } from "@/components/ui/button"
-import { formatRelativeTime } from "@/lib/design-tokens"
 import { threadPrimaryBadge } from "@/lib/thread-primary-badge"
-import type { ActivityEntry, ThreadSummary } from "@/lib/types"
+import type { ThreadSummary } from "@/lib/types"
 
-type InsightsPanelProps = {
+type InsightSectionProps = {
   thread: ThreadSummary
   teachingNote: string | null
   urgency: string | null
@@ -16,24 +17,12 @@ type InsightsPanelProps = {
   draftId: string | undefined
   feedbackDone: boolean
   busy: boolean
-  activity: ActivityEntry[]
   resolvePending: boolean
   onMarkResolved: () => void
   onUrgencySaved: (payload: {
     reason: string
     urgency: "CRITICAL" | "HIGH" | "NORMAL" | "LOW"
   }) => void
-}
-
-type UrgencyFieldValueProps = {
-  urgency: string | null
-  urgencyReason: string | null
-  draftId: string | undefined
-  feedbackDone: boolean
-  busy: boolean
-  threadId: string
-  presentation: ThreadSummary["presentation"]
-  onUrgencySaved: InsightsPanelProps["onUrgencySaved"]
 }
 
 const UrgencyFieldValue = ({
@@ -45,7 +34,16 @@ const UrgencyFieldValue = ({
   threadId,
   presentation,
   onUrgencySaved,
-}: UrgencyFieldValueProps) => {
+}: {
+  urgency: string | null
+  urgencyReason: string | null
+  draftId: string | undefined
+  feedbackDone: boolean
+  busy: boolean
+  threadId: string
+  presentation: ThreadSummary["presentation"]
+  onUrgencySaved: InsightSectionProps["onUrgencySaved"]
+}) => {
   if (!urgency) return "—"
 
   return (
@@ -75,7 +73,7 @@ const UrgencyFieldValue = ({
   )
 }
 
-export const InsightsPanel = ({
+export const InsightSection = ({
   thread,
   teachingNote,
   urgency,
@@ -83,16 +81,15 @@ export const InsightsPanel = ({
   draftId,
   feedbackDone,
   busy,
-  activity,
   resolvePending,
   onMarkResolved,
   onUrgencySaved,
-}: InsightsPanelProps) => {
+}: InsightSectionProps) => {
   const presentation = thread.presentation
   const showResolve = Boolean(presentation?.open_work && !presentation?.is_finished)
 
   return (
-    <Panel title="Insights">
+    <Panel title="Insight">
       <div className="space-y-4">
         <div>
           <p className="text-muted-foreground text-xs">Teaching note</p>
@@ -141,34 +138,6 @@ export const InsightsPanel = ({
           >
             {resolvePending ? "Resolving…" : "Mark resolved"}
           </Button>
-        ) : null}
-
-        {activity.length > 0 ? (
-          <div>
-            <p className="text-muted-foreground text-xs">Activity</p>
-            <ul className="mt-2 space-y-2">
-              {activity
-                .toReversed()
-                .slice(0, 5)
-                .map((entry) => (
-                  <li
-                    key={`${entry.event_type}-${entry.timestamp}`}
-                    className="border-border/60 rounded-md border px-2.5 py-2"
-                  >
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                      {entry.title}
-                    </p>
-                    {entry.body.trim() &&
-                    entry.body.trim().toLowerCase() !== entry.title.trim().toLowerCase() ? (
-                      <p className="text-muted-foreground mt-0.5 text-xs">{entry.body.trim()}</p>
-                    ) : null}
-                    <p className="text-muted-foreground mt-1 text-[11px]">
-                      {formatRelativeTime(entry.timestamp)}
-                    </p>
-                  </li>
-                ))}
-            </ul>
-          </div>
         ) : null}
       </div>
     </Panel>

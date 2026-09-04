@@ -1,6 +1,5 @@
 import { SuggestedProcessPanel } from "@/components/thread-triage/suggested-process-panel"
 import { ThreadDetailsPanel } from "@/components/thread-triage/thread-details-panel"
-import { TriageHistoryPanel } from "@/components/thread-triage/triage-history-panel"
 import type { DraftView, ThreadSummary, TriageFlags } from "@/lib/types"
 
 type ClassificationSectionProps = {
@@ -18,7 +17,6 @@ export const ClassificationSection = ({
 }: ClassificationSectionProps) => (
   <div className="space-y-4">
     <SuggestedProcessPanel suggestedActions={suggestedActions} />
-    <TriageHistoryPanel threadId={threadId} thread={thread} triage={triage} />
-    <ThreadDetailsPanel thread={thread} />
+    <ThreadDetailsPanel threadId={threadId} thread={thread} triage={triage} />
   </div>
 )

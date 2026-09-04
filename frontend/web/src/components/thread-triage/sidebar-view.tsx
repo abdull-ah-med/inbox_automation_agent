@@ -3,10 +3,14 @@
 import { ApplySiblingsDialog } from "@/components/apply-siblings-dialog"
 import { AuditSection } from "@/components/thread-triage/audit-section"
 import { ClassificationSection } from "@/components/thread-triage/classification-section"
+import { ContextSection } from "@/components/thread-triage/context-section"
 import { DraftSection } from "@/components/thread-triage/draft-section"
+import { InsightSection } from "@/components/thread-triage/insight-section"
 import { InsightsPanel } from "@/components/thread-triage/insights-panel"
+import { TimelineSection } from "@/components/thread-triage/timeline-section"
 import {
   ApproveDraftDialog,
+  type ApprovalScope,
   RejectDraftDialog,
   ResolvePromptDialog,
 } from "@/components/thread-triage/review-dialogs"
@@ -17,6 +21,7 @@ import type {
   ActivityEntry,
   AuditEntry,
   DraftView,
+  MessageDetail,
   ReplyAddresseeView,
   SuggestedAction,
   ThreadSummary,
@@ -33,6 +38,7 @@ type ThreadTriageSidebarViewProps = {
   triage: TriageFlags | null
   auditLog: AuditEntry[]
   activity: ActivityEntry[]
+  messages: MessageDetail[]
   teachingNote: string | null
   urgency: string | null
   urgencyReason: string | null
@@ -51,7 +57,7 @@ type ThreadTriageSidebarViewProps = {
   resolveInvolved: string
   approveBody: string
   approvalNote: string
-  approvalScope: "once" | "similar" | ""
+  approvalScope: ApprovalScope | ""
   rejectNote: string
   rejectReason: RejectReasonCode | ""
   approvePending: boolean
@@ -66,7 +72,7 @@ type ThreadTriageSidebarViewProps = {
   onMarkResolved: () => void
   onApproveBodyChange: (value: string) => void
   onApprovalNoteChange: (value: string) => void
-  onApprovalScopeChange: (value: "once" | "similar" | "") => void
+  onApprovalScopeChange: (value: ApprovalScope | "") => void
   onRejectNoteChange: (value: string) => void
   onRejectReasonChange: (value: RejectReasonCode | "") => void
   onOpenApprove: () => void
@@ -77,6 +83,7 @@ type ThreadTriageSidebarViewProps = {
   onConfirmResolve: () => void
   onGenerateDraft: () => void
   onGenerateDraftKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
+  threadContextEnabled?: boolean
 }
 
 export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => {
@@ -87,6 +94,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     triage,
     auditLog,
     activity,
+    messages,
     teachingNote,
     urgency,
     urgencyReason,
@@ -130,33 +138,77 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onConfirmResolve,
     onGenerateDraft,
     onGenerateDraftKeyDown,
+    threadContextEnabled = false,
   } = props
+
+  const handleUrgencySaved = (payload: {
+    reason: string
+    urgency: "CRITICAL" | "HIGH" | "NORMAL" | "LOW"
+  }) => {
+    void siblings.prompt("urgency", payload.reason, payload.urgency)
+  }
 
   return (
     <div className="space-y-4">
-      <InsightsPanel
-        thread={thread}
-        teachingNote={teachingNote}
-        urgency={urgency}
-        urgencyReason={urgencyReason}
-        draftId={draftId}
-        feedbackDone={feedbackDone}
-        busy={busy}
-        activity={activity}
-        resolvePending={resolvePending}
-        onMarkResolved={onMarkResolved}
-        onUrgencySaved={(payload) => {
-          void siblings.prompt("urgency", payload.reason, payload.urgency)
-        }}
-      />
+      {threadContextEnabled ? null : (
+        <InsightsPanel
+          thread={thread}
+          teachingNote={teachingNote}
+          urgency={urgency}
+          urgencyReason={urgencyReason}
+          draftId={draftId}
+          feedbackDone={feedbackDone}
+          busy={busy}
+          activity={activity}
+          resolvePending={resolvePending}
+          onMarkResolved={onMarkResolved}
+          onUrgencySaved={handleUrgencySaved}
+        />
+      )}
 
-      <Tabs defaultValue="classification" className="w-full gap-3">
+      <Tabs
+        defaultValue={threadContextEnabled ? "context" : "classification"}
+        className="w-full gap-3"
+      >
         <TabsList className="w-full" aria-label="Thread review sections">
+          {threadContextEnabled ? (
+            <>
+              <TabsTrigger value="context">Context</TabsTrigger>
+              <TabsTrigger value="insight">Insight</TabsTrigger>
+            </>
+          ) : null}
           <TabsTrigger value="classification">Classification</TabsTrigger>
           <TabsTrigger value="draft">Draft</TabsTrigger>
-          <TabsTrigger value="audit">Audit ({auditLog.length})</TabsTrigger>
           <TabsIndicator />
         </TabsList>
+
+        {threadContextEnabled ? (
+          <>
+            <TabsContent value="context" className="outline-none">
+              <ContextSection threadId={threadId} />
+            </TabsContent>
+            <TabsContent value="insight" className="space-y-4 outline-none">
+              <InsightSection
+                thread={thread}
+                teachingNote={teachingNote}
+                urgency={urgency}
+                urgencyReason={urgencyReason}
+                draftId={draftId}
+                feedbackDone={feedbackDone}
+                busy={busy}
+                resolvePending={resolvePending}
+                onMarkResolved={onMarkResolved}
+                onUrgencySaved={handleUrgencySaved}
+              />
+              <TimelineSection
+                threadId={threadId}
+                messages={messages}
+                mailbox={thread.mailbox}
+                subject={thread.subject}
+              />
+            </TabsContent>
+          </>
+        ) : null}
 
         <TabsContent value="classification" className="space-y-4 outline-none">
           <ClassificationSection
@@ -165,6 +217,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             triage={triage}
             suggestedActions={suggestedActions}
           />
+          <AuditSection auditLog={auditLog} />
         </TabsContent>
 
         <TabsContent value="draft" className="outline-none">
@@ -184,10 +237,6 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             onGenerateDraft={onGenerateDraft}
             onGenerateDraftKeyDown={onGenerateDraftKeyDown}
           />
-        </TabsContent>
-
-        <TabsContent value="audit" className="outline-none">
-          <AuditSection auditLog={auditLog} />
         </TabsContent>
       </Tabs>
 
