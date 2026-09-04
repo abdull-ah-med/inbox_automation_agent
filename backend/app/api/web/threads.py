@@ -455,7 +455,8 @@ async def mark_thread_not_spam(
 
 
 def _context_rebuild_key(request: Request) -> str:
-    return f"ctx-rebuild:{request.path_params.get('thread_id')}:{client_ip_key(request)}"
+    thread_id = str(request.path_params.get("thread_id") or "")
+    return "ctx-rebuild:" + thread_id + ":" + client_ip_key(request)
 
 
 async def _require_context_thread(
