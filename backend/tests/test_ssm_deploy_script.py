@@ -56,10 +56,21 @@ def test_ssm_deploy_preserves_database_and_only_restarts_app_services() -> None:
     assert any("up --build -d backend frontend" in line for line in executable_lines)
     assert any("postgres_data volume not found" in line for line in executable_lines)
     assert any("x-access-token:${GITHUB_TOKEN}@github.com/" in line for line in executable_lines)
+    assert any("ssm get-parameter" in line for line in executable_lines)
+    assert any("TOKEN_PARAM" in line for line in executable_lines)
+
+
+def test_verify_ci_checks_pins_canonical_workflow() -> None:
+    script = (REPO_ROOT / "deploy" / "verify-ci-checks.sh").read_text()
+    assert ".github/workflows/ci-cd.yml" in script
+    assert "rows[0]" not in script
+    assert "actions/runs?head_sha=" in script
 
 
 def test_github_actions_ssm_deploy_uses_extended_poll() -> None:
     text = GITHUB_ACTIONS_DEPLOY.read_text()
     assert "SSM_POLL_ITERATIONS" in text
     assert "180" in text
-    assert "GITHUB_TOKEN" in text
+    assert "put-parameter" in text
+    assert "SecureString" in text
+    assert "export GITHUB_TOKEN=" not in text
