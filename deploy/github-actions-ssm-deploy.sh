@@ -15,19 +15,10 @@ SSM_POLL_INTERVAL_SECONDS="${SSM_POLL_INTERVAL_SECONDS:-10}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-TOKEN_PARAM="/inbox-triage-automation/deploy/${DEPLOY_SHA}/github-token"
-
-aws ssm put-parameter \
-  --name "$TOKEN_PARAM" \
-  --type SecureString \
-  --value "$GITHUB_TOKEN" \
-  --overwrite >/dev/null
-trap 'aws ssm delete-parameter --name "$TOKEN_PARAM" >/dev/null || true' EXIT
-
 {
   echo "export DEPLOY_SHA='${DEPLOY_SHA}'"
   echo "export BRANCH='${BRANCH}'"
-  echo "export TOKEN_PARAM='${TOKEN_PARAM}'"
+  echo "export GITHUB_TOKEN='${GITHUB_TOKEN}'"
   cat "${REPO_ROOT}/deploy/ssm-deploy.sh"
 } > /tmp/ssm-deploy-pinned.sh
 
