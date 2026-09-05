@@ -14,8 +14,7 @@ REPO_DIR="/home/ssm-user/inbox-triage-automation"
 GITHUB_REPO="abdull-ah-med/inbox_automation_agent"
 BRANCH="${BRANCH:-dev}"
 SHA="${DEPLOY_SHA:?DEPLOY_SHA required}"
-TOKEN_PARAM="${TOKEN_PARAM:?TOKEN_PARAM required}"
-GITHUB_TOKEN="$(aws ssm get-parameter --name "$TOKEN_PARAM" --with-decryption --query Parameter.Value --output text)"
+GITHUB_TOKEN="${GITHUB_TOKEN:?GITHUB_TOKEN required}"
 
 # SSM RunShellScript runs as root without HOME; avoid `git config --global`.
 GIT=(git -c "safe.directory=${REPO_DIR}")
