@@ -62,7 +62,12 @@ export const ToneMemorySection = () => {
         ) : null}
       </CardHeader>
       <CardContent>
-        <div className={cn("overflow-hidden rounded-lg", !replyMemoryError && "ring-foreground/10 ring-1")}>
+        <div
+          className={cn(
+            "overflow-hidden rounded-lg",
+            !replyMemoryError && "ring-foreground/10 ring-1",
+          )}
+        >
           {replyMemoryLoading ? (
             <div className="space-y-3 p-4">
               <Skeleton className="h-16 w-full" />
