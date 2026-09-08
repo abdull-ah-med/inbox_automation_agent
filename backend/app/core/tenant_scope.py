@@ -20,8 +20,6 @@ class TenantScope:
             for item in self.mailboxes
             if isinstance(item, str) and item.strip()
         )
-        if not cleaned:
-            raise ValueError("TenantScope requires at least one mailbox")
         object.__setattr__(self, "mailboxes", cleaned)
 
     @classmethod
