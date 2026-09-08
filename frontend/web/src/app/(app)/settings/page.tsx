@@ -15,7 +15,7 @@ import { ToneProfilesSection } from "./_sections/tone-profiles-section"
 import { UrgencyRulesSection } from "./_sections/urgency-rules-section"
 
 export default function SettingsPage() {
-  const { mailbox, addresses, setMailbox, isLoading: mailboxesLoading } = useMailboxFilter()
+  const { mailbox, mailboxes, setMailbox, isLoading: mailboxesLoading } = useMailboxFilter()
   return (
     <>
       <Breadcrumbs items={[{ label: "Overview", href: "/dashboard" }, { label: "Settings" }]} />
@@ -35,7 +35,7 @@ export default function SettingsPage() {
       <div className="mt-10 space-y-10">
         <ToneMemorySection />
         <RejectionMemorySection />
-        <MailboxFilter mailbox={mailbox} addresses={addresses} onMailboxChange={setMailbox} />
+        <MailboxFilter mailbox={mailbox} mailboxes={mailboxes} onMailboxChange={setMailbox} />
         <TeachingNotesSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />
         <PromotionProposalsSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />
         <UrgencyRulesSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />

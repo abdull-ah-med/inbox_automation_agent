@@ -16,6 +16,8 @@ type ErrorPageProps = {
   className?: string
   /** Full-viewport layout for route-level / global error pages */
   fullPage?: boolean
+  /** Inside a card or panel that already provides a border */
+  embedded?: boolean
 }
 
 export const ErrorPage = ({
@@ -27,6 +29,7 @@ export const ErrorPage = ({
   homeHref = "/dashboard",
   className,
   fullPage = false,
+  embedded = false,
 }: ErrorPageProps) => {
   const router = useRouter()
 
@@ -78,12 +81,14 @@ export const ErrorPage = ({
       className={cn(
         fullPage
           ? "flex min-h-screen items-center justify-center bg-gray-50 px-6 py-12 dark:bg-gray-950"
-          : "rounded-xl bg-card px-6 py-10 ring-1 ring-foreground/10",
+          : embedded
+            ? "px-6 py-10"
+            : "rounded-xl bg-card px-6 py-10 ring-1 ring-foreground/10",
         className,
       )}
     >
       <div className="mx-auto w-full max-w-md text-center">
-        <p className="dark:text-muted-foreground text-xs font-semibold tracking-wide text-gray-500 uppercase">
+        <p className="dark:text-muted-foreground text-xs font-semibold tracking-wide text-gray-500">
           SampleSite Support
         </p>
         <h1 className="mt-2 text-lg font-semibold text-gray-900 dark:text-gray-100">{heading}</h1>

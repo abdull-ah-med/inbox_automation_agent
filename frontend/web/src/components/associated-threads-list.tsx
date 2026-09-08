@@ -29,6 +29,68 @@ const MATCH_REASON_LABELS: Record<string, string> = {
   cosine: "Similar content",
 }
 
+const isConfirmedAssociation = (item: RelatedThreadItem) => item.status === "confirmed"
+
+const rowRemoveLabel = (item: RelatedThreadItem) =>
+  isConfirmedAssociation(item) ? "Delete Association" : "Remove"
+
+const rowRemoveAriaLabel = (item: RelatedThreadItem) =>
+  isConfirmedAssociation(item)
+    ? `Delete association ${item.subject}`
+    : `Remove associated thread ${item.subject}`
+
+const acceptBulkLabel = (allProposedSelected: boolean) =>
+  allProposedSelected ? "Accept all" : "Accept"
+
+const rejectBulkLabel = (allProposedSelected: boolean) =>
+  allProposedSelected ? "Reject all" : "Reject"
+
+const deleteBulkLabel = (allConfirmedSelected: boolean) =>
+  allConfirmedSelected ? "Delete all associations" : "Delete Association"
+
+const buildBulkToolbarState = (
+  rows: RelatedThreadItem[],
+  selectedIds: Set<string>,
+  inflightIds: Set<string>,
+) => {
+  const proposedRows = rows.filter((item) => item.status !== "confirmed")
+  const confirmedRows = rows.filter((item) => isConfirmedAssociation(item))
+  const multiSelect = rows.length > 1
+  const rowIds = rows.map((item) => item.thread_id)
+  const proposedIds = proposedRows.map((item) => item.thread_id)
+  const confirmedIds = confirmedRows.map((item) => item.thread_id)
+  const selectedRowIds = rowIds.filter((id) => selectedIds.has(id))
+  const selectedProposed = proposedIds.filter((id) => selectedIds.has(id))
+  const selectedConfirmed = confirmedIds.filter((id) => selectedIds.has(id))
+  const allSelected = multiSelect && rowIds.length > 0 && selectedRowIds.length === rowIds.length
+  const someSelected = selectedRowIds.length > 0
+  const partiallySelected = someSelected && !allSelected
+  const bulkBusy = selectedRowIds.some((id) => inflightIds.has(id))
+  const hasProposedSelected = selectedProposed.length > 0
+  const hasConfirmedSelected = selectedConfirmed.length > 0
+  const mixedSelection = hasProposedSelected && hasConfirmedSelected
+  const allProposedSelected =
+    proposedIds.length > 0 && selectedProposed.length === proposedIds.length
+  const allConfirmedSelected =
+    confirmedIds.length > 0 && selectedConfirmed.length === confirmedIds.length
+
+  return {
+    proposedRows,
+    confirmedRows,
+    multiSelect,
+    rowIds,
+    selectedProposed,
+    selectedConfirmed,
+    allSelected,
+    partiallySelected,
+    bulkAcceptLabel: acceptBulkLabel(allProposedSelected),
+    bulkRejectLabel: rejectBulkLabel(allProposedSelected),
+    bulkDeleteLabel: deleteBulkLabel(allConfirmedSelected),
+    bulkProposedActionsDisabled: mixedSelection || !hasProposedSelected || bulkBusy,
+    bulkConfirmedActionsDisabled: mixedSelection || !hasConfirmedSelected || bulkBusy,
+  }
+}
+
 const MatchReasonChips = ({ reasons }: { reasons?: string[] | null }) => {
   if (!reasons || reasons.length === 0) return null
   return (
@@ -68,7 +130,10 @@ const AssociationRow = ({
   onConfirm: (relatedId: string) => void
   onRemove: (relatedId: string) => void
 }) => {
-  const canConfirm = item.status !== "confirmed"
+  const isProposed = !isConfirmedAssociation(item)
+  const removeLabel = rowRemoveLabel(item)
+  const removeAriaLabel = rowRemoveAriaLabel(item)
+  const showRowActions = !multiSelect || isProposed
   return (
     <li className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800">
       <div className="flex min-w-0 flex-1 items-start gap-3">
@@ -106,7 +171,7 @@ const AssociationRow = ({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {!multiSelect && canConfirm ? (
+        {showRowActions && isProposed ? (
           <Button
             type="button"
             size="sm"
@@ -118,17 +183,19 @@ const AssociationRow = ({
             Confirm
           </Button>
         ) : null}
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          tabIndex={0}
-          aria-label={`Delete association ${item.subject}`}
-          disabled={inflight}
-          onClick={() => onRemove(item.thread_id)}
-        >
-          Delete Association
-        </Button>
+        {showRowActions ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            tabIndex={0}
+            aria-label={removeAriaLabel}
+            disabled={inflight}
+            onClick={() => onRemove(item.thread_id)}
+          >
+            {removeLabel}
+          </Button>
+        ) : null}
       </div>
     </li>
   )
@@ -241,22 +308,21 @@ const AssociatedThreadsListState = ({
       return status ? { ...item, status } : item
     })
 
-  const proposedRows = rows.filter((item) => item.status !== "confirmed")
-  const multiSelect = rows.length > 1
-  const rowIds = rows.map((item) => item.thread_id)
-  const proposedIds = proposedRows.map((item) => item.thread_id)
-  const selectedRowIds = rowIds.filter((id) => selectedIds.has(id))
-  const selectedProposed = proposedIds.filter((id) => selectedIds.has(id))
-  const allSelected = multiSelect && rowIds.length > 0 && selectedRowIds.length === rowIds.length
-  const someSelected = selectedRowIds.length > 0
-  const partiallySelected = someSelected && !allSelected
-  const bulkBusy = selectedRowIds.some((id) => inflightIds.has(id))
-  const hasProposedSelected = selectedProposed.length > 0
-  const allProposedSelected =
-    proposedIds.length > 0 && selectedProposed.length === proposedIds.length && hasProposedSelected
-  const showBulkConfirm = proposedRows.length > 0
-  const bulkLabel = allProposedSelected ? "Confirm all" : "Confirm"
-  const removeLabel = allSelected ? "Delete all associations" : "Delete Association"
+  const {
+    proposedRows,
+    confirmedRows,
+    multiSelect,
+    rowIds,
+    selectedProposed,
+    selectedConfirmed,
+    allSelected,
+    partiallySelected,
+    bulkAcceptLabel,
+    bulkRejectLabel,
+    bulkDeleteLabel,
+    bulkProposedActionsDisabled,
+    bulkConfirmedActionsDisabled,
+  } = buildBulkToolbarState(rows, selectedIds, inflightIds)
 
   const previewQuery = useQuery({
     queryKey: ["thread", previewId],
@@ -348,9 +414,16 @@ const AssociatedThreadsListState = ({
     }
   }
 
-  const handleRemoveSelected = () => {
-    if (selectedRowIds.length === 0) return
-    for (const relatedId of selectedRowIds) {
+  const handleRemoveSelectedProposed = () => {
+    if (selectedProposed.length === 0) return
+    for (const relatedId of selectedProposed) {
+      void handleReview(relatedId, "dismissed")
+    }
+  }
+
+  const handleDeleteSelectedConfirmed = () => {
+    if (selectedConfirmed.length === 0) return
+    for (const relatedId of selectedConfirmed) {
       void handleReview(relatedId, "dismissed")
     }
   }
@@ -383,29 +456,44 @@ const AssociatedThreadsListState = ({
             <span className="text-muted-foreground text-xs">Select all</span>
           </label>
           <div className="flex items-center gap-1">
-            {showBulkConfirm ? (
+            {proposedRows.length > 0 ? (
+              <>
+                <Button
+                  type="button"
+                  size="sm"
+                  tabIndex={0}
+                  aria-label={bulkAcceptLabel}
+                  disabled={bulkProposedActionsDisabled}
+                  onClick={handleConfirmSelected}
+                >
+                  {bulkAcceptLabel}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  tabIndex={0}
+                  aria-label={bulkRejectLabel}
+                  disabled={bulkProposedActionsDisabled}
+                  onClick={handleRemoveSelectedProposed}
+                >
+                  {bulkRejectLabel}
+                </Button>
+              </>
+            ) : null}
+            {confirmedRows.length > 0 ? (
               <Button
                 type="button"
                 size="sm"
+                variant="ghost"
                 tabIndex={0}
-                aria-label={bulkLabel}
-                disabled={!hasProposedSelected || bulkBusy}
-                onClick={handleConfirmSelected}
+                aria-label={bulkDeleteLabel}
+                disabled={bulkConfirmedActionsDisabled}
+                onClick={handleDeleteSelectedConfirmed}
               >
-                {bulkLabel}
+                {bulkDeleteLabel}
               </Button>
             ) : null}
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              tabIndex={0}
-              aria-label={removeLabel}
-              disabled={!someSelected || bulkBusy}
-              onClick={handleRemoveSelected}
-            >
-              {removeLabel}
-            </Button>
           </div>
         </div>
       ) : null}

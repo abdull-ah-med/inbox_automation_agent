@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useAuthState } from "@/features/auth/use-auth"
 import { api } from "@/lib/api-client"
 import type { ReplyMemoryResponse } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 export const ToneMemorySection = () => {
   const auth = useAuthState()
@@ -61,21 +62,20 @@ export const ToneMemorySection = () => {
         ) : null}
       </CardHeader>
       <CardContent>
-        <div className="ring-foreground/10 overflow-hidden rounded-lg ring-1">
+        <div className={cn("overflow-hidden rounded-lg", !replyMemoryError && "ring-foreground/10 ring-1")}>
           {replyMemoryLoading ? (
             <div className="space-y-3 p-4">
               <Skeleton className="h-16 w-full" />
               <Skeleton className="h-16 w-full" />
             </div>
           ) : replyMemoryError ? (
-            <div className="p-4">
-              <ErrorPage
-                error={replyMemoryErr}
-                onRetry={() => {
-                  void refetchReplyMemory()
-                }}
-              />
-            </div>
+            <ErrorPage
+              embedded
+              error={replyMemoryErr}
+              onRetry={() => {
+                void refetchReplyMemory()
+              }}
+            />
           ) : replies.length === 0 ? (
             <p className="p-6 text-sm text-gray-500">
               No approved replies yet. Approve a draft to start building tone memory.

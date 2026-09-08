@@ -1,54 +1,77 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { api } from "@/lib/api-client"
-
+import { inboxLabel } from "@/lib/design-tokens"
 import { MAILBOXES_LIST_QUERY_KEY } from "@/lib/query-keys"
+import type { MailboxOverview } from "@/lib/types"
+
+const mailboxSelectLabel = (row: MailboxOverview) =>
+  inboxLabel(row.mailbox, row.label || row.email_address)
 
 export const useMailboxFilter = () => {
   const query = useQuery({
     queryKey: MAILBOXES_LIST_QUERY_KEY,
     queryFn: () => api.mailboxes.list(),
   })
-  const addresses = (query.data ?? []).map((row) => row.mailbox)
+  const mailboxes = query.data ?? []
   const [selected, setSelected] = useState("")
-  const mailbox = selected || addresses[0] || ""
-  return { mailbox, addresses, setMailbox: setSelected, isLoading: query.isLoading }
+  const mailbox = selected || mailboxes[0]?.mailbox || ""
+  return { mailbox, mailboxes, setMailbox: setSelected, isLoading: query.isLoading }
 }
 
 export const MailboxFilter = ({
   mailbox,
-  addresses,
+  mailboxes,
   onMailboxChange,
 }: {
   mailbox: string
-  addresses: string[]
+  mailboxes: MailboxOverview[]
   onMailboxChange: (value: string) => void
 }) => {
-  const handleChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    onMailboxChange(event.target.value)
+  const items = useMemo(
+    () =>
+      mailboxes.map((row) => ({
+        value: row.mailbox,
+        label: mailboxSelectLabel(row),
+      })),
+    [mailboxes],
+  )
+
+  const handleValueChange = (value: string | null) => {
+    if (!value) return
+    onMailboxChange(value)
   }
 
-  if (addresses.length === 0) return null
+  if (items.length === 0) return null
 
   return (
-    <label className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">Mailbox</span>
-      <select
-        aria-label="Mailbox"
-        className="border-input bg-background rounded-md border px-2 py-1 text-sm"
-        value={mailbox}
-        onChange={handleChange}
-        tabIndex={0}
-      >
-        {addresses.map((address) => (
-          <option key={address} value={address}>
-            {address}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-muted-foreground text-sm">Mailbox</span>
+      <Select items={items} value={mailbox} onValueChange={handleValueChange}>
+        <SelectTrigger aria-label="Mailbox" size="sm" className="min-h-10 min-w-[10rem]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {items.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </div>
   )
 }

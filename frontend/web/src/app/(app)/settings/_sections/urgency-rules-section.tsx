@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useAuthState } from "@/features/auth/use-auth"
 import { api } from "@/lib/api-client"
 import type { UrgencyRule } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 export const UrgencyRulesSection = ({
   mailbox,
@@ -84,20 +85,19 @@ export const UrgencyRulesSection = ({
         ) : null}
       </CardHeader>
       <CardContent>
-        <div className="ring-foreground/10 overflow-hidden rounded-lg ring-1">
+        <div className={cn("overflow-hidden rounded-lg", !isError && "ring-foreground/10 ring-1")}>
           {mailboxesLoading || isLoading ? (
             <div className="space-y-3 p-4">
               <Skeleton className="h-16 w-full" />
             </div>
           ) : isError ? (
-            <div className="p-4">
-              <ErrorPage
-                error={error}
-                onRetry={() => {
-                  void refetch()
-                }}
-              />
-            </div>
+            <ErrorPage
+              embedded
+              error={error}
+              onRetry={() => {
+                void refetch()
+              }}
+            />
           ) : items.length === 0 ? (
             <p className="p-6 text-sm text-gray-500">No urgency rules for this mailbox.</p>
           ) : (

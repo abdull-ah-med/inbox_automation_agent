@@ -37,8 +37,8 @@ vi.mock("./_sections/urgency-rules-section", () => ({
 
 vi.mock("./_sections/mailbox-filter", () => ({
   useMailboxFilter: () => ({
-    mailbox: "sales@example.com",
-    addresses: ["sales@example.com"],
+    mailbox: "sampleagent",
+    mailboxes: [],
     setMailbox: () => {},
     isLoading: false,
   }),
