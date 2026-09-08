@@ -453,6 +453,8 @@ Return JSON only (no preamble, no markdown fences) matching exactly:
 Rules:
 - Every fact must cite a source_message_id that appears in the user turn.
 - Copy names from from_name / the signature; do not invent nicknames.
+- If from_name is empty, do not invent a name from from_email or its local-part;
+  use a signature name only, or omit a named actor.
 - Never use their email address once the name is known; never say "the client" or
   "an applicant" when a From display name exists.
 - Skip greetings, job titles, company bios, phone numbers, and "I am Director…".

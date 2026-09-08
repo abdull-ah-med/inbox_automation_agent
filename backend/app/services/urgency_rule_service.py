@@ -163,11 +163,13 @@ async def apply_after_model(
                     scope=rule.scope,
                     scope_key=rule.scope_key,
                 )
-        for rule_id in applied:
+        if applied:
             try:
-                await urgency_rule_repo.increment_hit_count(session, rule_id)
+                await urgency_rule_repo.increment_hit_counts(session, applied)
             except Exception:
-                logger.warning("urgency_rule_hit_increment_failed", rule_id=str(rule_id))
+                logger.warning(
+                    "urgency_rule_hit_increment_failed", rule_ids=[str(i) for i in applied]
+                )
         return UrgencyDecision(final_urgency=final, applied_rule_ids=applied)
     except Exception:
         logger.warning("urgency_rule_apply_failed", mailbox=mailbox)

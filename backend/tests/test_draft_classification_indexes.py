@@ -136,3 +136,36 @@ async def test_latest_classification_uses_message_created_index(db_session) -> N
         {"mid": message.id},
     )
     assert "ix_classifications_message_id_created_at" in plan
+
+
+@pytest.mark.asyncio
+async def test_recent_rejected_drafts_use_rejected_at_index(db_session) -> None:
+    thread = Thread(
+        id=uuid.uuid4(),
+        mailbox=MAILBOX,
+        conversation_id="idx-rejected",
+        subject="Invoice",
+        state="DRAFTED",
+        last_message_at=BASE,
+    )
+    db_session.add(thread)
+    await db_session.flush()
+    db_session.add(
+        Draft(
+            thread_id=thread.id,
+            message_id=f"graph-{uuid.uuid4()}",
+            subject="Invoice",
+            body="Thanks",
+            recipients={},
+            teaching_note="note",
+            rejected_at=BASE,
+        )
+    )
+    await db_session.commit()
+
+    plan = await _explain(
+        db_session,
+        "SELECT id FROM drafts WHERE rejected_at IS NOT NULL ORDER BY rejected_at DESC LIMIT 20",
+        {},
+    )
+    assert "ix_drafts_rejected_at" in plan

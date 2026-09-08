@@ -103,6 +103,33 @@ describe("ContextSection", () => {
     expect(screen.queryByText("Acknowledge and resolve.")).toBeNull()
   })
 
+  it("lists facts from most recent email at the top", async () => {
+    getContextMock.mockResolvedValue({
+      ...context,
+      facts: [
+        {
+          id: "fact-old",
+          body: "Sender asked to cancel check 11111",
+          source_message_id: "msg-a",
+          created_at: "2026-09-04T12:00:00Z",
+          source_received_at: "2026-08-20T10:00:00Z",
+        },
+        {
+          id: "fact-new",
+          body: "Client asked for a Friday callback",
+          source_message_id: "msg-b",
+          created_at: "2026-09-04T12:05:00Z",
+          source_received_at: "2026-08-27T14:14:00Z",
+        },
+      ],
+    })
+    renderWithProviders(<ContextSection threadId="thread-1" />)
+
+    const items = await screen.findAllByRole("listitem")
+    expect(items[0]).toHaveTextContent("Client asked for a Friday callback")
+    expect(items[1]).toHaveTextContent("Sender asked to cancel check 11111")
+  })
+
   it("stamps each fact with the source email date, not extract time", async () => {
     renderWithProviders(<ContextSection threadId="thread-1" />)
 

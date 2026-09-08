@@ -1,17 +1,5 @@
 import type { MessageDetail } from "@/lib/types"
 
-const GENERIC_LOCAL = new Set([
-  "info",
-  "hello",
-  "support",
-  "sales",
-  "mail",
-  "noreply",
-  "no-reply",
-  "donotreply",
-  "notifications",
-])
-
 const MEETING_VERB: Record<string, string> = {
   meetingAccepted: "accepted the meeting",
   meetingTenativelyAccepted: "tentatively accepted the meeting",
@@ -28,47 +16,18 @@ export type ThreadStoryEvent = {
   direction: "inbound" | "outbound"
 }
 
-const normalizeEmail = (value: string): string => value.trim().toLowerCase()
-
-export const firstNameFromDisplay = (fullName: string | null | undefined): string | null => {
-  if (!fullName?.trim()) return null
-  const cleaned = fullName.trim().replace(/\s+/g, " ")
-  if (/^\d/.test(cleaned)) return null
-  if (cleaned.includes(",")) {
-    const after = cleaned.split(",")[1]?.trim().split(/\s+/)[0] ?? ""
-    return /^[A-Za-z]+$/.test(after) ? after : null
-  }
-  const parts = cleaned.split(" ")
-  if (parts.length === 1 && /^[A-Za-z]+$/.test(parts[0])) return parts[0]
-  if (
-    parts.length >= 2 &&
-    parts.length <= 3 &&
-    parts.every((part) => /^[A-Za-z]+$/.test(part.replace(".", "")))
-  ) {
-    return parts[0]
-  }
-  return null
+const saluteName = (message: MessageDetail): string | null => {
+  const name = message.sender_salute_name?.trim()
+  return name ? name : null
 }
 
-export const firstNameFromEmail = (address: string | null | undefined): string | null => {
-  if (!address?.includes("@")) return null
-  const local = address.split("@")[0]?.trim().toLowerCase() ?? ""
-  if (!local || local.includes("-") || GENERIC_LOCAL.has(local)) return null
-  const token = local.split(/[._+]/)[0] ?? ""
-  if (token.length < 2 || !/^[a-z]+$/.test(token)) return null
-  return token.charAt(0).toUpperCase() + token.slice(1)
-}
-
-const personName = (displayName: string | null | undefined, email: string): string | null => {
-  return firstNameFromDisplay(displayName) ?? firstNameFromEmail(email)
-}
-
-const ownerName = (mailbox: string, messages: MessageDetail[]): string => {
+const ownerName = (messages: MessageDetail[], mailboxOwner?: string | null): string | null => {
   const namedOutbound = messages.find(
-    (message) => message.direction === "outbound" && firstNameFromDisplay(message.sender_name),
+    (message) => message.direction === "outbound" && saluteName(message),
   )
-  if (namedOutbound) return firstNameFromDisplay(namedOutbound.sender_name) as string
-  return firstNameFromEmail(mailbox) ?? "We"
+  if (namedOutbound) return saluteName(namedOutbound)
+  const owner = mailboxOwner?.trim()
+  return owner ? owner : null
 }
 
 const whatHappened = (
@@ -89,16 +48,11 @@ const whatHappened = (
 const counterpartyFor = (
   message: MessageDetail,
   prior: MessageDetail[],
-  mailbox: string,
-  ours: string,
+  ours: string | null,
 ): string | null => {
   if (message.direction === "outbound") {
     const lastInbound = prior.findLast((row) => row.direction === "inbound")
-    if (lastInbound) return personName(lastInbound.sender_name, lastInbound.sender)
-    const otherTo = message.to.find(
-      (address) => normalizeEmail(address) !== normalizeEmail(mailbox),
-    )
-    if (otherTo) return firstNameFromEmail(otherTo)
+    if (lastInbound) return saluteName(lastInbound)
     return null
   }
   return ours
@@ -113,18 +67,17 @@ const verbFor = (message: MessageDetail, hasPriorInbound: boolean): string => {
 
 export const buildThreadStory = ({
   messages,
-  mailbox,
+  mailboxOwner = null,
   facts = [],
 }: {
   messages: MessageDetail[]
-  mailbox: string
-  subject?: string | null
+  mailboxOwner?: string | null
   facts?: { body: string; source_message_id: string | null }[]
 }): ThreadStoryEvent[] => {
   const ordered = messages.toSorted(
     (a, b) => new Date(a.received_at).getTime() - new Date(b.received_at).getTime(),
   )
-  const ours = ownerName(mailbox, ordered)
+  const ours = ownerName(ordered, mailboxOwner)
   const events: ThreadStoryEvent[] = []
   const prior: MessageDetail[] = []
   const factsByMessageId = new Map<string, string[]>()
@@ -139,15 +92,14 @@ export const buildThreadStory = ({
 
   for (const message of ordered) {
     const from =
-      firstNameFromDisplay(message.sender_name) ??
-      (message.direction === "outbound" ? ours : (firstNameFromEmail(message.sender) ?? "Someone"))
+      saluteName(message) ?? (message.direction === "outbound" ? (ours ?? "Someone") : "Someone")
     const hasPriorInbound = prior.some((row) => row.direction === "inbound")
     const meeting = message.meeting_message_type ? MEETING_VERB[message.meeting_message_type] : null
     let headline: string
     if (meeting) {
       headline = `${from} ${meeting}`
     } else {
-      const to = counterpartyFor(message, prior, mailbox, ours)
+      const to = counterpartyFor(message, prior, ours)
       const verb = verbFor(message, hasPriorInbound)
       headline = to ? `${from} ${verb} ${to}` : `${from} wrote`
     }

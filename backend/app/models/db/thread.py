@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, UniqueConstraint, func
+from sqlalchemy import DateTime, Index, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.db.base import Base, uuid_pk
@@ -11,6 +11,12 @@ class Thread(Base):
     __tablename__ = "threads"
     __table_args__ = (
         UniqueConstraint("mailbox", "conversation_id", name="uq_threads_mailbox_conversation"),
+        Index("ix_threads_mailbox_state", "mailbox", "state"),
+        Index(
+            "ix_threads_resolved_last_updated_at",
+            "last_updated_at",
+            postgresql_where=text("state = 'RESOLVED'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = uuid_pk()

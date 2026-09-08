@@ -80,17 +80,21 @@ beforeEach(() => {
   getContextMock.mockRejectedValue(new ApiError("Not found", 404))
 })
 
-const renderSidebar = (draft: DraftView | null = baseDraft()) => {
+const renderSidebar = (
+  draft: DraftView | null = baseDraft(),
+  options?: { threadId?: string; thread?: ThreadSummary },
+) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   client.setQueryData(["dashboard", "overview"], { total_awaiting: 4 })
   client.setQueryData(["mailbox", "elise@example.com", "threads"], { items: [] })
+  const threadId = options?.threadId ?? "thread-1"
   const view = render(
     <QueryClientProvider client={client}>
       <ThreadTriageSidebar
-        threadId="thread-1"
-        thread={thread}
+        threadId={threadId}
+        thread={options?.thread ?? thread}
         classification={null}
         draft={draft}
         triage={null}
@@ -102,7 +106,7 @@ const renderSidebar = (draft: DraftView | null = baseDraft()) => {
 }
 
 const openDraftTab = async (user: ReturnType<typeof userEvent.setup>) => {
-  await user.click(screen.getByRole("tab", { name: "Draft" }))
+  await user.click(await screen.findByRole("tab", { name: "Draft" }))
 }
 
 describe("ThreadTriageSidebar feedback buttons", () => {
@@ -127,6 +131,41 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(screen.getByRole("button", { name: "Reject draft" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /Edit & Approve/i })).toBeNull()
     expect(screen.queryByRole("button", { name: /^Wrong$/i })).toBeNull()
+  })
+
+  it("does not keep an edited approve body after switching threads", async () => {
+    const user = userEvent.setup()
+    const { rerender, client } = renderSidebar()
+    await openDraftTab(user)
+    await user.click(await screen.findByRole("button", { name: "Approve draft" }))
+    const textarea = within(await screen.findByRole("dialog")).getByLabelText(
+      "Draft body to approve",
+    )
+    await user.clear(textarea)
+    await user.type(textarea, "Body written for thread A only")
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <ThreadTriageSidebar
+          threadId="thread-2"
+          thread={{ ...thread, id: "thread-2" }}
+          classification={null}
+          draft={{ ...baseDraft(), id: "draft-2", body: "Happy to help with thread B." }}
+          triage={null}
+          auditLog={[]}
+        />
+      </QueryClientProvider>,
+    )
+
+    expect(screen.queryByRole("dialog")).toBeNull()
+    expect(screen.queryByDisplayValue("Body written for thread A only")).toBeNull()
+  })
+
+  it("does not show the Insights panel while thread context is still loading", () => {
+    getContextMock.mockImplementation(() => new Promise(() => {}))
+    renderSidebar()
+    expect(screen.queryByText("Insights")).toBeNull()
+    expect(screen.queryByText(/No teaching note yet/)).toBeNull()
   })
 
   it("opens approve dialog with draft body prefilled", async () => {
@@ -424,15 +463,34 @@ describe("ThreadTriageSidebar feedback buttons", () => {
     expect(screen.queryByText("references/missing.md")).toBeNull()
   })
 
-  it("exposes classification and draft tabs", () => {
+  it("exposes classification and draft tabs", async () => {
     renderSidebar()
-    expect(screen.getByRole("tab", { name: "Classification" })).toBeInTheDocument()
+    expect(await screen.findByRole("tab", { name: "Classification" })).toBeInTheDocument()
     expect(screen.getByRole("tab", { name: "Draft" })).toBeInTheDocument()
     expect(screen.queryByRole("tab", { name: /Audit/ })).toBeNull()
     expect(screen.getByText("Audit log")).toBeInTheDocument()
     expect(screen.queryByRole("tab", { name: "Context" })).toBeNull()
     expect(screen.queryByRole("tab", { name: "Insight" })).toBeNull()
     expect(screen.queryByRole("tab", { name: "Timeline" })).toBeNull()
+  })
+
+  it("opens on Insight with Timeline visible when thread context is on", async () => {
+    getContextMock.mockResolvedValue({
+      version: 1,
+      user_notes: "Do not CC legal",
+      facts: [
+        { id: "fact-1", body: "Asked for Friday", source_message_id: "msg-a", created_at: null },
+      ],
+      updated_at: "2026-09-04T12:00:00Z",
+    })
+    renderSidebar()
+
+    const insight = await screen.findByRole("tab", { name: "Insight" })
+    expect(insight).toHaveAttribute("data-active")
+    expect(screen.getByText("Timeline")).toBeInTheDocument()
+    expect(screen.getByText("Acknowledge and resolve.")).toBeInTheDocument()
+    expect(screen.queryByText("Audit log")).toBeNull()
+    expect(screen.getByRole("tab", { name: "Context" })).not.toHaveAttribute("data-active")
   })
 
   it("shows Timeline under Insight in the same view when thread context is on", async () => {

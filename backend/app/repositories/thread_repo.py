@@ -271,6 +271,8 @@ async def get_by_id(
     thread_id: uuid.UUID,
     scope: TenantScope,
 ) -> ThreadSchema | None:
+    if not scope.mailboxes:
+        return None
     stmt = select(Thread).where(
         Thread.id == thread_id,
         Thread.mailbox.in_(list(scope.mailboxes)),

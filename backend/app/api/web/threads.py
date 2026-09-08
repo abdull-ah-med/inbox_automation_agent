@@ -18,7 +18,7 @@ from app.core.dependencies import (
 )
 from app.core.dependencies_auth import CurrentUser
 from app.core.exceptions import ThreadNotFoundError
-from app.core.rate_limit import context_rebuild_rate_limit_key, limiter
+from app.core.rate_limit import api_default_limit_value, context_rebuild_rate_limit_key, limiter
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     AuditEntry,
@@ -75,7 +75,7 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
     response_model=ThreadDetail,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def get_thread(
     thread_id: uuid.UUID,
     request: Request,
@@ -93,7 +93,7 @@ async def get_thread(
     response_model=ThreadHeader,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def get_thread_header(
     thread_id: uuid.UUID,
     request: Request,
@@ -111,7 +111,7 @@ async def get_thread_header(
     response_model=list[MessageDetail],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def get_thread_messages(
     thread_id: uuid.UUID,
     request: Request,
@@ -156,7 +156,7 @@ async def get_message_html(
     response_model=list[AuditEntry],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def get_thread_audit(
     thread_id: uuid.UUID,
     request: Request,
@@ -505,7 +505,7 @@ async def _run_context_rebuild(thread_id: uuid.UUID, settings: Settings) -> None
     response_model=ThreadContextView,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def get_thread_context(
     thread_id: uuid.UUID,
     request: Request,
@@ -516,7 +516,7 @@ async def get_thread_context(
 ) -> ThreadContextView:
     _ = request, response
     await _require_context_thread(session, settings, thread_id)
-    return await thread_context_service.present_context(session, thread_id)
+    return await thread_context_service.present_context(session, thread_id, settings)
 
 
 @router.put(
@@ -542,7 +542,7 @@ async def put_thread_context_user_notes(
         notes=body.user_notes,
         expected_version=body.expected_version,
     )
-    view = await thread_context_service.present_context(session, thread_id)
+    view = await thread_context_service.present_context(session, thread_id, settings)
     await session.commit()
     return view
 
@@ -568,7 +568,7 @@ async def rebuild_thread_context(
     await session.commit()
     if spawned:
         background_tasks.add_task(_run_context_rebuild, thread_id, settings)
-    return await thread_context_service.present_context(session, thread_id)
+    return await thread_context_service.present_context(session, thread_id, settings)
 
 
 @router.delete(
@@ -589,6 +589,6 @@ async def discard_thread_context_fact(
     _ = request, response
     await _require_context_thread(session, settings, thread_id)
     await thread_context_service.discard_fact(session, thread_id, fact_id)
-    view = await thread_context_service.present_context(session, thread_id)
+    view = await thread_context_service.present_context(session, thread_id, settings)
     await session.commit()
     return view

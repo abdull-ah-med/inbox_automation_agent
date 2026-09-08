@@ -176,6 +176,42 @@ describe("AssociatedThreadsList", () => {
     expect(screen.queryByText(SOURCE_SUBJECT)).not.toBeInTheDocument()
   })
 
+  it("shows dismissed associations again after switching source threads", async () => {
+    const user = userEvent.setup()
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <AssociatedThreadsList
+          sourceThreadId="thread-src"
+          sourceSubject={SOURCE_SUBJECT}
+          items={[item]}
+        />
+      </QueryClientProvider>,
+    )
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete association SampleClient follow-up 8/14",
+      }),
+    )
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Associated threads" })).not.toBeInTheDocument()
+    })
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <AssociatedThreadsList
+          sourceThreadId="thread-other"
+          sourceSubject={SOURCE_SUBJECT}
+          items={[item]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.getByRole("heading", { name: "Associated threads" })).toBeInTheDocument()
+    expect(screen.getByText("SampleClient follow-up 8/14")).toBeInTheDocument()
+  })
+
   it("confirm persists confirmed and dismiss persists dismissed", async () => {
     const user = userEvent.setup()
     renderList([item])

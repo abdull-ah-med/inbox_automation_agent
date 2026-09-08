@@ -34,7 +34,7 @@ const CitationList = ({
   return (
     <div className="space-y-2">
       {citations.map((citation, index) => (
-        <div key={citation.thread_id} id={`inboxassistant-cite-${index + 1}`}>
+        <div key={`${citation.thread_id}-${index}`} id={`inboxassistant-cite-${index + 1}`}>
           <AskCitationCard citation={citation} index={index + 1} mailboxes={mailboxes} />
         </div>
       ))}

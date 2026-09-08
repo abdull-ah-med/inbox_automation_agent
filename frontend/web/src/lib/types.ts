@@ -143,6 +143,7 @@ export interface MessageDetail {
   meeting_message_type?: string | null
   meeting_response_type?: string | null
   sender_name?: string | null
+  sender_salute_name?: string | null
   summary_one_line?: string | null
   summary_ask?: string | null
   summary_intent?: string | null

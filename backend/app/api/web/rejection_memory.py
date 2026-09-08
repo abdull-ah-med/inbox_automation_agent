@@ -12,7 +12,7 @@ from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
 from app.core.exceptions import RejectionMemoryNotFoundError
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.rejection_memory import (
     RejectionMemoryResponseSchema,
     RejectionMemoryUpdateSchema,
@@ -29,7 +29,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
     response_model=list[RejectionMemoryResponseSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_rejection_memory(
     request: Request,
     response: Response,

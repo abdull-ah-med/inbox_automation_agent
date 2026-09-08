@@ -12,7 +12,7 @@ from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.config import Settings, get_settings
 from app.core.dependencies import OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.skill import SkillResponseSchema
 from app.models.schemas.skill_candidate import SkillCandidateResponseSchema
 from app.services import skill_candidate_service
@@ -28,7 +28,7 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
     response_model=list[SkillCandidateResponseSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_skill_candidates(
     request: Request,
     response: Response,

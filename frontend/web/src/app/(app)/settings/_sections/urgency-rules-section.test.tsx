@@ -46,7 +46,7 @@ const renderSection = () => {
   })
   return render(
     <QueryClientProvider client={client}>
-      <UrgencyRulesSection />
+      <UrgencyRulesSection mailbox="sales@example.com" mailboxesLoading={false} />
     </QueryClientProvider>,
   )
 }

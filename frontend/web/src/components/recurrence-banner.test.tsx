@@ -79,4 +79,18 @@ describe("RecurrenceBanner", () => {
     expect(screen.queryByRole("status")).toBeNull()
     expect(urgencyFeedbackMock).not.toHaveBeenCalled()
   })
+
+  it("shows the banner again after navigating to another thread", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const { rerender } = renderWithProviders(
+      <RecurrenceBanner threadId={THREAD_ID} activity={[escalated]} />,
+    )
+    await user.click(screen.getByRole("button", { name: "Dismiss automatic urgency banner" }))
+    expect(screen.queryByRole("status")).toBeNull()
+
+    rerender(
+      <RecurrenceBanner threadId="b2222222-2222-2222-2222-222222222222" activity={[escalated]} />,
+    )
+    expect(screen.getByRole("status")).toHaveTextContent(/similar alerts/i)
+  })
 })

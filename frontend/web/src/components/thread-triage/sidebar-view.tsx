@@ -84,6 +84,7 @@ type ThreadTriageSidebarViewProps = {
   onGenerateDraft: () => void
   onGenerateDraftKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   threadContextEnabled?: boolean
+  showLegacyInsights?: boolean
 }
 
 export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => {
@@ -139,6 +140,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onGenerateDraft,
     onGenerateDraftKeyDown,
     threadContextEnabled = false,
+    showLegacyInsights = !threadContextEnabled,
   } = props
 
   const handleUrgencySaved = (payload: {
@@ -150,7 +152,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
 
   return (
     <div className="space-y-4">
-      {threadContextEnabled ? null : (
+      {showLegacyInsights ? (
         <InsightsPanel
           thread={thread}
           teachingNote={teachingNote}
@@ -164,10 +166,11 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
           onMarkResolved={onMarkResolved}
           onUrgencySaved={handleUrgencySaved}
         />
-      )}
+      ) : null}
 
       <Tabs
-        defaultValue={threadContextEnabled ? "context" : "classification"}
+        key={`${threadId}-${threadContextEnabled ? "insight" : "classification"}`}
+        defaultValue={threadContextEnabled ? "insight" : "classification"}
         className="w-full gap-3"
       >
         <TabsList className="w-full" aria-label="Thread review sections">
@@ -204,6 +207,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
                 threadId={threadId}
                 messages={messages}
                 mailbox={thread.mailbox}
+                mailboxKey={thread.mailbox_key}
                 subject={thread.subject}
               />
             </TabsContent>

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, func, text
+from sqlalchemy import DateTime, Index, Integer, String, func, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,17 @@ from app.models.db.base import Base, uuid_pk
 
 class PromotionProposal(Base):
     __tablename__ = "promotion_proposals"
+    __table_args__ = (
+        Index("ix_promotion_proposals_mailbox_status", "mailbox", "status"),
+        Index(
+            "uq_promotion_proposals_pending_dedupe",
+            "mailbox",
+            "kind",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = uuid_pk()
     mailbox: Mapped[str] = mapped_column(String(255), nullable=False)

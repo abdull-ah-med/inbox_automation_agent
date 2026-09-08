@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.dependencies import OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentUser
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.search import (
     SEARCH_DEFAULT_LIMIT,
     SEARCH_MAX_LIMIT,
@@ -34,7 +34,7 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
     response_model=SearchResponse,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def search(
     request: Request,
     response: Response,

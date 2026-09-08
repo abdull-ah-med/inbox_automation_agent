@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from app.core.reply_addressee import (
+    participant_first_names,
     resolve_reply_addressee,
 )
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema
@@ -18,12 +19,14 @@ def _msg(
     to: list[str] | None = None,
     mailbox: str = "inquiries@sample-site.example.com",
     body_text: str = "Body",
+    sender_display_name: str | None = None,
 ) -> EmailMessageSchema:
     return EmailMessageSchema(
         message_id=message_id,
         conversation_id="conv-1",
         mailbox=mailbox,
         sender=sender,
+        sender_display_name=sender_display_name,
         subject="Hello",
         body_text=body_text,
         body_preview=body_text[:80],
@@ -31,6 +34,83 @@ def _msg(
         direction=direction,
         to_recipients=list(to or []),
     )
+
+
+def test_role_mailbox_graph_title_display_is_not_saluted() -> None:
+    """Dev@ Graph From 'Sample Developer' is a role label — same as no name."""
+    mailbox = "sampleagent@sample-site.example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="Dev@sample-site.example.com",
+            sender_display_name="Sample Developer",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="When I checked that sent email activity the button works.",
+        ),
+    ]
+    addressee = resolve_reply_addressee(mailbox=mailbox, messages=messages)
+    assert addressee is not None
+    assert addressee.salute_name == ""
+    assert addressee.source_kind == "none"
+
+
+def test_participant_names_follow_salute_priority() -> None:
+    """Timeline/facts use the same names drafts salute — never local-part or role labels."""
+    mailbox = "sampleagent@sample-site.example.com"
+    messages = [
+        _msg(
+            message_id="1",
+            sender="Dev@sample-site.example.com",
+            sender_display_name="Sample Developer",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="When I checked that sent email activity the button works.",
+        ),
+        _msg(
+            message_id="2",
+            sender=mailbox,
+            sender_display_name="Elise Chouest",
+            direction=EmailDirectionEnum.OUTBOUND,
+            to=["Dev@sample-site.example.com"],
+            mailbox=mailbox,
+            body_text="Hey Div,\nLooks like the link is broken.\nThanks,\nElise\n",
+        ),
+    ]
+    names = participant_first_names(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+    )
+    assert names.get("sampleagent@sample-site.example.com") == "Elise"
+    assert "dev@sample-site.example.com" not in names
+    assert "Sample" not in names.values()
+    assert "Dev" not in names.values()
+
+    signed = [
+        _msg(
+            message_id="1",
+            sender="Dev@sample-site.example.com",
+            sender_display_name="Sample Developer",
+            direction=EmailDirectionEnum.INBOUND,
+            to=[mailbox],
+            mailbox=mailbox,
+            body_text="Screens are updated.\n\nThanks,\nDivyansh\n",
+        ),
+    ]
+    signed_names = participant_first_names(mailbox=mailbox, messages=signed)
+    assert signed_names["dev@sample-site.example.com"] == "Divyansh"
+
+    taught = participant_first_names(
+        mailbox=mailbox,
+        messages=messages,
+        mailbox_owner="Elise",
+        directory={"dev@sample-site.example.com": "Divyansh"},
+    )
+    assert taught["dev@sample-site.example.com"] == "Divyansh"
+    assert taught["sampleagent@sample-site.example.com"] == "Elise"
 
 
 def test_role_mailbox_inbound_uses_signature_name_not_local_part() -> None:

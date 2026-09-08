@@ -358,4 +358,17 @@ describe("InboxAssistant streaming", () => {
     expect(heading.tagName).toBe("STRONG")
     expect(screen.queryByText(/\*\*/)).toBeNull()
   })
+
+  it("does not start a second ask from an empty composer while a stream is in flight", async () => {
+    askChat.mockImplementation(() => new Promise(() => {}))
+    const user = userEvent.setup()
+    renderWithClient(<InboxAssistant />)
+    await user.click(screen.getByRole("button", { name: /inboxassistant/i }))
+    const box = screen.getByRole("textbox", { name: /message inboxassistant/i })
+    await user.type(box, "billing disputes waiting on review")
+    await user.click(screen.getByRole("button", { name: /^send$/i }))
+    expect(askChat).toHaveBeenCalledTimes(1)
+    await user.keyboard("{Meta>}{Enter}{/Meta>}")
+    expect(askChat).toHaveBeenCalledTimes(1)
+  })
 })

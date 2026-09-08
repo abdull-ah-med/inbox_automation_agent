@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.repositories import promotion_proposal_repo
 from app.repositories.promotion_proposal_repo import PromotionProposalSchema
 from app.services import promotion_service
@@ -37,7 +37,7 @@ async def _require_proposal(
     response_model=list[PromotionProposalSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_promotion_proposals(
     request: Request,
     response: Response,

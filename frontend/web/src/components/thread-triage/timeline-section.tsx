@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Panel } from "@/components/thread-triage/panel"
 import { api } from "@/lib/api-client"
 import { formatReviewerDateTime } from "@/lib/dates"
+import { inboxLabel } from "@/lib/design-tokens"
 import { buildThreadStory, type ThreadStoryEvent } from "@/lib/thread-story"
 import type { MessageDetail } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -36,13 +37,13 @@ const TimelineEventItem = ({ event }: { event: ThreadStoryEvent }) => (
 export const TimelineSection = ({
   threadId,
   messages,
-  mailbox,
-  subject,
+  mailboxKey,
 }: {
   threadId: string
   messages: MessageDetail[]
-  mailbox: string
-  subject: string | null
+  mailbox?: string
+  mailboxKey?: string
+  subject?: string | null
 }) => {
   const [earlierOpen, setEarlierOpen] = useState(false)
   const contextQuery = useQuery({
@@ -52,8 +53,7 @@ export const TimelineSection = ({
   })
   const eventsNewestFirst = buildThreadStory({
     messages,
-    mailbox,
-    subject,
+    mailboxOwner: mailboxKey ? inboxLabel(mailboxKey) : null,
     facts: contextQuery.data?.facts ?? [],
   }).toReversed()
   const hiddenCount = Math.max(0, eventsNewestFirst.length - TIMELINE_PREVIEW_COUNT)

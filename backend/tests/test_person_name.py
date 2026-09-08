@@ -29,5 +29,13 @@ def test_display_name_first_name_rejects_org_display() -> None:
     assert display_name_first_name("Vendor Newsletter") is None
 
 
+def test_display_name_first_name_rejects_role_title_display() -> None:
+    """Graph From 'Sample Developer' is a mailbox label, not a person to salute."""
+    assert person_shaped_from("Sample Developer") is False
+    assert display_name_first_name("Sample Developer") is None
+    assert person_shaped_from("Product Manager") is False
+    assert display_name_first_name("Product Manager") is None
+
+
 def test_display_name_first_name_rejects_single_token() -> None:
     assert display_name_first_name("Support") is None

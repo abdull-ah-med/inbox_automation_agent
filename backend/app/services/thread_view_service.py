@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.closing_mail import looks_like_closing_mail
 from app.core.config import Settings
 from app.core.email_quotes import split_quoted_history
+from app.core.internal_mail import extract_email_address
 from app.core.outlook_links import outlook_web_link
-from app.core.reply_addressee import resolve_reply_addressee
+from app.core.reply_addressee import participant_first_names, resolve_reply_addressee
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.dashboard import (
     ActivityEntryView,
@@ -177,7 +178,9 @@ def _summary_fields(m: message_repo.MessageSchema) -> tuple[str | None, str | No
     return one, ask_text, intent_text
 
 
-def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
+def _message_detail(
+    m: message_repo.MessageSchema, *, salute_name: str | None = None
+) -> MessageDetail:
     one, ask, intent = _summary_fields(m)
     return MessageDetail(
         id=m.id,
@@ -199,6 +202,7 @@ def _message_detail(m: message_repo.MessageSchema) -> MessageDetail:
         meeting_message_type=m.meeting_message_type,
         meeting_response_type=m.meeting_response_type,
         sender_name=m.sender_name,
+        sender_salute_name=salute_name,
         summary_one_line=one,
         summary_ask=ask,
         summary_intent=intent,
@@ -249,7 +253,7 @@ async def get_thread_header(
     thread_id: uuid.UUID,
 ) -> ThreadHeader:
     thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
-    if thread is None:
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
     return ThreadHeader(subject=thread.subject, mailbox=thread.mailbox)
 
@@ -265,7 +269,21 @@ async def get_thread_detail(
 
     summary = await thread_repo.build_thread_summary(session, thread)
     messages = await message_repo.list_by_thread(session, thread_id)
-    message_details = [_message_detail(m) for m in messages]
+    reply_addressee, salute_names = await _resolve_reply_addressee_view(
+        session,
+        settings,
+        mailbox=thread.mailbox,
+        conversation_id=thread.conversation_id,
+        subject=thread.subject,
+        messages=messages,
+    )
+    message_details = [
+        _message_detail(
+            m,
+            salute_name=salute_names.get(extract_email_address(m.sender) or ""),
+        )
+        for m in messages
+    ]
     classification = await classification_repo.get_latest_for_thread(session, thread_id)
     draft_row = await draft_repo.get_latest_proposed_by_thread(session, thread_id)
     draft: DraftView | None = None
@@ -379,15 +397,6 @@ async def get_thread_detail(
             }
         )
 
-    reply_addressee = await _resolve_reply_addressee_view(
-        session,
-        settings,
-        mailbox=thread.mailbox,
-        conversation_id=thread.conversation_id,
-        subject=thread.subject,
-        messages=messages,
-    )
-
     return ThreadDetail(
         thread=summary,
         messages=message_details,
@@ -411,9 +420,9 @@ async def _resolve_reply_addressee_view(
     conversation_id: str,
     subject: str,
     messages: list,
-) -> ReplyAddresseeView | None:
+) -> tuple[ReplyAddresseeView | None, dict[str, str]]:
     if not messages:
-        return None
+        return None, {}
     schema_messages: list[EmailMessageSchema] = []
     for message in messages:
         direction = (
@@ -437,6 +446,7 @@ async def _resolve_reply_addressee_view(
                 cc_recipients=list(message.cc_recipients or []),
                 bcc_recipients=list(message.bcc_recipients or []),
                 has_attachments=bool(message.has_attachments),
+                meeting_message_type=getattr(message, "meeting_message_type", None),
             )
         )
     thread_context = ThreadContextSchema(
@@ -462,14 +472,23 @@ async def _resolve_reply_addressee_view(
         directory=directory if salute_on else None,
         suppress_local_part=salute_on,
     )
+    names = participant_first_names(
+        mailbox=mailbox,
+        messages=schema_messages,
+        mailbox_owner=settings.owner_for_mailbox(mailbox),
+        directory=directory if salute_on else None,
+    )
     if addressee is None:
-        return None
-    return ReplyAddresseeView(
-        email=addressee.email,
-        salute_name=addressee.salute_name,
-        source=addressee.source,
-        source_kind=addressee.source_kind,
-        directory_hit=addressee.directory_hit,
+        return None, names
+    return (
+        ReplyAddresseeView(
+            email=addressee.email,
+            salute_name=addressee.salute_name,
+            source=addressee.source,
+            source_kind=addressee.source_kind,
+            directory_hit=addressee.directory_hit,
+        ),
+        names,
     )
 
 
@@ -483,7 +502,21 @@ async def list_thread_messages(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thread not found")
 
     messages = await message_repo.list_by_thread(session, thread_id)
-    return [_message_detail(m) for m in messages]
+    _addressee, names = await _resolve_reply_addressee_view(
+        session,
+        settings,
+        mailbox=thread.mailbox,
+        conversation_id=thread.conversation_id,
+        subject=thread.subject,
+        messages=messages,
+    )
+    return [
+        _message_detail(
+            m,
+            salute_name=names.get(extract_email_address(m.sender) or ""),
+        )
+        for m in messages
+    ]
 
 
 async def list_thread_audit(

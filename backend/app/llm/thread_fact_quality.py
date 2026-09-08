@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.core.person_name import display_name_first_name
+from app.core.reply_addressee import participant_first_names
+
 _EMAIL = re.compile(r"[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}", re.I)
-_PERSON_NAME = re.compile(r"^([A-Za-z]+)(?:\s+[A-Za-z]+){1,2}$")
 _MEDICAL = re.compile(
     r"\b(appendicitis|hospitalized|surgery|diagnosed|chemotherapy|pregnant)\b",
     re.I,
@@ -76,29 +78,19 @@ def is_useful_thread_fact(text: str) -> bool:
     return not (_VAGUE_RESOLVED.search(body) and not _HAS_DIGIT.search(body))
 
 
-def display_name_for_participant(full_name: str | None) -> str | None:
-    """First name for First Last. Skip mailbox/company strings like SampleSite Support."""
-    if not full_name or not full_name.strip():
-        return None
-    cleaned = " ".join(full_name.split())
-    if re.fullmatch(r"[A-Za-z]+", cleaned):
-        return cleaned
-    if cleaned[0].isdigit():
-        return None
-    match = _PERSON_NAME.match(cleaned)
-    if match is None:
-        return None
-    return match.group(1)
-
-
-def person_aliases_from_messages(messages: Iterable[Any]) -> dict[str, str]:
-    aliases: dict[str, str] = {}
-    for message in messages:
-        email = (getattr(message, "sender", None) or "").strip().lower()
-        name = display_name_for_participant(getattr(message, "sender_name", None))
-        if email and "@" in email and name:
-            aliases[email] = name
-    return aliases
+def person_aliases_from_messages(
+    messages: Iterable[Any],
+    *,
+    mailbox: str | None = None,
+    mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    return participant_first_names(
+        mailbox=mailbox,
+        messages=list(messages),
+        mailbox_owner=mailbox_owner,
+        directory=directory,
+    )
 
 
 def person_aliases_from_fact_texts(texts: Iterable[str]) -> dict[str, str]:
@@ -107,7 +99,7 @@ def person_aliases_from_fact_texts(texts: Iterable[str]) -> dict[str, str]:
         match = _IDENTITY_FACT.search(text or "")
         if match is None:
             continue
-        first = display_name_for_participant(match.group(1).strip())
+        first = display_name_first_name(match.group(1).strip())
         email = match.group(2).strip().lower()
         if first and email:
             aliases[email] = first

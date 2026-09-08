@@ -238,6 +238,9 @@ async def change_password(
         raise InvalidCredentialsError("Invalid credentials")
     await user_repo.update_password(session, user_id, hash_password(new_password))
     await refresh_token_repo.revoke_all_for_user(session, user_id)
+    from app.core.rate_limit import invalidate_user_auth_cache
+
+    invalidate_user_auth_cache(user_id)
     logger.info("password_changed", user_id=str(user_id))
 
 

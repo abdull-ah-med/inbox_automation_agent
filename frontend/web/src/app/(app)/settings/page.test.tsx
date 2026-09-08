@@ -35,6 +35,16 @@ vi.mock("./_sections/urgency-rules-section", () => ({
   UrgencyRulesSection: () => <div>Urgency rules</div>,
 }))
 
+vi.mock("./_sections/mailbox-filter", () => ({
+  useMailboxFilter: () => ({
+    mailbox: "sales@example.com",
+    addresses: ["sales@example.com"],
+    setMailbox: () => {},
+    isLoading: false,
+  }),
+  MailboxFilter: () => null,
+}))
+
 import SettingsPage from "./page"
 
 describe("SettingsPage", () => {

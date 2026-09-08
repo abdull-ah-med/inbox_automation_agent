@@ -57,3 +57,13 @@ def test_extract_status_revision_fits_alembic_version_varchar32() -> None:
     spec.loader.exec_module(module)
     assert module.revision == "064_ctx_extract_status"
     assert len(module.revision) <= 32
+
+
+def test_ops_query_indexes_revision_fits_alembic_version_varchar32() -> None:
+    path = Path("app/db/migrations/versions/067_ops_query_indexes.py")
+    spec = importlib.util.spec_from_file_location("migration_067_ops_query_indexes", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.revision == "067_ops_query_indexes"
+    assert len(module.revision) <= 32

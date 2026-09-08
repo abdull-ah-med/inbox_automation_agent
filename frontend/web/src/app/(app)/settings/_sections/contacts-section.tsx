@@ -25,6 +25,7 @@ import {
 } from "@/hooks/use-mailbox-contacts"
 import { useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api-client"
+import { MAILBOXES_LIST_QUERY_KEY } from "@/lib/query-keys"
 import type { MailboxContactView } from "@/lib/types"
 
 const CONTACTS_SEARCH_DEBOUNCE_MS = 200
@@ -189,7 +190,7 @@ const ContactsPanel = ({ mailboxKey }: ContactsPanelProps) => {
 
 export const ContactsSection = () => {
   const { data: mailboxes = [] } = useQuery({
-    queryKey: ["mailboxes"],
+    queryKey: MAILBOXES_LIST_QUERY_KEY,
     queryFn: () => api.mailboxes.list(),
   })
   const mailboxKey = mailboxes[0]?.mailbox || ""

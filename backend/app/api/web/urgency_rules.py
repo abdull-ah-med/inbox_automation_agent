@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.repositories import urgency_rule_repo
 from app.repositories.urgency_rule_repo import UrgencyRuleSchema
 
@@ -38,7 +38,7 @@ async def _require_allowed_rule(
     response_model=list[UrgencyRuleSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_urgency_rules(
     request: Request,
     response: Response,

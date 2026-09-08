@@ -27,17 +27,7 @@ import type {
   TriageFlags,
 } from "@/lib/types"
 
-export const ThreadTriageSidebar = ({
-  threadId,
-  thread,
-  classification,
-  draft,
-  triage,
-  auditLog,
-  activity = [],
-  messages = [],
-  replyAddressee = null,
-}: {
+type ThreadTriageSidebarProps = {
   threadId: string
   thread: ThreadSummary
   classification: ClassificationView | null
@@ -47,7 +37,23 @@ export const ThreadTriageSidebar = ({
   activity?: ActivityEntry[]
   messages?: MessageDetail[]
   replyAddressee?: ReplyAddresseeView | null
-}) => {
+}
+
+export const ThreadTriageSidebar = (props: ThreadTriageSidebarProps) => (
+  <ThreadTriageSidebarState key={props.threadId} {...props} />
+)
+
+const ThreadTriageSidebarState = ({
+  threadId,
+  thread,
+  classification,
+  draft,
+  triage,
+  auditLog,
+  activity = [],
+  messages = [],
+  replyAddressee = null,
+}: ThreadTriageSidebarProps) => {
   const queryClient = useQueryClient()
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
@@ -68,6 +74,7 @@ export const ThreadTriageSidebar = ({
     retry: false,
   })
   const threadContextEnabled = contextQuery.isSuccess
+  const showLegacyInsights = contextQuery.isFetched && !threadContextEnabled
 
   const openResolvePrompt = () => {
     setResolveActionsTaken("")
@@ -223,6 +230,7 @@ export const ThreadTriageSidebar = ({
       onGenerateDraft={handleGenerateDraft}
       onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
       threadContextEnabled={threadContextEnabled}
+      showLegacyInsights={showLegacyInsights}
     />
   )
 }

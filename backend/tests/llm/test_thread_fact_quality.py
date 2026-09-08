@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 from app.llm.thread_fact_quality import (
     apply_person_aliases,
-    display_name_for_participant,
     is_useful_thread_fact,
     person_aliases_from_fact_texts,
     person_aliases_from_messages,
@@ -79,8 +78,10 @@ def test_elises_email_becomes_elise_except_in_email_label() -> None:
 
 
 def test_participant_first_name_from_from_header() -> None:
-    assert display_name_for_participant("Elise Chouest") == "Elise"
-    assert display_name_for_participant("SampleSite Support") is None
+    from app.core.person_name import display_name_first_name
+
+    assert display_name_first_name("Elise Chouest") == "Elise"
+    assert display_name_first_name("SampleSite Support") is None
 
     message = SimpleNamespace(
         sender="sampleagent@sample-site.example.com",
@@ -98,3 +99,33 @@ def test_identity_sentence_fills_alias_map() -> None:
         ]
     )
     assert aliases["sampleagent@sample-site.example.com"] == "Elise"
+
+
+def test_role_mailbox_display_is_not_an_alias() -> None:
+    """Sample Developer / Dev@ must not become the fact actor name."""
+    message = SimpleNamespace(
+        sender="Dev@sample-site.example.com",
+        sender_name="Sample Developer",
+        body_text="When I checked that sent email activity the button works.",
+        direction="inbound",
+    )
+    aliases = person_aliases_from_messages([message])
+    assert "dev@sample-site.example.com" not in aliases
+    assert "Sample" not in aliases.values()
+
+    signed = SimpleNamespace(
+        sender="Dev@sample-site.example.com",
+        sender_name="Sample Developer",
+        body_text="Screens are updated.\n\nThanks,\nDivyansh\n",
+        direction="inbound",
+    )
+    signed_aliases = person_aliases_from_messages([signed])
+    assert signed_aliases["dev@sample-site.example.com"] == "Divyansh"
+
+
+def test_role_title_identity_sentence_is_not_an_alias() -> None:
+    aliases = person_aliases_from_fact_texts(
+        ["Sample Developer is on the engineering mailbox with email dev@sample-site.example.com"]
+    )
+    assert "dev@sample-site.example.com" not in aliases
+    assert "Sample" not in aliases.values()

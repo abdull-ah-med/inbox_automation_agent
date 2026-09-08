@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.db.audit_event import AuditEvent
@@ -131,7 +131,13 @@ async def count_approvals_rejects(
         )
         .select_from(Draft)
         .join(Thread, Draft.thread_id == Thread.id)
-        .where(Thread.mailbox.in_(mailboxes))
+        .where(
+            Thread.mailbox.in_(mailboxes),
+            or_(
+                _in_window(Draft.approved_at, date_from, date_to),
+                _in_window(Draft.rejected_at, date_from, date_to),
+            ),
+        )
     )
     result = await session.execute(stmt)
     row = result.one()
@@ -346,7 +352,10 @@ async def queue_snapshot(
                 )
             ).label("urgency_low"),
         )
-        .where(Thread.mailbox.in_(mailboxes))
+        .where(
+            Thread.mailbox.in_(mailboxes),
+            Thread.state.in_(_AWAITING_STATES + _FILTERED_STATES),
+        )
         .group_by(Thread.mailbox)
     )
     result = await session.execute(stmt)

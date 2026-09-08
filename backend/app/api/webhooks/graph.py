@@ -19,6 +19,7 @@ Delivery contract (Microsoft Learn):
 
 from __future__ import annotations
 
+import hmac
 import json
 from typing import Annotated
 from urllib.parse import unquote
@@ -73,7 +74,8 @@ def _configured_client_state(settings: Settings) -> str | None:
 
 
 def _client_state_matches(item: GraphNotificationItemSchema, expected: str) -> bool:
-    if item.client_state != expected:
+    actual = item.client_state or ""
+    if not hmac.compare_digest(actual, expected):
         logger.warning(
             "graph_notification_client_state_mismatch",
             subscription_id=item.subscription_id,

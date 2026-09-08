@@ -65,6 +65,8 @@ async def get_by_id(
     message_id: uuid.UUID,
     scope: TenantScope,
 ) -> MessageSchema | None:
+    if not scope.mailboxes:
+        return None
     stmt = (
         select(Message)
         .join(Thread, Message.thread_id == Thread.id)
