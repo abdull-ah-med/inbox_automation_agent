@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.config import Settings, get_settings
 from app.core.dependencies import OpenAIClientDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
@@ -32,11 +33,18 @@ async def list_skill_candidates(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: AppSettings,
     _user: CurrentUser,
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[SkillCandidateResponseSchema]:
     _ = request, response
-    return await skill_candidate_service.list_pending(session, mailbox=mailbox)
+    if mailbox is not None:
+        require_allowed_mailbox(settings, mailbox)
+    return await skill_candidate_service.list_pending(
+        session,
+        mailbox=mailbox,
+        mailboxes=list(settings.mailbox_list),
+    )
 
 
 @router.post(
@@ -55,6 +63,7 @@ async def accept_skill_candidate(
     _admin: CurrentAdmin,
 ) -> SkillResponseSchema:
     _ = request, response
+    await skill_candidate_service.require_allowed_candidate(session, settings, candidate_id)
     skill = await skill_candidate_service.accept_candidate(
         session,
         candidate_id,
@@ -76,9 +85,11 @@ async def dismiss_skill_candidate(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: AppSettings,
     _admin: CurrentAdmin,
 ) -> SkillCandidateResponseSchema:
     _ = request, response
+    await skill_candidate_service.require_allowed_candidate(session, settings, candidate_id)
     updated = await skill_candidate_service.dismiss_candidate(session, candidate_id)
     await session.commit()
     return updated

@@ -242,6 +242,63 @@ async def test_extract_does_not_persist_signature_or_gossip(db_session) -> None:
     assert [row.body for row in active] == [FACT_INBOUND]
 
 
+async def test_present_context_without_pointer_needs_initial_extract(db_session) -> None:
+    """A thread that never ran extract must tell the UI to start it."""
+    from app.services import thread_context_service
+
+    thread, _inbound, _outbound = await _seed_two_message_thread(db_session)
+    view = await thread_context_service.present_context(db_session, thread.id)
+
+    assert view.needs_initial_extract is True
+    assert view.rebuild_in_progress is False
+    assert view.facts == []
+
+
+async def test_present_context_after_hash_does_not_need_initial_extract(db_session) -> None:
+    """Completed extract with zero visible facts is not 'never ran' — do not auto-rebuild."""
+    from app.services import thread_context_service
+
+    thread, inbound, _outbound = await _seed_two_message_thread(db_session)
+    await thread_context_repo.get_or_create(db_session, thread.id)
+    await thread_context_repo.set_extract_hash(
+        db_session,
+        thread.id,
+        extract_hash="a" * 64,
+        last_message_id=inbound.id,
+    )
+
+    view = await thread_context_service.present_context(db_session, thread.id)
+
+    assert view.needs_initial_extract is False
+    assert view.facts == []
+
+
+async def test_present_context_running_does_not_need_initial_extract(db_session) -> None:
+    from app.services import thread_context_service
+
+    thread, _inbound, _outbound = await _seed_two_message_thread(db_session)
+    await thread_context_service.begin_rebuild(db_session, thread.id)
+
+    view = await thread_context_service.present_context(db_session, thread.id)
+
+    assert view.rebuild_in_progress is True
+    assert view.needs_initial_extract is False
+
+
+async def test_present_context_failed_does_not_need_initial_extract(db_session) -> None:
+    """A failed extract shows the error; the UI must not auto-retry in a loop."""
+    from app.services import thread_context_service
+
+    thread, _inbound, _outbound = await _seed_two_message_thread(db_session)
+    await thread_context_service.begin_rebuild(db_session, thread.id)
+    await thread_context_service.complete_rebuild_after_extract(db_session, thread.id, "failed")
+
+    view = await thread_context_service.present_context(db_session, thread.id)
+
+    assert view.needs_initial_extract is False
+    assert view.rebuild_error == "Rebuild failed. Try again."
+
+
 async def test_begin_rebuild_then_present_shows_in_progress(db_session) -> None:
     """Same expire_on_commit=False session as production GET-after-POST."""
     from app.services import thread_context_service
@@ -305,6 +362,7 @@ async def test_stale_running_extract_is_failed_not_in_progress(db_session) -> No
     view = await thread_context_service.present_context(db_session, thread.id)
     assert view.rebuild_in_progress is False
     assert view.rebuild_error == "Rebuild timed out. Click Rebuild facts to try again."
+    assert view.needs_initial_extract is False
 
 
 async def test_locked_extract_leaves_rebuild_running(db_session) -> None:

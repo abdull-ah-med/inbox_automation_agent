@@ -25,15 +25,10 @@ async def extract_thread_context_safe(
 ) -> None:
     if not settings.thread_context_enabled:
         return
-    from app.repositories import message_repo, thread_context_repo
     from app.services import thread_context_service
 
     try:
         async with session_factory() as session, session.begin():
-            messages = await message_repo.list_by_thread(session, thread_id)
-            pointer = await thread_context_repo.get(session, thread_id)
-            if pointer is None and len(messages) <= settings.thread_full_if_at_most:
-                return
             await thread_context_service.extract_if_needed(
                 session,
                 thread_id,

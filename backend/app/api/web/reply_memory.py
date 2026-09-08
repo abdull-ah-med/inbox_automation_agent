@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
 from app.core.exceptions import ReplyMemoryNotFoundError
@@ -38,6 +39,8 @@ async def list_reply_memory(
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[ReplyMemoryResponseSchema]:
     _ = request, response
+    if mailbox is not None:
+        require_allowed_mailbox(settings, mailbox)
     rows = await reply_memory_service.list_memories(
         session,
         mailbox=mailbox,
@@ -59,9 +62,13 @@ async def update_reply_memory(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: SettingsDep,
     _admin: CurrentAdmin,
 ) -> ReplyMemoryResponseSchema:
     _ = request, response
+    existing = await reply_memory_service.get_memory_mailbox(session, reply_id)
+    if existing is None or not settings.mailbox_allowed(existing):
+        raise ReplyMemoryNotFoundError(f"Reply memory not found: {reply_id}")
     updated = await reply_memory_service.set_excluded(
         session,
         reply_id,

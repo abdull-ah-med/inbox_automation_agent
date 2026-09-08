@@ -16,7 +16,12 @@ from app.core.internal_mail import extract_email_address
 from app.models.db.draft import Draft
 from app.models.db.reply_embedding import ReplyEmbedding
 from app.repositories._vector_common import cap_limit, set_hnsw_session_defaults
-from app.repositories.memory_list_common import latest_inbound_sender_subquery
+from app.repositories.memory_list_common import (
+    latest_inbound_sender_subquery,
+    mailbox_in_allowlist,
+    mailbox_matches,
+    normalize_mailbox_allowlist,
+)
 from app.utils.text import truncate_display
 
 _ONE_LINE_MAX = 140
@@ -185,7 +190,7 @@ async def list_reply_embeddings(
         raise ValueError("mailbox is required")
     return await _list_enriched(
         session,
-        where_clause=ReplyEmbedding.mailbox == mailbox,
+        where_clause=mailbox_matches(ReplyEmbedding.mailbox, mailbox),
         limit=limit,
     )
 
@@ -197,14 +202,36 @@ async def list_all_reply_embeddings_admin(
     limit: int = 100,
 ) -> list[ReplyMemoryListItem]:
     """Cross-mailbox list for admin Settings. Empty allowlist returns no rows."""
-    allowed = [item.strip() for item in mailboxes if item and item.strip()]
-    if not allowed:
+    if not normalize_mailbox_allowlist(mailboxes):
         return []
     return await _list_enriched(
         session,
-        where_clause=ReplyEmbedding.mailbox.in_(allowed),
+        where_clause=mailbox_in_allowlist(ReplyEmbedding.mailbox, mailboxes),
         limit=limit,
     )
+
+
+async def get_mailbox_by_id(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+) -> str | None:
+    """Load mailbox for authorization checks without list enrichment joins."""
+    stmt = select(ReplyEmbedding.mailbox).where(ReplyEmbedding.id == reply_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def get_list_item_by_id(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+) -> ReplyMemoryListItem | None:
+    """Load one reply memory row, or None when missing."""
+    items = await _list_enriched(
+        session,
+        where_clause=ReplyEmbedding.id == reply_id,
+        limit=1,
+    )
+    return items[0] if items else None
 
 
 async def set_excluded(

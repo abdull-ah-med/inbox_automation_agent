@@ -201,5 +201,12 @@ async def list_profiles(
     session: AsyncSession,
     *,
     mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
+    limit: int = 100,
 ) -> list[ToneProfileResponseSchema]:
-    return await tone_profile_repo.list_profiles(session, mailbox=mailbox)
+    return await tone_profile_repo.list_profiles(
+        session,
+        mailbox=mailbox,
+        mailboxes=mailboxes,
+        limit=limit,
+    )

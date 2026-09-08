@@ -111,6 +111,19 @@ def _extract_progress(
     return False, None
 
 
+def _needs_initial_extract(
+    pointer: thread_context_repo.ThreadContextRow | None,
+    *,
+    in_progress: bool,
+    rebuild_error: str | None,
+) -> bool:
+    if in_progress or rebuild_error:
+        return False
+    if pointer is None:
+        return True
+    return not (pointer.extract_input_hash or "").strip()
+
+
 async def present_context(session: AsyncSession, thread_id: uuid.UUID) -> ThreadContextView:
     pointer = await thread_context_repo.get(session, thread_id)
     facts = await thread_context_repo.list_active_facts(session, thread_id)
@@ -118,7 +131,10 @@ async def present_context(session: AsyncSession, thread_id: uuid.UUID) -> Thread
     aliases = _aliases_for_thread(messages, [row.body for row in facts])
     if pointer is None:
         return ThreadContextView(
-            version=0, user_notes="", facts=_present_facts(facts, aliases, messages)
+            version=0,
+            user_notes="",
+            facts=_present_facts(facts, aliases, messages),
+            needs_initial_extract=True,
         )
     in_progress, rebuild_error = _extract_progress(pointer, now=datetime.now(UTC))
     return ThreadContextView(
@@ -128,6 +144,9 @@ async def present_context(session: AsyncSession, thread_id: uuid.UUID) -> Thread
         facts=_present_facts(facts, aliases, messages),
         rebuild_in_progress=in_progress,
         rebuild_error=rebuild_error,
+        needs_initial_extract=_needs_initial_extract(
+            pointer, in_progress=in_progress, rebuild_error=rebuild_error
+        ),
     )
 
 

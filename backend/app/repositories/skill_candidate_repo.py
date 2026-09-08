@@ -11,6 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.db.skill_candidate import SkillCandidate
 from app.models.schemas.skill_candidate import SkillCandidateResponseSchema
 from app.repositories._vector_common import cap_limit
+from app.repositories.memory_list_common import (
+    mailbox_in_allowlist,
+    mailbox_matches,
+    normalize_mailbox_allowlist,
+)
 
 
 def _to_response(row: SkillCandidate) -> SkillCandidateResponseSchema:
@@ -39,6 +44,7 @@ async def list_candidates(
     *,
     status: str | None = "pending",
     mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
     limit: int = 100,
 ) -> list[SkillCandidateResponseSchema]:
     capped = cap_limit(limit, maximum=500)
@@ -46,7 +52,11 @@ async def list_candidates(
     if status is not None:
         stmt = stmt.where(SkillCandidate.status == status)
     if mailbox is not None:
-        stmt = stmt.where(SkillCandidate.mailbox == mailbox)
+        stmt = stmt.where(mailbox_matches(SkillCandidate.mailbox, mailbox))
+    elif mailboxes:
+        if not normalize_mailbox_allowlist(mailboxes):
+            return []
+        stmt = stmt.where(mailbox_in_allowlist(SkillCandidate.mailbox, mailboxes))
     result = await session.execute(stmt)
     return [_to_response(row) for row in result.scalars().all()]
 

@@ -405,6 +405,7 @@ export interface ThreadContextView {
   updated_at: string | null
   rebuild_in_progress?: boolean
   rebuild_error?: string | null
+  needs_initial_extract?: boolean
 }
 
 export interface ThreadDetail {

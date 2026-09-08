@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import ColumnElement, func, select
 from sqlalchemy.sql import Subquery
 
 from app.models.db.message import Message
+
+
+def normalize_mailbox_allowlist(mailboxes: list[str]) -> list[str]:
+    """Lowercase trimmed mailbox emails for case-insensitive SQL filters."""
+    return [item.strip().lower() for item in mailboxes if item and item.strip()]
+
+
+def mailbox_matches(column: ColumnElement[str], mailbox: str) -> ColumnElement[bool]:
+    """Case-insensitive equality against one mailbox address."""
+    return func.lower(column) == mailbox.strip().lower()
+
+
+def mailbox_in_allowlist(column: ColumnElement[str], mailboxes: list[str]) -> ColumnElement[bool]:
+    """Case-insensitive membership in an allowlist."""
+    allowed = normalize_mailbox_allowlist(mailboxes)
+    return func.lower(column).in_(allowed)
 
 
 def latest_inbound_sender_subquery() -> Subquery:

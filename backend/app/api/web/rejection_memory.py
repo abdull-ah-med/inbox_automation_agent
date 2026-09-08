@@ -8,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
 from app.core.exceptions import RejectionMemoryNotFoundError
@@ -38,6 +39,8 @@ async def list_rejection_memory(
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[RejectionMemoryResponseSchema]:
     _ = request, response
+    if mailbox is not None:
+        require_allowed_mailbox(settings, mailbox)
     rows = await rejection_memory_service.list_memories(
         session,
         mailbox=mailbox,
@@ -59,9 +62,13 @@ async def update_rejection_memory(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: SettingsDep,
     _admin: CurrentAdmin,
 ) -> RejectionMemoryResponseSchema:
     _ = request, response
+    existing = await rejection_memory_service.get_memory_mailbox(session, memory_id)
+    if existing is None or not settings.mailbox_allowed(existing):
+        raise RejectionMemoryNotFoundError(f"Rejection memory not found: {memory_id}")
     updated = await rejection_memory_service.set_excluded(
         session,
         memory_id,

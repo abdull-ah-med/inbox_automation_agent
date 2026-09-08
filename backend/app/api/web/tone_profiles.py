@@ -7,7 +7,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db
+from app.api.web.mailbox_access import require_allowed_mailbox
+from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentUser
 from app.core.rate_limit import limiter
 from app.models.schemas.tone_profile import ToneProfileResponseSchema
@@ -28,8 +29,15 @@ async def list_tone_profiles(
     request: Request,
     response: Response,
     session: DbSession,
+    settings: SettingsDep,
     _user: CurrentUser,
     mailbox: Annotated[str | None, Query(max_length=320)] = None,
 ) -> list[ToneProfileResponseSchema]:
     _ = request, response
-    return await tone_profile_service.list_profiles(session, mailbox=mailbox)
+    if mailbox is not None:
+        require_allowed_mailbox(settings, mailbox)
+    return await tone_profile_service.list_profiles(
+        session,
+        mailbox=mailbox,
+        mailboxes=list(settings.mailbox_list),
+    )

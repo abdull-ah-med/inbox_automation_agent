@@ -159,6 +159,22 @@ async def list_memories(
     )
 
 
+async def get_memory_mailbox(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+) -> str | None:
+    """Load mailbox for authorization checks without list enrichment joins."""
+    return await reply_embedding_repo.get_mailbox_by_id(session, reply_id)
+
+
+async def get_memory(
+    session: AsyncSession,
+    reply_id: uuid.UUID,
+) -> reply_embedding_repo.ReplyMemoryListItem | None:
+    """Load one reply memory row for authorization checks."""
+    return await reply_embedding_repo.get_list_item_by_id(session, reply_id)
+
+
 async def set_excluded(
     session: AsyncSession,
     reply_id: uuid.UUID,

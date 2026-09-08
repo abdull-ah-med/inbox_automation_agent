@@ -131,15 +131,37 @@ async def maybe_propose_from_rejects(
         )
 
 
+async def get_candidate(
+    session: AsyncSession,
+    candidate_id: uuid.UUID,
+) -> SkillCandidateResponseSchema | None:
+    """Load one skill candidate row for authorization checks."""
+    return await skill_candidate_repo.get_by_id(session, candidate_id)
+
+
+async def require_allowed_candidate(
+    session: AsyncSession,
+    settings: Settings,
+    candidate_id: uuid.UUID,
+) -> SkillCandidateResponseSchema:
+    """Return the candidate when its mailbox is in TARGET_MAILBOXES."""
+    candidate = await get_candidate(session, candidate_id)
+    if candidate is None or not settings.mailbox_allowed(candidate.mailbox):
+        raise SkillNotFoundError(f"Skill candidate not found: {candidate_id}")
+    return candidate
+
+
 async def list_pending(
     session: AsyncSession,
     *,
     mailbox: str | None = None,
+    mailboxes: list[str] | None = None,
 ) -> list[SkillCandidateResponseSchema]:
     return await skill_candidate_repo.list_candidates(
         session,
         status="pending",
         mailbox=mailbox,
+        mailboxes=mailboxes,
     )
 
 

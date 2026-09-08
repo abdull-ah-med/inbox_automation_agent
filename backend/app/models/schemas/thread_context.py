@@ -25,6 +25,7 @@ class ThreadContextView(BaseModel):
     updated_at: datetime | None = None
     rebuild_in_progress: bool = False
     rebuild_error: str | None = None
+    needs_initial_extract: bool = False
 
 
 class ThreadContextNotesUpdate(BaseModel):

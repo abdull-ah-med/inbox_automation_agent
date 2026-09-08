@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { Panel } from "@/components/thread-triage/panel"
 import { Button } from "@/components/ui/button"
@@ -29,6 +29,7 @@ const ContextSectionEditor = ({ threadId }: { threadId: string }) => {
   const draftNotes = override ?? savedNotes
   const isDirty = override !== null && override !== savedNotes
   const rebuilding = Boolean(query.data?.rebuild_in_progress)
+  const startedInitialExtract = useRef(false)
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -89,6 +90,15 @@ const ContextSectionEditor = ({ threadId }: { threadId: string }) => {
     discardFactMutation.mutate(factId)
   }
 
+  useEffect(() => {
+    if (startedInitialExtract.current) return
+    if (!query.data?.needs_initial_extract) return
+    if (query.data.rebuild_in_progress) return
+    if (rebuildMutation.isError) return
+    startedInitialExtract.current = true
+    rebuildMutation.mutate()
+  }, [query.data?.needs_initial_extract, query.data?.rebuild_in_progress, rebuildMutation])
+
   if (!query.data) {
     return (
       <Panel title="Context">
@@ -97,7 +107,10 @@ const ContextSectionEditor = ({ threadId }: { threadId: string }) => {
     )
   }
 
-  const extractPending = rebuilding || rebuildMutation.isPending
+  const waitingForFirstExtract = Boolean(
+    query.data.needs_initial_extract && !rebuildMutation.isError,
+  )
+  const extractPending = rebuilding || rebuildMutation.isPending || waitingForFirstExtract
   const rebuildError =
     query.data.rebuild_error || (rebuildMutation.isError ? rebuildMutation.error.message : null)
 
@@ -226,9 +239,7 @@ const ContextFactsPanel = ({
         </p>
       ) : null}
       {!extractPending && view.facts.length === 0 ? (
-        <p className="text-muted-foreground mt-1 text-sm italic">
-          No useful facts yet. Rebuild reads the whole thread.
-        </p>
+        <p className="text-muted-foreground mt-1 text-sm italic">No useful facts in this thread.</p>
       ) : null}
       {view.facts.length > 0 ? (
         <ul className="mt-2 list-disc space-y-2 pl-5">

@@ -125,9 +125,7 @@ describe("ContextSection", () => {
     await waitFor(() => {
       expect(discardContextFactMock).toHaveBeenCalledWith("thread-1", "fact-1")
     })
-    expect(
-      await screen.findByText("No useful facts yet. Rebuild reads the whole thread."),
-    ).toBeInTheDocument()
+    expect(await screen.findByText("No useful facts in this thread.")).toBeInTheDocument()
   })
 
   it("keeps Rebuild pending copy until the whole-thread extract returns", async () => {
@@ -151,6 +149,47 @@ describe("ContextSection", () => {
       await screen.findByText("Reading the whole thread and extracting facts."),
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Rebuild facts" })).toBeDisabled()
+  })
+
+  it("starts extract when the thread has never been extracted", async () => {
+    getContextMock.mockResolvedValue({
+      version: 0,
+      user_notes: "",
+      facts: [],
+      updated_at: null,
+      needs_initial_extract: true,
+    })
+    rebuildContextMock.mockResolvedValue({
+      version: 0,
+      user_notes: "",
+      facts: [],
+      updated_at: null,
+      rebuild_in_progress: true,
+      needs_initial_extract: false,
+    })
+    renderWithProviders(<ContextSection threadId="thread-1" />)
+
+    expect(
+      await screen.findByText("Reading the whole thread and extracting facts."),
+    ).toBeInTheDocument()
+    await waitFor(() => {
+      expect(rebuildContextMock).toHaveBeenCalledWith("thread-1")
+    })
+    expect(screen.queryByText("No useful facts in this thread.")).toBeNull()
+  })
+
+  it("does not auto-rebuild after extract completed with no useful facts", async () => {
+    getContextMock.mockResolvedValue({
+      version: 1,
+      user_notes: "",
+      facts: [],
+      updated_at: "2026-09-08T12:00:00Z",
+      needs_initial_extract: false,
+    })
+    renderWithProviders(<ContextSection threadId="thread-1" />)
+
+    expect(await screen.findByText("No useful facts in this thread.")).toBeInTheDocument()
+    expect(rebuildContextMock).not.toHaveBeenCalled()
   })
 
   it("shows the rate-limit message instead of a generic rebuild failure", async () => {

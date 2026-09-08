@@ -160,6 +160,7 @@ async def test_get_context_without_pointer_does_not_insert(db_session) -> None:
     assert resp.json()["version"] == 0
     assert resp.json()["user_notes"] == ""
     assert resp.json()["facts"] == []
+    assert resp.json()["needs_initial_extract"] is True
     assert count == 0
 
 
