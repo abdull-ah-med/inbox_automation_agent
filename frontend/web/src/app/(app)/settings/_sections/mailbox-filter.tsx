@@ -5,9 +5,11 @@ import { useState } from "react"
 
 import { api } from "@/lib/api-client"
 
+import { MAILBOXES_LIST_QUERY_KEY } from "@/lib/query-keys"
+
 export const useMailboxFilter = () => {
   const query = useQuery({
-    queryKey: ["mailboxes"],
+    queryKey: MAILBOXES_LIST_QUERY_KEY,
     queryFn: () => api.mailboxes.list(),
   })
   const addresses = (query.data ?? []).map((row) => row.mailbox)

@@ -2,7 +2,6 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 
-import { MailboxFilter, useMailboxFilter } from "@/app/(app)/settings/_sections/mailbox-filter"
 import { ErrorPage } from "@/components/error-page"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -11,11 +10,16 @@ import { useAuthState } from "@/features/auth/use-auth"
 import { api } from "@/lib/api-client"
 import type { TeachingNote } from "@/lib/types"
 
-export const TeachingNotesSection = () => {
+export const TeachingNotesSection = ({
+  mailbox,
+  mailboxesLoading,
+}: {
+  mailbox: string
+  mailboxesLoading: boolean
+}) => {
   const auth = useAuthState()
   const isAdmin = auth.user?.role === "admin"
   const queryClient = useQueryClient()
-  const { mailbox, addresses, setMailbox, isLoading: mailboxesLoading } = useMailboxFilter()
 
   const {
     data: notes,
@@ -58,7 +62,6 @@ export const TeachingNotesSection = () => {
             View only — an admin account is required to archive teaching notes.
           </p>
         ) : null}
-        <MailboxFilter mailbox={mailbox} addresses={addresses} onMailboxChange={setMailbox} />
       </CardHeader>
       <CardContent>
         <div className="ring-foreground/10 overflow-hidden rounded-lg ring-1">

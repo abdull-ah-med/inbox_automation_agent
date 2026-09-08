@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
 import { SEARCH_DEBOUNCE_MS, useDebouncedValue } from "@/hooks/use-debounced-value"
 import { api } from "@/lib/api-client"
+import { MAILBOXES_LIST_QUERY_KEY } from "@/lib/query-keys"
 import {
   DIRECTION_FILTER_VALUES,
   completePendingFilter,
@@ -81,7 +82,7 @@ export const InboxSearch = () => {
   const searchable = isSearchableQuery(trimmed)
 
   const mailboxesQuery = useQuery({
-    queryKey: ["mailboxes", "list"],
+    queryKey: MAILBOXES_LIST_QUERY_KEY,
     queryFn: () => api.mailboxes.list(),
     enabled: open,
     staleTime: 60_000,

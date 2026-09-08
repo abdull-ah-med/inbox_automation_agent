@@ -4,6 +4,7 @@ import { Breadcrumbs } from "@/components/breadcrumbs"
 
 import { AccountSection } from "./_sections/account-section"
 import { ContactsSection } from "./_sections/contacts-section"
+import { MailboxFilter, useMailboxFilter } from "./_sections/mailbox-filter"
 import { PromotionProposalsSection } from "./_sections/promotion-proposals-section"
 import { RejectionMemorySection } from "./_sections/rejection-memory-section"
 import { SkillCandidatesSection } from "./_sections/skill-candidates-section"
@@ -14,6 +15,7 @@ import { ToneProfilesSection } from "./_sections/tone-profiles-section"
 import { UrgencyRulesSection } from "./_sections/urgency-rules-section"
 
 export default function SettingsPage() {
+  const { mailbox, addresses, setMailbox, isLoading: mailboxesLoading } = useMailboxFilter()
   return (
     <>
       <Breadcrumbs items={[{ label: "Overview", href: "/dashboard" }, { label: "Settings" }]} />
@@ -33,9 +35,10 @@ export default function SettingsPage() {
       <div className="mt-10 space-y-10">
         <ToneMemorySection />
         <RejectionMemorySection />
-        <TeachingNotesSection />
-        <PromotionProposalsSection />
-        <UrgencyRulesSection />
+        <MailboxFilter mailbox={mailbox} addresses={addresses} onMailboxChange={setMailbox} />
+        <TeachingNotesSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />
+        <PromotionProposalsSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />
+        <UrgencyRulesSection mailbox={mailbox} mailboxesLoading={mailboxesLoading} />
       </div>
     </>
   )

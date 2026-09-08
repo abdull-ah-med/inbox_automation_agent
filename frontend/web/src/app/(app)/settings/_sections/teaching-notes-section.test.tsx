@@ -44,7 +44,7 @@ const renderSection = () => {
   })
   return render(
     <QueryClientProvider client={client}>
-      <TeachingNotesSection />
+      <TeachingNotesSection mailbox="sales@example.com" mailboxesLoading={false} />
     </QueryClientProvider>,
   )
 }

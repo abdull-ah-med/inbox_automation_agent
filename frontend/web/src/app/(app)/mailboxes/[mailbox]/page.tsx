@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { api } from "@/lib/api-client"
+import { decodeMailboxParam } from "@/lib/mailbox-param"
 import {
   REPORT_TIMEZONE,
   formatYmdInTimezone,
@@ -76,7 +77,19 @@ export default function MailboxPage() {
 
 function MailboxPageContent() {
   const params = useParams<{ mailbox: string }>()
-  const mailbox = decodeURIComponent(params.mailbox)
+  const mailbox = decodeMailboxParam(params.mailbox)
+  if (mailbox === null) {
+    return (
+      <div className="space-y-4">
+        <Breadcrumbs items={[{ label: "Overview", href: "/dashboard" }, { label: "Mailbox" }]} />
+        <ErrorPage error={new Error("Invalid mailbox")} />
+      </div>
+    )
+  }
+  return <MailboxThreadList mailbox={mailbox} />
+}
+
+const MailboxThreadList = ({ mailbox }: { mailbox: string }) => {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()

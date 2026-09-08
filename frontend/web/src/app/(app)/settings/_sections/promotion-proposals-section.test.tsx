@@ -45,7 +45,7 @@ const renderSection = () => {
   })
   return render(
     <QueryClientProvider client={client}>
-      <PromotionProposalsSection />
+      <PromotionProposalsSection mailbox="sales@example.com" mailboxesLoading={false} />
     </QueryClientProvider>,
   )
 }
