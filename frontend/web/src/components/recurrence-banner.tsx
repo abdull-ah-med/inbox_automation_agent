@@ -39,13 +39,16 @@ const shouldShowBanner = (activity: ActivityEntry[] | undefined): ActivityEntry 
   return latestEscalated
 }
 
-export const RecurrenceBanner = ({
-  threadId,
-  activity,
-}: {
+type RecurrenceBannerProps = {
   threadId: string
   activity?: ActivityEntry[]
-}) => {
+}
+
+export const RecurrenceBanner = (props: RecurrenceBannerProps) => (
+  <RecurrenceBannerState key={props.threadId} {...props} />
+)
+
+const RecurrenceBannerState = ({ threadId, activity }: RecurrenceBannerProps) => {
   const queryClient = useQueryClient()
   const [dismissed, setDismissed] = useState(false)
   const [error, setError] = useState<string | null>(null)

@@ -12,6 +12,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -90,9 +91,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("focus", onFocus)
   }, [])
 
+  const bootstrapContextValue = useMemo(() => ({ bootstrapped }), [bootstrapped])
+
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthBootstrapContext.Provider value={{ bootstrapped }}>
+      <AuthBootstrapContext.Provider value={bootstrapContextValue}>
         {children}
       </AuthBootstrapContext.Provider>
     </QueryClientProvider>

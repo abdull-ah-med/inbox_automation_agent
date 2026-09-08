@@ -20,7 +20,7 @@ import {
 import { StarBorder } from "@/components/ui/star-border"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { api } from "@/lib/api-client"
-import { sanitizeUserText } from "@/lib/sanitize"
+import { MAILBOXES_LIST_QUERY_KEY } from "@/lib/query-keys"
 import { useInboxAssistantChat } from "@/hooks/use-inbox-assistant-chat"
 import type { MailboxOverview } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -61,7 +61,7 @@ export const InboxAssistant = () => {
   const canGrow = sizeIndex < PANEL_SIZES.length - 1
 
   const mailboxesQuery = useQuery({
-    queryKey: ["mailboxes", "list"],
+    queryKey: MAILBOXES_LIST_QUERY_KEY,
     queryFn: () => api.mailboxes.list(),
     enabled: open,
   })
@@ -131,14 +131,12 @@ export const InboxAssistant = () => {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    if (isAsking && !sanitizeUserText(message)) return
     void handleAsk(message)
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return
     event.preventDefault()
-    if (isAsking && !sanitizeUserText(message)) return
     void handleAsk(message)
   }
 

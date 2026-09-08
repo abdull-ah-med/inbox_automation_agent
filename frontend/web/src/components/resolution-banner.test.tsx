@@ -224,4 +224,35 @@ describe("ResolutionBanner", () => {
     expect(status).toHaveTextContent(/checked portal/i)
     expect(screen.queryByRole("button", { name: "Wrong auto-resolve reason" })).toBeNull()
   })
+
+  it("shows the resolution banner again after navigating to another thread", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    const { rerender } = render(
+      <QueryClientProvider client={client}>
+        <ResolutionBanner
+          threadId="a1111111-1111-1111-1111-111111111111"
+          presentation={resolvedPresentation}
+          urgencyAssessed="LOW"
+          activity={[]}
+        />
+      </QueryClientProvider>,
+    )
+    await user.click(screen.getByRole("button", { name: "Dismiss resolution banner" }))
+    expect(screen.queryByRole("status")).toBeNull()
+
+    rerender(
+      <QueryClientProvider client={client}>
+        <ResolutionBanner
+          threadId="b2222222-2222-2222-2222-222222222222"
+          presentation={resolvedPresentation}
+          urgencyAssessed="LOW"
+          activity={[]}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.getByRole("button", { name: "Dismiss resolution banner" })).toBeInTheDocument()
+  })
 })

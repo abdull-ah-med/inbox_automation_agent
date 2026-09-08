@@ -57,17 +57,23 @@ const ManualResolveBody = ({ lines }: { lines: string[] }) => (
   </div>
 )
 
-export const ResolutionBanner = ({
-  threadId,
-  presentation,
-  urgencyAssessed,
-  activity,
-}: {
+type ResolutionBannerProps = {
   threadId: string
   presentation: ThreadPresentation | null | undefined
   urgencyAssessed: string | null
   activity?: ActivityEntry[]
-}) => {
+}
+
+export const ResolutionBanner = (props: ResolutionBannerProps) => (
+  <ResolutionBannerState key={props.threadId} {...props} />
+)
+
+const ResolutionBannerState = ({
+  threadId,
+  presentation,
+  urgencyAssessed,
+  activity,
+}: ResolutionBannerProps) => {
   const queryClient = useQueryClient()
   const [dismissed, setDismissed] = useState(false)
   const [error, setError] = useState<string | null>(null)

@@ -30,7 +30,7 @@ export const SkillsSection = () => {
   const queryClient = useQueryClient()
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<SkillResponse | null>(null)
-  const [form, setForm] = useState<SkillCreate>(emptyForm())
+  const [form, setForm] = useState<SkillCreate>(() => emptyForm())
   const [deleteTarget, setDeleteTarget] = useState<SkillResponse | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
   const [viewerSkill, setViewerSkill] = useState<SkillResponse | null>(null)

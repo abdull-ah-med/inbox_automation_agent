@@ -208,7 +208,13 @@ const AssociationPreviewDialog = ({
   </Dialog>
 )
 
-export const AssociatedThreadsList = ({
+export const AssociatedThreadsList = (props: {
+  sourceThreadId: string
+  sourceSubject: string
+  items: RelatedThreadItem[]
+}) => <AssociatedThreadsListState key={props.sourceThreadId} {...props} />
+
+const AssociatedThreadsListState = ({
   sourceThreadId,
   sourceSubject,
   items,
