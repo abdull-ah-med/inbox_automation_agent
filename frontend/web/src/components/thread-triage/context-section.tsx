@@ -11,6 +11,16 @@ import { ApiError } from "@/lib/api/client"
 import { formatReviewerDateTime } from "@/lib/dates"
 import type { ThreadContextFact, ThreadContextView } from "@/lib/types"
 
+const sortFactsNewestFirst = (facts: ThreadContextFact[]): ThreadContextFact[] =>
+  facts.toSorted((left, right) => {
+    const leftAt = left.source_received_at ?? left.created_at
+    const rightAt = right.source_received_at ?? right.created_at
+    if (!leftAt && !rightAt) return 0
+    if (!leftAt) return 1
+    if (!rightAt) return -1
+    return new Date(rightAt).getTime() - new Date(leftAt).getTime()
+  })
+
 export const ContextSection = ({ threadId }: { threadId: string }) => (
   <ContextSectionEditor key={threadId} threadId={threadId} />
 )
@@ -224,49 +234,55 @@ const ContextFactsPanel = ({
   rebuildDisabled: boolean
   onDiscardFact: (factId: string) => void
   onRebuild: () => void
-}) => (
-  <>
-    <div>
-      <p className="text-muted-foreground text-xs">Facts</p>
-      {extractPending ? (
-        <p role="status" aria-live="polite" className="text-muted-foreground mt-1 text-sm">
-          Reading the whole thread and extracting facts.
-        </p>
-      ) : null}
-      {rebuildError && !extractPending ? (
-        <p role="alert" className="mt-1 text-sm text-red-700 dark:text-red-300">
-          {rebuildError}
-        </p>
-      ) : null}
-      {!extractPending && view.facts.length === 0 ? (
-        <p className="text-muted-foreground mt-1 text-sm italic">No useful facts in this thread.</p>
-      ) : null}
-      {view.facts.length > 0 ? (
-        <ul className="mt-2 list-disc space-y-2 pl-5">
-          {view.facts.map((fact) => (
-            <ContextFactRow
-              key={fact.id}
-              fact={fact}
-              disabled={factsBusy}
-              onDiscard={onDiscardFact}
-            />
-          ))}
-        </ul>
-      ) : null}
-    </div>
-    <Button
-      type="button"
-      variant="outline"
-      tabIndex={0}
-      aria-label="Rebuild facts"
-      aria-busy={extractPending}
-      disabled={rebuildDisabled}
-      onClick={onRebuild}
-    >
-      {extractPending ? "Rebuilding…" : "Rebuild facts"}
-    </Button>
-  </>
-)
+}) => {
+  const facts = sortFactsNewestFirst(view.facts)
+
+  return (
+    <>
+      <div>
+        <p className="text-muted-foreground text-xs">Facts</p>
+        {extractPending ? (
+          <p role="status" aria-live="polite" className="text-muted-foreground mt-1 text-sm">
+            Reading the whole thread and extracting facts.
+          </p>
+        ) : null}
+        {rebuildError && !extractPending ? (
+          <p role="alert" className="mt-1 text-sm text-red-700 dark:text-red-300">
+            {rebuildError}
+          </p>
+        ) : null}
+        {!extractPending && view.facts.length === 0 ? (
+          <p className="text-muted-foreground mt-1 text-sm italic">
+            No useful facts in this thread.
+          </p>
+        ) : null}
+        {facts.length > 0 ? (
+          <ul className="mt-2 list-disc space-y-2 pl-5">
+            {facts.map((fact) => (
+              <ContextFactRow
+                key={fact.id}
+                fact={fact}
+                disabled={factsBusy}
+                onDiscard={onDiscardFact}
+              />
+            ))}
+          </ul>
+        ) : null}
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        tabIndex={0}
+        aria-label="Rebuild facts"
+        aria-busy={extractPending}
+        disabled={rebuildDisabled}
+        onClick={onRebuild}
+      >
+        {extractPending ? "Rebuilding…" : "Rebuild facts"}
+      </Button>
+    </>
+  )
+}
 
 const ContextFactRow = ({
   fact,

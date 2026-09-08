@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 import structlog
 from anthropic import AsyncAnthropic
 
 from app.core.config import Settings
+from app.core.internal_mail import extract_email_address
+from app.core.reply_addressee import participant_first_names
 from app.llm.email_clean import effective_body_text
 from app.llm.json_parse import parse_llm_json
 from app.llm.prompts import (
@@ -56,7 +58,19 @@ def parse_thread_facts(
     return valid
 
 
-def _pack_messages(messages: Sequence[MessageSchema]) -> str:
+def _pack_messages(
+    messages: Sequence[MessageSchema],
+    *,
+    mailbox: str | None = None,
+    mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
+) -> str:
+    names = participant_first_names(
+        mailbox=mailbox,
+        messages=list(messages),
+        mailbox_owner=mailbox_owner,
+        directory=directory,
+    )
     parts: list[str] = []
     for message in messages:
         body = effective_body_text(
@@ -64,10 +78,12 @@ def _pack_messages(messages: Sequence[MessageSchema]) -> str:
             body_text=message.body_text,
             body_content_type=message.body_content_type,
         )
+        email = extract_email_address(message.sender)
+        from_name = names.get(email or "", "")
         parts.append(
             f"message_id={message.id}\n"
             f"direction={message.direction}\n"
-            f"from_name={getattr(message, 'sender_name', None) or ''}\n"
+            f"from_name={from_name}\n"
             f"from_email={message.sender}\n"
             f"received_at={message.received_at.isoformat()}\n"
             f"body:\n{body}"
@@ -81,6 +97,9 @@ async def extract_facts(
     messages: Sequence[MessageSchema],
     *,
     allowed_message_ids: Iterable[uuid.UUID] | None = None,
+    mailbox: str | None = None,
+    mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
 ) -> list[dict]:
     """Call Haiku and return validated ADD-only facts. Empty list on failure."""
     if not messages:
@@ -88,7 +107,15 @@ async def extract_facts(
     allowed = (
         set(allowed_message_ids) if allowed_message_ids is not None else {m.id for m in messages}
     )
-    user_content = wrap_untrusted(UNTRUSTED_THREAD_FACTS_TAG, _pack_messages(messages))
+    user_content = wrap_untrusted(
+        UNTRUSTED_THREAD_FACTS_TAG,
+        _pack_messages(
+            messages,
+            mailbox=mailbox,
+            mailbox_owner=mailbox_owner,
+            directory=directory,
+        ),
+    )
 
     async def _once() -> list[dict]:
         response = await client.messages.create(

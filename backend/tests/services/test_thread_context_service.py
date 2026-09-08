@@ -390,3 +390,94 @@ async def test_failed_extract_marks_rebuild_failed(db_session) -> None:
     assert pointer is not None
     assert pointer.extract_status == "failed"
     assert pointer.last_extract_error == "Rebuild failed. Try again."
+
+
+async def test_present_context_aliases_mailbox_address_to_owner(db_session) -> None:
+    from app.services import thread_context_service
+
+    thread, _inbound, outbound = await _seed_two_message_thread(db_session)
+    outbound.sender_name = "SampleSite Support"
+    await db_session.flush()
+    await thread_context_repo.get_or_create(db_session, thread.id)
+    await thread_context_repo.add_facts(
+        db_session,
+        thread.id,
+        [
+            {
+                "body": f"{MAILBOX} cancelled check 11111 in the portal",
+                "source_message_id": outbound.id,
+                "actor_kind": "llm",
+            }
+        ],
+    )
+    settings = _settings(enabled=True)
+    settings = settings.model_copy(update={"mailbox_owners": f"{MAILBOX}:Elise"})
+
+    view = await thread_context_service.present_context(db_session, thread.id, settings=settings)
+
+    assert [row.body for row in view.facts] == ["Elise cancelled check 11111 in the portal"]
+
+
+async def test_present_context_orders_facts_by_source_email_newest_first(db_session) -> None:
+    from app.services import thread_context_service
+
+    thread, inbound, outbound = await _seed_two_message_thread(db_session)
+    await thread_context_repo.get_or_create(db_session, thread.id)
+    await thread_context_repo.add_facts(
+        db_session,
+        thread.id,
+        [
+            {
+                "body": "Sender asked to cancel check 11111 for driver Ames",
+                "source_message_id": inbound.id,
+                "actor_kind": "llm",
+            },
+            {
+                "body": "Elise cancelled check 11111 in the portal",
+                "source_message_id": outbound.id,
+                "actor_kind": "llm",
+            },
+        ],
+    )
+    settings = _settings(enabled=True).model_copy(update={"mailbox_owners": f"{MAILBOX}:Elise"})
+
+    view = await thread_context_service.present_context(db_session, thread.id, settings=settings)
+
+    assert [row.body for row in view.facts] == [
+        "Elise cancelled check 11111 in the portal",
+        "Sender asked to cancel check 11111 for driver Ames",
+    ]
+
+
+async def test_present_context_owner_wins_over_identity_sentence(db_session) -> None:
+    from app.services import thread_context_service
+
+    thread, _inbound, outbound = await _seed_two_message_thread(db_session)
+    outbound.sender_name = "SampleSite Support"
+    await db_session.flush()
+    await thread_context_repo.get_or_create(db_session, thread.id)
+    await thread_context_repo.add_facts(
+        db_session,
+        thread.id,
+        [
+            {
+                "body": (
+                    f"Pat Owner is Director at SampleSite with email {MAILBOX} "
+                    "and phone (202) 555-0105 ext. 201."
+                ),
+                "source_message_id": outbound.id,
+                "actor_kind": "llm",
+            },
+            {
+                "body": f"{MAILBOX} cancelled check 11111 in the portal",
+                "source_message_id": outbound.id,
+                "actor_kind": "llm",
+            },
+        ],
+    )
+    settings = _settings(enabled=True).model_copy(update={"mailbox_owners": f"{MAILBOX}:Elise"})
+
+    view = await thread_context_service.present_context(db_session, thread.id, settings=settings)
+    bodies = [row.body for row in view.facts]
+    assert "Elise cancelled check 11111 in the portal" in bodies
+    assert all("Pat cancelled" not in body for body in bodies)

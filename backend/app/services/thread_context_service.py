@@ -12,8 +12,9 @@ from anthropic import AsyncAnthropic
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import Settings
+from app.core.config import Settings, get_settings
 from app.core.exceptions import ThreadNotFoundError
+from app.core.internal_mail import extract_email_address
 from app.llm import thread_facts as thread_facts_llm
 from app.llm.thread_fact_quality import (
     apply_person_aliases,
@@ -62,9 +63,26 @@ def _uncovered_priority_messages(
     return needed
 
 
-def _aliases_for_thread(messages: list[MessageSchema], fact_bodies: list[str]) -> dict[str, str]:
-    aliases = person_aliases_from_messages(messages)
+def _aliases_for_thread(
+    messages: list[MessageSchema],
+    fact_bodies: list[str],
+    *,
+    mailbox: str | None = None,
+    mailbox_owner: str | None = None,
+    directory: dict[str, str] | None = None,
+) -> dict[str, str]:
+    aliases = person_aliases_from_messages(
+        messages,
+        mailbox=mailbox,
+        mailbox_owner=mailbox_owner,
+        directory=directory,
+    )
     aliases.update(person_aliases_from_fact_texts(fact_bodies))
+    if mailbox and mailbox_owner:
+        owner_key = (extract_email_address(mailbox) or mailbox).strip().lower()
+        owner = mailbox_owner.strip()
+        if owner_key and owner:
+            aliases[owner_key] = owner
     return aliases
 
 
@@ -89,6 +107,12 @@ def _present_facts(
                 source_received_at=source.received_at if source is not None else None,
             )
         )
+    visible.sort(
+        key=lambda fact: (
+            fact.source_received_at or fact.created_at or datetime.min.replace(tzinfo=UTC)
+        ),
+        reverse=True,
+    )
     return visible
 
 
@@ -124,11 +148,54 @@ def _needs_initial_extract(
     return not (pointer.extract_input_hash or "").strip()
 
 
-async def present_context(session: AsyncSession, thread_id: uuid.UUID) -> ThreadContextView:
+async def _salute_directory(
+    session: AsyncSession,
+    settings: Settings,
+    mailbox: str | None,
+    messages: list[MessageSchema],
+) -> dict[str, str] | None:
+    if not settings.salute_directory_enabled or not mailbox:
+        return None
+    from app.repositories import mailbox_contact_repo
+
+    emails: list[str] = []
+    seen: set[str] = set()
+    for message in messages:
+        for raw in [message.sender, *(message.to_recipients or []), *(message.cc_recipients or [])]:
+            extracted = extract_email_address(raw)
+            if extracted is None or extracted in seen:
+                continue
+            seen.add(extracted)
+            emails.append(extracted)
+    mailbox_email = extract_email_address(mailbox)
+    if mailbox_email and mailbox_email not in seen:
+        emails.append(mailbox_email)
+    if not emails:
+        return {}
+    rows = await mailbox_contact_repo.get_many(session, emails)
+    return {email: row.first_name for email, row in rows.items()}
+
+
+async def present_context(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    settings: Settings | None = None,
+) -> ThreadContextView:
+    settings = settings or get_settings()
     pointer = await thread_context_repo.get(session, thread_id)
     facts = await thread_context_repo.list_active_facts(session, thread_id)
     messages = await message_repo.list_by_thread(session, thread_id)
-    aliases = _aliases_for_thread(messages, [row.body for row in facts])
+    thread = await thread_repo.get_by_id_trusted(session, thread_id)
+    mailbox = thread.mailbox if thread is not None else None
+    owner = settings.owner_for_mailbox(mailbox) if mailbox else None
+    directory = await _salute_directory(session, settings, mailbox, messages)
+    aliases = _aliases_for_thread(
+        messages,
+        [row.body for row in facts],
+        mailbox=mailbox,
+        mailbox_owner=owner,
+        directory=directory,
+    )
     if pointer is None:
         return ThreadContextView(
             version=0,
@@ -246,13 +313,26 @@ async def _extract_if_needed(
         return "locked"
 
     allowed = {m.id for m in messages}
+    owner = settings.owner_for_mailbox(thread.mailbox)
+    directory = await _salute_directory(session, settings, thread.mailbox, messages)
     new_facts = await thread_facts_llm.extract_facts(
         client,
         settings,
         messages,
         allowed_message_ids=allowed,
+        mailbox=thread.mailbox,
+        mailbox_owner=owner,
+        directory=directory,
     )
-    await _persist_new_facts(session, thread_id, new_facts, messages=messages)
+    await _persist_new_facts(
+        session,
+        thread_id,
+        new_facts,
+        messages=messages,
+        mailbox=thread.mailbox,
+        mailbox_owner=owner,
+        directory=directory,
+    )
 
     extra_calls = 0
     active = await thread_context_repo.list_active_facts(session, thread_id)
@@ -265,9 +345,20 @@ async def _extract_if_needed(
             settings,
             [message],
             allowed_message_ids={message.id},
+            mailbox=thread.mailbox,
+            mailbox_owner=owner,
+            directory=directory,
         )
         extra_calls += 1
-        await _persist_new_facts(session, thread_id, focused, messages=messages)
+        await _persist_new_facts(
+            session,
+            thread_id,
+            focused,
+            messages=messages,
+            mailbox=thread.mailbox,
+            mailbox_owner=owner,
+            directory=directory,
+        )
         if any(f.get("source_message_id") == message.id for f in focused):
             cited.add(message.id)
 
@@ -295,12 +386,19 @@ async def _persist_new_facts(
     facts: list[dict],
     *,
     messages: list[MessageSchema],
+    mailbox: str | None = None,
+    mailbox_owner: str | None = None,
+    directory: dict[str, str] | None = None,
 ) -> None:
     if not facts:
         return
     active = await thread_context_repo.list_active_facts(session, thread_id)
     aliases = _aliases_for_thread(
-        messages, [row.body for row in active] + [str(f.get("text") or "") for f in facts]
+        messages,
+        [row.body for row in active] + [str(f.get("text") or "") for f in facts],
+        mailbox=mailbox,
+        mailbox_owner=mailbox_owner,
+        directory=directory,
     )
     seen = {(row.body, row.source_message_id) for row in active}
     to_add: list[dict] = []
@@ -342,7 +440,14 @@ async def load_draft_working_memory(
     pointer = await thread_context_repo.get(session, thread_id)
     facts = await thread_context_repo.list_active_facts(session, thread_id)
     messages = await message_repo.list_by_thread(session, thread_id)
-    aliases = _aliases_for_thread(messages, [row.body for row in facts])
+    directory = await _salute_directory(session, settings, mailbox, messages)
+    aliases = _aliases_for_thread(
+        messages,
+        [row.body for row in facts],
+        mailbox=mailbox,
+        mailbox_owner=settings.owner_for_mailbox(mailbox),
+        directory=directory,
+    )
     notes = pointer.user_notes if pointer is not None else ""
     prior: list[dict] = []
     if recipient and recipient.strip():
