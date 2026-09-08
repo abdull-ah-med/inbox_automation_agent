@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -42,4 +42,9 @@ class TeachingNote(Base):
         nullable=False,
     )
 
-    __table_args__ = (Index("ix_teaching_notes_scope_scope_key", "scope", "scope_key", "status"),)
+    __table_args__ = (
+        Index("ix_teaching_notes_scope_scope_key", "scope", "scope_key", "status"),
+        Index("ix_teaching_notes_mailbox_scope_key", "mailbox", "scope", "scope_key"),
+        Index("ix_teaching_notes_mailbox_created_at", "mailbox", text("created_at DESC")),
+        Index("ix_teaching_notes_status_expires", "status", "expires_at"),
+    )

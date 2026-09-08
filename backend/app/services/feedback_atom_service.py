@@ -251,15 +251,21 @@ async def atomize_and_persist(
 
 async def record_hit(session: AsyncSession, atom_id: uuid.UUID) -> None:
     """Increment hit_count for the given atom (best-effort)."""
+    await record_hits(session, [atom_id])
+
+
+async def record_hits(session: AsyncSession, atom_ids: list[uuid.UUID]) -> None:
+    if not atom_ids:
+        return
     try:
         stmt = (
             sa_update(FeedbackAtom)
-            .where(FeedbackAtom.id == atom_id)
+            .where(FeedbackAtom.id.in_(atom_ids))
             .values(hit_count=FeedbackAtom.hit_count + 1)
         )
         await session.execute(stmt)
     except Exception:
-        logger.exception("record_hit_failed", atom_id=str(atom_id))
+        logger.exception("record_hits_failed", atom_count=len(atom_ids))
 
 
 async def record_retrieval_hits(
@@ -271,13 +277,14 @@ async def record_retrieval_hits(
     """Increment hits for atoms/notes after a draft row is persisted."""
     from app.repositories import teaching_note_repo
 
-    for atom_id in atom_ids or []:
-        await record_hit(session, atom_id)
-    for note_id in note_ids or []:
-        try:
-            await teaching_note_repo.increment_hit_count(session, note_id)
-        except Exception:
-            logger.exception("record_note_hit_failed", note_id=str(note_id))
+    try:
+        await record_hits(session, atom_ids or [])
+    except Exception:
+        logger.exception("record_hits_failed")
+    try:
+        await teaching_note_repo.increment_hit_counts(session, note_ids or [])
+    except Exception:
+        logger.exception("record_note_hits_failed")
 
 
 async def record_outcome(

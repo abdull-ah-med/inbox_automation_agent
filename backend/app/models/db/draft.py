@@ -70,5 +70,10 @@ class Draft(Base):
             text("approved_at DESC"),
             postgresql_where=text("approved_at IS NOT NULL"),
         ),
+        Index(
+            "ix_drafts_rejected_at",
+            text("rejected_at DESC"),
+            postgresql_where=text("rejected_at IS NOT NULL"),
+        ),
         Index("ix_drafts_thread_id_created_at", "thread_id", text("created_at DESC")),
     )

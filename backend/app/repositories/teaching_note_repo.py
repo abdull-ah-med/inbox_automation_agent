@@ -177,9 +177,15 @@ async def update_teaching_note_scope(
 
 async def increment_hit_count(session: AsyncSession, note_id: uuid.UUID) -> None:
     """Increment hit_count for a retrieved teaching note."""
+    await increment_hit_counts(session, [note_id])
+
+
+async def increment_hit_counts(session: AsyncSession, note_ids: list[uuid.UUID]) -> None:
+    if not note_ids:
+        return
     stmt = (
         sa_update(TeachingNote)
-        .where(TeachingNote.id == note_id)
+        .where(TeachingNote.id.in_(note_ids))
         .values(hit_count=TeachingNote.hit_count + 1)
     )
     await session.execute(stmt)

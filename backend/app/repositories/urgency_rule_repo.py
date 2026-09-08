@@ -153,11 +153,17 @@ async def set_urgency_rule_status(
 
 
 async def increment_hit_count(session: AsyncSession, rule_id: uuid.UUID) -> None:
+    await increment_hit_counts(session, [rule_id])
+
+
+async def increment_hit_counts(session: AsyncSession, rule_ids: list[uuid.UUID]) -> None:
+    if not rule_ids:
+        return
     from sqlalchemy import update as sa_update
 
     stmt = (
         sa_update(UrgencyRule)
-        .where(UrgencyRule.id == rule_id)
+        .where(UrgencyRule.id.in_(rule_ids))
         .values(hit_count=UrgencyRule.hit_count + 1)
     )
     await session.execute(stmt)

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,4 +41,13 @@ class FeedbackAtom(Base):
 
     __table_args__ = (
         Index("ix_feedback_atoms_scope_scope_key", "scope", "scope_key", "is_active"),
+        Index("ix_feedback_atoms_mailbox_scope_key", "mailbox", "scope", "scope_key"),
+        Index("ix_feedback_atoms_mailbox_created_at", "mailbox", text("created_at DESC")),
+        Index("ix_feedback_atoms_active_expires", "is_active", "expires_at"),
+        Index(
+            "ix_feedback_atoms_embedding_hnsw",
+            "atom_embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"atom_embedding": "vector_cosine_ops"},
+        ),
     )

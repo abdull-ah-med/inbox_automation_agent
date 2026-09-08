@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -11,6 +11,7 @@ from app.models.db.base import Base, uuid_pk
 
 class UrgencyRule(Base):
     __tablename__ = "urgency_rules"
+    __table_args__ = (Index("ix_urgency_rules_mailbox_status", "mailbox", "status"),)
 
     id: Mapped[uuid.UUID] = uuid_pk()
     mailbox: Mapped[str] = mapped_column(String(255), nullable=False)
