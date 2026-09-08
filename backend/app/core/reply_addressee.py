@@ -286,7 +286,7 @@ def _display_salute_from_message(msg: _MessageLike) -> str | None:
     compact = _sender_local_compact(getattr(msg, "sender", None))
     if compact and compact in AUTOMATED_LOCAL_COMPACTS:
         return None
-    display = getattr(msg, "sender_display_name", None)
+    display = getattr(msg, "sender_display_name", None) or getattr(msg, "sender_name", None)
     return display_name_first_name(display if isinstance(display, str) else None)
 
 
@@ -424,6 +424,65 @@ def resolve_reply_addressee(
             source_kind=source_kind,
         )
     return None
+
+
+def participant_first_names(
+    *,
+    mailbox: str | None,
+    messages: list[_MessageLike] | tuple[_MessageLike, ...] | None,
+    mailbox_owner: str | None = None,
+    directory: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Salute-quality first names keyed by lowercase email. Omits unknown people.
+
+    Same priority as ``resolve_reply_addressee``: contacts directory, then a
+    confident person name from that address's sign-off, then gated Graph From
+    display. Never the email local-part or a role/org mailbox label. The
+    configured mailbox owner is used for the mailbox address so outbound
+    timeline rows can say ``Elise replied`` rather than a Graph role name.
+    """
+    if not messages:
+        return {}
+    message_list = list(messages)
+    owner = _owner_first_name(mailbox_owner)
+    reject = frozenset({owner}) if owner else frozenset()
+    directory_map = _normalize_directory(directory)
+    mailbox_email = extract_email_address(mailbox)
+
+    emails: list[str] = []
+    seen: set[str] = set()
+    for msg in message_list:
+        email = extract_email_address(getattr(msg, "sender", None))
+        if email and email not in seen:
+            seen.add(email)
+            emails.append(email)
+
+    names: dict[str, str] = {}
+    for email in emails:
+        if mailbox_email and email == mailbox_email and owner:
+            names[email] = owner
+            continue
+        directory_name = directory_map.get(email)
+        if directory_name:
+            if not (owner and directory_name.casefold() == owner.casefold()):
+                names[email] = directory_name
+            continue
+        signed, _kind = _better_salute_for_email(
+            email=email,
+            messages=message_list,
+            reject_names=reject,
+        )
+        if signed:
+            names[email] = signed
+            continue
+        for msg in reversed(message_list):
+            if extract_email_address(getattr(msg, "sender", None)) != email:
+                continue
+            display_salute = _display_salute_from_message(msg)
+            if display_salute and not (owner and display_salute.casefold() == owner.casefold()):
+                names[email] = display_salute
+                break
+    return names
 
 
 def format_reply_addressee_block(addressee: ReplyAddressee) -> str:

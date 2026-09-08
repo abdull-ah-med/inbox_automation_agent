@@ -27,10 +27,37 @@ const message = (
   has_attachments: false,
   outlook_url: null,
   sender_name: null,
+  sender_salute_name: null,
   ...overrides,
 })
 
 describe("TimelineSection", () => {
+  it("uses the mailbox owner for inbound-only threads", () => {
+    renderWithProviders(
+      <TimelineSection
+        threadId="thread-1"
+        mailbox="sampleagent@sample-site.example.com"
+        mailboxKey="sampleagent"
+        subject="August invoice"
+        messages={[
+          message({
+            id: "m1",
+            direction: "inbound",
+            sender: "jordan@sample-screening.example.com",
+            sender_name: "Jordan Morgan",
+            sender_salute_name: "Jordan",
+            to: ["sampleagent@sample-site.example.com"],
+            summary_one_line:
+              "Jordan Morgan from SamplSampleLabing is sending the August 2026 invoice for SampleSite",
+            received_at: "2026-09-04T15:15:00Z",
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getByText("Jordan wrote to Elise")).toBeInTheDocument()
+  })
+
   it("tells the email story with names and the actual send date", () => {
     renderWithProviders(
       <TimelineSection
@@ -43,6 +70,7 @@ describe("TimelineSection", () => {
             direction: "inbound",
             sender: "alex@hospital.org",
             sender_name: "Alex Patel",
+            sender_salute_name: "Alex",
             to: ["elise@sample-site.example.com"],
             reply_text: "Hi Elise,\nCan you send the SampleClient packet today?\nThanks,\nAnita",
             summary_one_line: "Alex asked Elise to send the SampleClient packet today",
@@ -53,6 +81,7 @@ describe("TimelineSection", () => {
             direction: "outbound",
             sender: "elise@sample-site.example.com",
             sender_name: "Elise Chouest",
+            sender_salute_name: "Elise",
             to: ["alex@hospital.org"],
             reply_text: "Hi Alex,\nSending the packet this afternoon.\nElise",
             summary_one_line: "Elise said she would send the packet that afternoon",
@@ -97,6 +126,7 @@ describe("TimelineSection", () => {
         direction: index % 2 === 0 ? "inbound" : "outbound",
         sender: index % 2 === 0 ? `p${index}@hospital.org` : "elise@sample-site.example.com",
         sender_name: index % 2 === 0 ? `Pat${index}` : "Elise Chouest",
+        sender_salute_name: index % 2 === 0 ? `Pat${index}` : "Elise",
         to: index % 2 === 0 ? ["elise@sample-site.example.com"] : [`p${index}@hospital.org`],
         summary_one_line: `What happened in email ${index}`,
         received_at: `2026-08-0${index + 1}T12:00:00Z`,

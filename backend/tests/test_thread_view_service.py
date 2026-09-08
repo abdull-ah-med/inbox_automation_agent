@@ -227,6 +227,120 @@ async def test_thread_view_assembles_detail() -> None:
 
 
 @pytest.mark.asyncio
+async def test_thread_view_sender_salute_names_match_draft_salutations() -> None:
+    """Dev@ / Sample Developer is not a person; mailbox owner still labels Elise."""
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sampleagent@sample-site.example.com",
+        mailbox_owners="sampleagent@sample-site.example.com:Elise",
+        salute_directory_enabled=False,
+    )
+    thread_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sampleagent@sample-site.example.com",
+        conversation_id="conv-1",
+        subject="Broken link",
+        state="NEW",
+        urgency="NORMAL",
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    summary = ThreadSummary(
+        id=thread_id,
+        mailbox="sampleagent@sample-site.example.com",
+        mailbox_key="elise",
+        subject="Broken link",
+        state="NEW",
+        urgency="NORMAL",
+        last_message_at=now,
+        last_sender="Dev@sample-site.example.com",
+        preview="checked",
+        staleness_hours=0,
+        message_count=2,
+    )
+    inbound = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-in",
+        direction="inbound",
+        sender="Dev@sample-site.example.com",
+        sender_name="Sample Developer",
+        body_text="When I checked that sent email activity the button works.",
+        body_preview="When I checked",
+        received_at=now,
+        to_recipients=["sampleagent@sample-site.example.com"],
+        cc_recipients=[],
+    )
+    outbound = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-out",
+        direction="outbound",
+        sender="sampleagent@sample-site.example.com",
+        sender_name="SampleSite Support",
+        body_text="Hey Div,\nLooks like the link is broken.\nThanks,\nElise\n",
+        body_preview="Hey Div",
+        received_at=now,
+        to_recipients=["Dev@sample-site.example.com"],
+        cc_recipients=[],
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.thread_repo.build_thread_summary",
+            AsyncMock(return_value=summary),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound, outbound]),
+        ),
+        patch(
+            "app.services.thread_view_service.classification_repo.get_latest_for_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.draft_repo.get_latest_proposed_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_by_thread_id",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.list_raw_by_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "app.services.thread_view_service.audit_repo.get_latest_triage_flags",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.sent_reply_repo.get_by_thread",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.thread_view_service.related_thread_service.list_stored_associations",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        detail = await thread_view_service.get_thread_detail(session, settings, thread_id)
+
+    by_sender = {row.sender.lower(): row.sender_salute_name for row in detail.messages}
+    assert by_sender["dev@sample-site.example.com"] is None
+    assert by_sender["sampleagent@sample-site.example.com"] == "Elise"
+
+
+@pytest.mark.asyncio
 async def test_thread_view_includes_sent_reply_and_diff() -> None:
     from app.models.schemas.draft import DraftResponseSchema
     from app.repositories.message_repo import MessageSchema
@@ -1045,3 +1159,65 @@ async def test_list_thread_audit_requires_mailbox_scope() -> None:
         "conv-audit-1",
         mailbox="sales@example.com",
     )
+
+
+@pytest.mark.asyncio
+async def test_list_thread_messages_uses_directory_salute() -> None:
+    """Taught contact name wins over Graph role labels on the message list."""
+    from app.repositories.message_repo import MessageSchema
+    from app.repositories.thread_repo import ThreadSchema
+
+    settings = Settings(
+        environment="local",
+        target_mailboxes="sampleagent@sample-site.example.com",
+        mailbox_owners="sampleagent@sample-site.example.com:Elise",
+        salute_directory_enabled=True,
+        _env_file=None,
+    )
+    thread_id = uuid.uuid4()
+    now = datetime.now(UTC)
+    thread = ThreadSchema(
+        id=thread_id,
+        mailbox="sampleagent@sample-site.example.com",
+        conversation_id="conv-dir-1",
+        subject="Broken link",
+        state="NEW",
+        urgency="NORMAL",
+        category=None,
+        last_message_at=now,
+        last_updated_at=now,
+    )
+    inbound = MessageSchema(
+        id=uuid.uuid4(),
+        thread_id=thread_id,
+        graph_message_id="AAMkAG-in-dir",
+        direction="inbound",
+        sender="Dev@sample-site.example.com",
+        sender_name="Sample Developer",
+        body_text="When I checked that sent email activity the button works.",
+        body_preview="When I checked",
+        received_at=now,
+        to_recipients=["sampleagent@sample-site.example.com"],
+        cc_recipients=[],
+        meeting_message_type="meetingRequest",
+    )
+    session = AsyncMock()
+    with (
+        patch(
+            "app.services.thread_view_service.thread_repo.get_by_id",
+            AsyncMock(return_value=thread),
+        ),
+        patch(
+            "app.services.thread_view_service.message_repo.list_by_thread",
+            AsyncMock(return_value=[inbound]),
+        ),
+        patch(
+            "app.services.directory_lookup_service.build_directory",
+            AsyncMock(return_value={"dev@sample-site.example.com": "Divyansh"}),
+        ),
+    ):
+        rows = await thread_view_service.list_thread_messages(session, settings, thread_id)
+
+    assert len(rows) == 1
+    assert rows[0].sender_salute_name == "Divyansh"
+    assert rows[0].meeting_message_type == "meetingRequest"
