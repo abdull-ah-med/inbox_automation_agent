@@ -115,6 +115,31 @@ def test_chat_limit_value_uses_settings() -> None:
         assert chat_limit_value(MagicMock()) == "12/minute"
 
 
+def test_api_and_auth_limit_values_read_live_settings() -> None:
+    from app.core.rate_limit import (
+        api_default_limit_value,
+        auth_login_limit_value,
+        auth_refresh_limit_value,
+    )
+
+    settings = Settings(
+        environment="local",
+        jwt_secret="c" * 64,
+        frontend_origin="http://localhost:3000",
+        cookie_secure=False,
+        api_default_rate_limit="90/minute",
+        auth_login_rate_limit="3/minute",
+        auth_refresh_rate_limit="7/minute",
+        database_url="postgresql+asyncpg://postgres:postgres@localhost:5432/inbox_triage_test",
+        redis_url="redis://localhost:6379/15",
+        _env_file=None,
+    )
+    with patch("app.core.rate_limit.get_settings", return_value=settings):
+        assert api_default_limit_value(MagicMock()) == "90/minute"
+        assert auth_login_limit_value(MagicMock()) == "3/minute"
+        assert auth_refresh_limit_value(MagicMock()) == "7/minute"
+
+
 def test_chat_rate_limit_key_uses_access_token_sub() -> None:
     import uuid
 

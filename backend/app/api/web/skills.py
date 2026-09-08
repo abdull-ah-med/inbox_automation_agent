@@ -34,7 +34,7 @@ from app.core.exceptions import (
     SkillPackagingError,
     SkillPathTraversalError,
 )
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.skill import (
     ImportSkillResultSchema,
     SkillCreateSchema,
@@ -65,7 +65,7 @@ def _skill_name_from_already_imported(message: str) -> str:
     response_model=list[SkillResponseSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_skills(
     request: Request,
     response: Response,
@@ -189,7 +189,7 @@ async def import_skill(
     response_model=list[SkillFileMetaSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_skill_files(
     skill_id: uuid.UUID,
     request: Request,

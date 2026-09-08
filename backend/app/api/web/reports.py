@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.dependencies import get_db
 from app.core.dependencies_auth import CurrentUser
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.ops_report import OpsMetricsResponse, OpsReportGenerateResponse
 from app.services import ops_metrics_service
 from app.services.ops_report_job import generate_ops_report
@@ -37,7 +37,7 @@ def _window(
     response_model=OpsMetricsResponse,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def ops_metrics(
     request: Request,
     response: Response,

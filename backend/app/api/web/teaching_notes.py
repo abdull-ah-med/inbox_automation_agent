@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentAdmin, CurrentUser
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.core.scope_keys import expires_at_for_scope, resolve_widening_scope, scope_key_for
 from app.models.schemas.teaching_note import (
     CreateTeachingNoteSchema,
@@ -49,7 +49,7 @@ def _require_allowed_mailbox(settings: SettingsDep, mailbox: str) -> None:
     response_model=list[TeachingNoteResponseSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_teaching_notes(
     request: Request,
     response: Response,

@@ -297,7 +297,11 @@ async def test_refresh_does_not_store_grace_before_commit(settings: Settings) ->
 @pytest.mark.asyncio
 async def test_change_password_revokes_all(settings: Settings) -> None:
     """Password change revokes every refresh token for the user."""
+    from app.core.rate_limit import _cached_user_auth, remember_user_auth
+
     user = _user()
+    remember_user_auth(user.id, is_active=True, token_version=0)
+    assert _cached_user_auth(user.id) == (True, 0)
     session = AsyncMock()
     revoke_all = AsyncMock(return_value=3)
     with (
@@ -315,6 +319,7 @@ async def test_change_password_revokes_all(settings: Settings) -> None:
             new_password="BrandNewPassword2!",
         )
     revoke_all.assert_awaited_once_with(session, user.id)
+    assert _cached_user_auth(user.id) is None
 
 
 @pytest.mark.asyncio

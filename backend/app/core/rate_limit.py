@@ -178,6 +178,21 @@ def chat_limit_value(request: Request | None = None) -> str:
     return f"{get_settings().chat_rate_limit_per_minute}/minute"
 
 
+def api_default_limit_value(request: Request | None = None) -> str:
+    _ = request
+    return get_settings().api_default_rate_limit
+
+
+def auth_login_limit_value(request: Request | None = None) -> str:
+    _ = request
+    return get_settings().auth_login_rate_limit
+
+
+def auth_refresh_limit_value(request: Request | None = None) -> str:
+    _ = request
+    return get_settings().auth_refresh_rate_limit
+
+
 def limiter_storage_uri(settings: Settings) -> str:
     """Build SlowAPI/limits storage URI, injecting TLS CA when configured.
 

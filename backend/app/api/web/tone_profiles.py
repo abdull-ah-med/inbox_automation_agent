@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.web.mailbox_access import require_allowed_mailbox
 from app.core.dependencies import SettingsDep, get_db
 from app.core.dependencies_auth import CurrentUser
-from app.core.rate_limit import limiter
+from app.core.rate_limit import api_default_limit_value, limiter
 from app.models.schemas.tone_profile import ToneProfileResponseSchema
 from app.services import tone_profile_service
 
@@ -24,7 +24,7 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
     response_model=list[ToneProfileResponseSchema],
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("120/minute")
+@limiter.limit(api_default_limit_value)
 async def list_tone_profiles(
     request: Request,
     response: Response,

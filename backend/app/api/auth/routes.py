@@ -16,7 +16,13 @@ from app.core.dependencies_auth import (
     require_csrf,
     require_frontend_origin,
 )
-from app.core.rate_limit import limiter, resolve_client_ip
+from app.core.rate_limit import (
+    api_default_limit_value,
+    auth_login_limit_value,
+    auth_refresh_limit_value,
+    limiter,
+    resolve_client_ip,
+)
 from app.core.security.csrf import mint_csrf
 from app.models.schemas.auth import (
     ChangePasswordRequest,
@@ -114,7 +120,7 @@ def _clear_auth_cookies(response: Response, settings: Settings) -> None:
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_frontend_origin)],
 )
-@limiter.limit(get_settings().auth_login_rate_limit)
+@limiter.limit(auth_login_limit_value)
 async def login(
     body: LoginRequest,
     request: Request,
@@ -142,7 +148,7 @@ async def login(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_frontend_origin), Depends(require_csrf)],
 )
-@limiter.limit(get_settings().auth_refresh_rate_limit)
+@limiter.limit(auth_refresh_limit_value)
 async def refresh(
     request: Request,
     response: Response,
@@ -191,7 +197,7 @@ async def refresh(
     response_model=None,
     dependencies=[Depends(require_frontend_origin)],
 )
-@limiter.limit(get_settings().auth_refresh_rate_limit)
+@limiter.limit(auth_refresh_limit_value)
 async def logout(
     request: Request,
     response: Response,
@@ -214,7 +220,7 @@ async def logout(
     response_model=UserMe,
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit(get_settings().api_default_rate_limit)
+@limiter.limit(api_default_limit_value)
 async def me(request: Request, response: Response, user: CurrentUser) -> UserMe:
     _ = request, response
     return user
@@ -226,7 +232,7 @@ async def me(request: Request, response: Response, user: CurrentUser) -> UserMe:
     response_model=None,
     dependencies=[Depends(require_frontend_origin), Depends(require_csrf)],
 )
-@limiter.limit(get_settings().auth_login_rate_limit)
+@limiter.limit(auth_login_limit_value)
 async def change_password(
     body: ChangePasswordRequest,
     request: Request,
