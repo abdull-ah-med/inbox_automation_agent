@@ -22,6 +22,8 @@ type DraftSectionProps = {
   onRejectKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onGenerateDraft?: () => void
   onGenerateDraftKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
+  onRewriteAgain?: () => void
+  onRewriteAgainKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }
 
 const DraftSkills = ({ draft }: { draft: DraftView }) => {
@@ -76,12 +78,15 @@ type DraftActionButtonsProps = {
   feedbackDone: boolean
   busy: boolean
   generatePending: boolean
+  showRewriteAgain: boolean
   onGenerateDraft?: () => void
   onGenerateDraftKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onApprove: () => void
   onApproveKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onReject: () => void
   onRejectKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
+  onRewriteAgain?: () => void
+  onRewriteAgainKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
 }
 
 const DraftActionButtons = ({
@@ -89,12 +94,15 @@ const DraftActionButtons = ({
   feedbackDone,
   busy,
   generatePending,
+  showRewriteAgain,
   onGenerateDraft,
   onGenerateDraftKeyDown,
   onApprove,
   onApproveKeyDown,
   onReject,
   onRejectKeyDown,
+  onRewriteAgain,
+  onRewriteAgainKeyDown,
 }: DraftActionButtonsProps) => (
   <div className="flex flex-wrap gap-2 pt-1">
     {noEmailReply && onGenerateDraft ? (
@@ -139,6 +147,20 @@ const DraftActionButtons = ({
       <X aria-hidden="true" />
       Reject
     </Button>
+    {showRewriteAgain && onRewriteAgain ? (
+      <Button
+        type="button"
+        size="sm"
+        variant="default"
+        tabIndex={0}
+        aria-label="Rewrite again"
+        disabled={busy || generatePending}
+        onClick={onRewriteAgain}
+        onKeyDown={onRewriteAgainKeyDown}
+      >
+        Rewrite again
+      </Button>
+    ) : null}
   </div>
 )
 
@@ -157,6 +179,8 @@ export const DraftSection = ({
   onRejectKeyDown,
   onGenerateDraft,
   onGenerateDraftKeyDown,
+  onRewriteAgain,
+  onRewriteAgainKeyDown,
 }: DraftSectionProps) => {
   if (!draft) {
     return (
@@ -177,6 +201,8 @@ export const DraftSection = ({
   }
 
   const noEmailReply = !(draft.body || "").trim()
+  const isRejected = Boolean(draft.rejected_at || draft.feedback_action === "reject")
+  const showRewriteAgain = isRejected && Boolean(onRewriteAgain)
 
   return (
     <Panel title="Draft reply">
@@ -218,12 +244,15 @@ export const DraftSection = ({
           feedbackDone={feedbackDone}
           busy={busy}
           generatePending={generatePending}
+          showRewriteAgain={showRewriteAgain}
           onGenerateDraft={onGenerateDraft}
           onGenerateDraftKeyDown={onGenerateDraftKeyDown}
           onApprove={onApprove}
           onApproveKeyDown={onApproveKeyDown}
           onReject={onReject}
           onRejectKeyDown={onRejectKeyDown}
+          onRewriteAgain={onRewriteAgain}
+          onRewriteAgainKeyDown={onRewriteAgainKeyDown}
         />
       </div>
     </Panel>

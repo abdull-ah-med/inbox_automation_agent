@@ -37,3 +37,14 @@ class Thread(Base):
         onupdate=func.now(),
         nullable=False,
     )
+    draft_regen_status: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        server_default="idle",
+        default="idle",
+    )
+    draft_regen_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_regen_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )

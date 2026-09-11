@@ -262,3 +262,5 @@ class ThreadDetail(BaseModel):
     draft_vs_sent_diff: DraftVsSentDiff | None = None
     associated_threads: list[RelatedThreadItem] = Field(default_factory=list)
     reply_addressee: ReplyAddresseeView | None = None
+    draft_regen_in_progress: bool = False
+    draft_regen_error: str | None = None

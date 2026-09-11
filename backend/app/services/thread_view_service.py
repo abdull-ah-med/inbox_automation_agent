@@ -418,6 +418,10 @@ async def get_thread_detail(
         draft_vs_sent_diff=draft_vs_sent_diff,
         associated_threads=associated_threads,
         reply_addressee=reply_addressee,
+        draft_regen_in_progress=thread.draft_regen_status == "running",
+        draft_regen_error=(
+            thread.draft_regen_error if thread.draft_regen_status == "failed" else None
+        ),
     )
 
 

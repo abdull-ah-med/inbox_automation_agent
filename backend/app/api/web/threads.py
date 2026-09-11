@@ -28,7 +28,7 @@ from app.models.schemas.dashboard import (
     ThreadDetail,
     ThreadHeader,
 )
-from app.models.schemas.feedback import RegenerateDraftSchema
+from app.models.schemas.feedback import DraftRegenAcceptedSchema, RegenerateDraftSchema
 from app.models.schemas.related import (
     ApplyTreatmentResponse,
     ApplyTreatmentSchema,
@@ -54,6 +54,7 @@ from app.models.schemas.urgency_hitl import (
 )
 from app.repositories import thread_repo
 from app.services import (
+    draft_regen_job_service,
     draft_regeneration_service,
     message_html_service,
     not_spam_service,
@@ -171,8 +172,8 @@ async def get_thread_audit(
 
 @router.post(
     "/{thread_id}/regenerate-draft",
-    response_model=DraftView,
-    status_code=status.HTTP_201_CREATED,
+    response_model=DraftRegenAcceptedSchema,
+    status_code=status.HTTP_202_ACCEPTED,
 )
 @limiter.limit("20/minute")
 async def regenerate_draft(
@@ -182,25 +183,34 @@ async def regenerate_draft(
     response: Response,
     session: DbSession,
     settings: AppSettings,
-    client: AnthropicClientDep,
-    openai_client: OpenAIClientDep,
-    graph_client: GraphClientDep,
+    background_tasks: BackgroundTasks,
     user: CurrentUser,
-) -> DraftView:
-    """Regenerate a draft with a reviewer instruction. Creates a new draft row."""
+) -> DraftRegenAcceptedSchema:
+    """Queue a draft rewrite. Status is persisted on the thread; poll GET thread."""
     _ = request, response
-    # Service commits the read txn before Sonnet, then opens a short write txn.
-    persisted = await draft_regeneration_service.regenerate_draft(
+    thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
+    if thread is None or not settings.mailbox_allowed(thread.mailbox):
+        raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+
+    started = await draft_regen_job_service.begin_regen(
         session,
-        client=client,
-        settings=settings,
-        thread_id=thread_id,
+        thread_id,
         instruction=body.instruction,
-        actor=user.email,
-        openai_client=openai_client,
-        graph_client=graph_client,
     )
-    return thread_view_service.draft_response_to_view(persisted)
+    await session.commit()
+    if started:
+        background_tasks.add_task(
+            _run_draft_regen,
+            thread_id,
+            body.instruction,
+            user.email,
+            settings,
+        )
+    return DraftRegenAcceptedSchema(
+        status="running",
+        thread_id=thread_id,
+        draft_regen_in_progress=True,
+    )
 
 
 @router.post(
@@ -220,7 +230,7 @@ async def generate_draft(
     graph_client: GraphClientDep,
     user: CurrentUser,
 ) -> DraftView:
-    """Generate a letter draft on a briefing thread. Creates a new draft row."""
+    """Generate a first draft for a thread that has none. Creates a new draft row."""
     _ = request, response
     persisted = await draft_regeneration_service.generate_draft(
         session,
@@ -464,6 +474,49 @@ async def _require_context_thread(
     thread = await thread_repo.get_by_id(session, thread_id, TenantScope.from_settings(settings))
     if thread is None or not settings.mailbox_allowed(thread.mailbox):
         raise ThreadNotFoundError(f"Thread not found: {thread_id}")
+
+
+async def _run_draft_regen(
+    thread_id: uuid.UUID,
+    instruction: str,
+    actor: str,
+    settings: Settings,
+) -> None:
+    """Background rewrite — mirrors context rebuild: own session, finish/fail status."""
+    from app.core.dependencies import anthropic_client_from_settings, openai_client_from_settings
+    from app.db.session import get_session_factory
+
+    try:
+        factory = get_session_factory()
+        client = anthropic_client_from_settings(settings)
+        openai_client = openai_client_from_settings(settings)
+        async with factory() as session:
+            await draft_regeneration_service.regenerate_draft(
+                session,
+                client=client,
+                settings=settings,
+                thread_id=thread_id,
+                instruction=instruction,
+                actor=actor,
+                openai_client=openai_client,
+                graph_client=None,
+            )
+            await draft_regen_job_service.finish_regen(session, thread_id)
+            if session.in_transaction():
+                await session.commit()
+    except Exception as exc:
+        try:
+            factory = get_session_factory()
+            async with factory() as session:
+                await draft_regen_job_service.fail_regen(
+                    session,
+                    thread_id,
+                    error=str(exc) or "Rewrite failed. Try again.",
+                )
+                if session.in_transaction():
+                    await session.commit()
+        except Exception:
+            return
 
 
 async def _run_context_rebuild(thread_id: uuid.UUID, settings: Settings) -> None:

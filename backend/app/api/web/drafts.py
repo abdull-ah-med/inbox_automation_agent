@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -28,6 +28,7 @@ from app.services import (
     thread_view_service,
     urgency_feedback_service,
 )
+from app.workers.enqueue import enqueue
 
 router = APIRouter(prefix="/api/drafts", tags=["drafts"])
 
@@ -93,6 +94,7 @@ async def reject_draft(
     openai_client: OpenAIClientDep,
     anthropic_client: AnthropicClientDep,
     user: CurrentUser,
+    background_tasks: BackgroundTasks,
 ) -> DraftView:
     """Reject a draft with a required note. Does not send email."""
     _ = request, response
@@ -107,7 +109,10 @@ async def reject_draft(
     )
     await session.commit()
 
-    await draft_feedback_service.store_rejection_memory(
+    # Memory/embeddings must not block the reject response (rewrite prompt waits on it).
+    enqueue(
+        background_tasks,
+        draft_feedback_service.store_rejection_memory,
         draft=updated,
         settings=settings,
         openai_client=openai_client,

@@ -1,18 +1,17 @@
 "use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 
 import {
-  firstUrgency,
-  feedbackBadge,
-  isActivationKey,
   isFeedbackDone,
-  teachingNoteFor,
+  sidebarDraftDisplay,
+  sidebarOptionalDefaults,
 } from "@/components/thread-triage/sidebar-helpers"
 import { ThreadTriageSidebarView } from "@/components/thread-triage/sidebar-view"
 import type { ApprovalScope } from "@/components/thread-triage/review-dialogs"
 import { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
+import { useThreadDraftActions } from "@/hooks/use-thread-draft-actions"
 import { useThreadReviewMutations } from "@/hooks/use-thread-review-mutations"
 import { api } from "@/lib/api-client"
 import type { RejectReasonCode } from "@/lib/routing"
@@ -37,23 +36,23 @@ type ThreadTriageSidebarProps = {
   activity?: ActivityEntry[]
   messages?: MessageDetail[]
   replyAddressee?: ReplyAddresseeView | null
+  draftRegenInProgress?: boolean
+  draftRegenError?: string | null
 }
 
 export const ThreadTriageSidebar = (props: ThreadTriageSidebarProps) => (
   <ThreadTriageSidebarState key={props.threadId} {...props} />
 )
 
-const ThreadTriageSidebarState = ({
-  threadId,
-  thread,
-  classification,
-  draft,
-  triage,
-  auditLog,
-  activity = [],
-  messages = [],
-  replyAddressee = null,
-}: ThreadTriageSidebarProps) => {
+const ThreadTriageSidebarState = (props: ThreadTriageSidebarProps) => {
+  const { threadId, thread, classification, draft, triage, auditLog } = props
+  const { activity, messages, replyAddressee, draftRegenInProgress, draftRegenError } =
+    sidebarOptionalDefaults(props)
+  const { teachingNote, urgency, urgencyReason, badge, suggestedActions } = sidebarDraftDisplay(
+    thread,
+    draft,
+    classification,
+  )
   const queryClient = useQueryClient()
   const [approveOpen, setApproveOpen] = useState(false)
   const [rejectOpen, setRejectOpen] = useState(false)
@@ -131,79 +130,36 @@ const ThreadTriageSidebarState = ({
     siblings,
   })
 
-  const generateDraftMutation = useMutation({
-    mutationFn: () => api.threads.generateDraft(threadId),
-    onSuccess: async () => {
-      setActionError(null)
-      await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
-      await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
-      await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
-    },
-    onError: (error: Error) => {
-      setActionError(error.message)
-    },
+  const {
+    generateDraftMutation,
+    regenPending,
+    handleGenerateDraft,
+    handleGenerateDraftKeyDown,
+    handleOpenApprove,
+    handleApproveKeyDown,
+    handleOpenReject,
+    handleRejectKeyDown,
+    handleConfirmRewrite,
+    handleSkipRewrite,
+    handleRewriteAgain,
+    handleRewriteAgainKeyDown,
+  } = useThreadDraftActions({
+    threadId,
+    draft,
+    queryClient,
+    draftRegenInProgress,
+    setApproveBody,
+    setApprovalNote,
+    setApprovalScope,
+    setApproveOpen,
+    setProcessNote,
+    setRejectOpen,
+    setRewriteOpen,
+    setRewriteInstruction,
+    setActionError,
+    rewriteInstruction,
+    maybePromptResolve,
   })
-
-  const regenerateDraftMutation = useMutation({
-    mutationFn: (instruction: string) => api.threads.regenerateDraft(threadId, { instruction }),
-    onSuccess: async () => {
-      setRewriteOpen(false)
-      setRewriteInstruction("")
-      setActionError(null)
-      await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
-      await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
-      await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
-    },
-    onError: (error: Error) => {
-      setActionError(error.message)
-    },
-  })
-
-  const handleGenerateDraft = () => {
-    generateDraftMutation.mutate()
-  }
-
-  const handleGenerateDraftKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!isActivationKey(event.key)) return
-    event.preventDefault()
-    handleGenerateDraft()
-  }
-
-  const handleOpenApprove = () => {
-    setApproveBody(draft?.body ?? "")
-    setApprovalNote("")
-    setApprovalScope("")
-    setApproveOpen(true)
-  }
-
-  const handleApproveKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!isActivationKey(event.key)) return
-    event.preventDefault()
-    handleOpenApprove()
-  }
-
-  const handleOpenReject = () => {
-    setProcessNote("")
-    setRejectOpen(true)
-  }
-
-  const handleRejectKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-    if (!isActivationKey(event.key)) return
-    event.preventDefault()
-    handleOpenReject()
-  }
-
-  const handleConfirmRewrite = () => {
-    const instruction = rewriteInstruction.trim()
-    if (!instruction) return
-    regenerateDraftMutation.mutate(instruction)
-  }
-
-  const handleSkipRewrite = () => {
-    setRewriteOpen(false)
-    setRewriteInstruction("")
-    maybePromptResolve()
-  }
 
   return (
     <ThreadTriageSidebarView
@@ -214,33 +170,28 @@ const ThreadTriageSidebarState = ({
       auditLog={auditLog}
       activity={activity}
       messages={messages}
-      teachingNote={teachingNoteFor(thread.teaching_note, draft?.teaching_note)}
-      urgency={firstUrgency(
-        presentation?.urgency_assessed,
-        thread.urgency,
-        draft?.urgency,
-        classification?.urgency,
-      )}
-      urgencyReason={draft?.urgency_reason ?? null}
-      badge={draft ? feedbackBadge(draft) : null}
+      teachingNote={teachingNote}
+      urgency={urgency}
+      urgencyReason={urgencyReason}
+      badge={badge}
       feedbackDone={isFeedbackDone(draft)}
       busy={
         approveMutation.isPending ||
         rejectMutation.isPending ||
         generateDraftMutation.isPending ||
-        regenerateDraftMutation.isPending ||
+        regenPending ||
         resolveMutation.isPending
       }
-      generatePending={generateDraftMutation.isPending || regenerateDraftMutation.isPending}
-      suggestedActions={draft?.suggested_actions ?? []}
+      generatePending={generateDraftMutation.isPending || regenPending}
+      suggestedActions={suggestedActions}
       draftId={draft?.id}
       replyAddressee={replyAddressee}
-      actionError={actionError}
+      actionError={actionError ?? draftRegenError}
       approveOpen={approveOpen}
       rejectOpen={rejectOpen}
       resolvePromptOpen={resolvePromptOpen}
       rewriteOpen={rewriteOpen}
-      rewritePending={regenerateDraftMutation.isPending}
+      rewritePending={regenPending}
       resolveActionsTaken={resolveActionsTaken}
       resolveInvolved={resolveInvolved}
       approveBody={approveBody}
@@ -277,6 +228,8 @@ const ThreadTriageSidebarState = ({
       onSkipRewrite={handleSkipRewrite}
       onGenerateDraft={handleGenerateDraft}
       onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
+      onRewriteAgain={handleRewriteAgain}
+      onRewriteAgainKeyDown={handleRewriteAgainKeyDown}
       threadContextEnabled={threadContextEnabled}
       showLegacyInsights={showLegacyInsights}
     />

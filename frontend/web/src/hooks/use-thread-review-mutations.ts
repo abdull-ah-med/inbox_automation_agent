@@ -124,16 +124,18 @@ export const useThreadReviewMutations = ({
       setRejectReason("")
       setProcessNote("")
       setActionError(null)
-      await invalidateReviewQueues()
       if (payload.reason_code === "wrong_action") {
+        void invalidateReviewQueues()
         await siblings.prompt("no_reply", payload.feedback_note)
         return
       }
       if (process) {
         setRewriteInstruction(`${payload.feedback_note}\n\n${process}`)
         setRewriteOpen(true)
+        void invalidateReviewQueues()
         return
       }
+      await invalidateReviewQueues()
       maybePromptResolve()
     },
     onError: (error: Error) => {
