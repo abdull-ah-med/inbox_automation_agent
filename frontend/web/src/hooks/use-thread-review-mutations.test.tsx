@@ -42,6 +42,7 @@ const draft: DraftView = {
   approval_scope: null,
   applied_skills: [],
   tool_calls: null,
+  correct_actions: [],
 }
 
 const renderMutations = (resolveActionsTaken: string, resolveInvolved: string) => {
@@ -63,12 +64,16 @@ const renderMutations = (resolveActionsTaken: string, resolveInvolved: string) =
         approvalScope: "",
         rejectNote: "",
         rejectReason: "",
+        processNote: "",
         setApproveOpen: vi.fn(),
         setApprovalNote: vi.fn(),
         setApprovalScope: vi.fn(),
         setRejectOpen: vi.fn(),
         setRejectNote: vi.fn(),
         setRejectReason: vi.fn(),
+        setProcessNote: vi.fn(),
+        setRewriteOpen: vi.fn(),
+        setRewriteInstruction: vi.fn(),
         setActionError: vi.fn(),
         setResolvePromptOpen: vi.fn(),
         resolveActionsTaken,

@@ -2,7 +2,12 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 
-import { ApproveDraftDialog, ResolvePromptDialog } from "@/components/thread-triage/review-dialogs"
+import {
+  ApproveDraftDialog,
+  RejectDraftDialog,
+  ResolvePromptDialog,
+  RewriteDraftDialog,
+} from "@/components/thread-triage/review-dialogs"
 
 const noop = () => undefined
 
@@ -89,5 +94,61 @@ describe("ApproveDraftDialog", () => {
     ).toBeInTheDocument()
     expect(screen.getByText("Similar emails from this sender")).toBeInTheDocument()
     expect(screen.getByText("Always in this mailbox")).toBeInTheDocument()
+  })
+})
+
+const renderReject = (overrides: Partial<Parameters<typeof RejectDraftDialog>[0]> = {}) => {
+  const onProcessNoteChange = vi.fn()
+  render(
+    <RejectDraftDialog
+      open
+      onOpenChange={noop}
+      rejectNote="Wrong process"
+      onRejectNoteChange={noop}
+      rejectReason="incomplete"
+      onRejectReasonChange={noop}
+      processNote=""
+      onProcessNoteChange={onProcessNoteChange}
+      busy={false}
+      isPending={false}
+      onConfirm={noop}
+      {...overrides}
+    />,
+  )
+  return { onProcessNoteChange }
+}
+
+describe("RejectDraftDialog process note", () => {
+  it("asks what she would do instead when the letter is not a no-reply", () => {
+    renderReject()
+    expect(screen.getByLabelText("What would you do instead?")).toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Add correct process step" }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("button", { name: "Start from suggested process" }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("hides the process box when no reply is needed", () => {
+    renderReject({ rejectReason: "wrong_action" })
+    expect(screen.queryByLabelText("What would you do instead?")).not.toBeInTheDocument()
+  })
+})
+
+describe("RewriteDraftDialog", () => {
+  it("asks whether to rewrite the draft with the process", () => {
+    render(
+      <RewriteDraftDialog
+        open
+        onOpenChange={noop}
+        isPending={false}
+        onConfirm={noop}
+        onSkip={noop}
+      />,
+    )
+    expect(screen.getByRole("dialog", { name: "Rewrite draft?" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Rewrite draft" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Not now" })).toBeInTheDocument()
   })
 })

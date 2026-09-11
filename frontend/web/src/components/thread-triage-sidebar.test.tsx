@@ -14,6 +14,7 @@ const markWrongMock = vi.fn()
 const getContextMock = vi.fn()
 
 const markNotSpamMock = vi.fn()
+const regenerateDraftMock = vi.fn()
 
 vi.mock("@/lib/api-client", () => ({
   api: {
@@ -28,6 +29,7 @@ vi.mock("@/lib/api-client", () => ({
       getContext: (...args: unknown[]) => getContextMock(...args),
       rebuildContext: vi.fn(),
       discardContextFact: vi.fn(),
+      regenerateDraft: (...args: unknown[]) => regenerateDraftMock(...args),
     },
   },
 }))
@@ -73,6 +75,7 @@ const baseDraft = (): DraftView => ({
   approval_scope: null,
   applied_skills: [],
   tool_calls: null,
+  correct_actions: [],
 })
 
 beforeEach(() => {
@@ -591,4 +594,53 @@ describe("ThreadTriageSidebar not-spam action", () => {
     renderSidebar(null)
     expect(screen.queryByRole("button", { name: "Mark as not spam" })).toBeNull()
   })
+})
+
+describe("ThreadTriageSidebar process note", () => {
+  beforeEach(() => {
+    approveMock.mockReset()
+    rejectMock.mockReset()
+    markWrongMock.mockReset()
+    relatedMock.mockReset()
+    getContextMock.mockReset()
+    regenerateDraftMock.mockReset()
+    approveMock.mockResolvedValue(baseDraft())
+    rejectMock.mockResolvedValue(baseDraft())
+    markWrongMock.mockResolvedValue(baseDraft())
+    relatedMock.mockResolvedValue({ items: [] })
+    getContextMock.mockRejectedValue(new ApiError("Not found", 404))
+    regenerateDraftMock.mockResolvedValue({ ...baseDraft(), id: "draft-2" })
+  })
+
+  it("reject with a process sentence sends that text and offers a rewrite", async () => {
+    const user = userEvent.setup({ pointerEventsCheck: 0 })
+    const why = "DraftAssistant drafted a letter. This is an SampleLab invoice."
+    const process =
+      "In this case I would process the SampleLab invoice and tell Beau the rebill is with Harmeyer."
+    renderSidebar()
+    await openDraftTab(user)
+    await user.click(screen.getByRole("button", { name: "Reject draft" }))
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("combobox", { name: "Rejection reason" }))
+    await user.click(await screen.findByRole("option", { name: "Incomplete" }))
+    await user.click(within(dialog).getByLabelText("Rejection note"))
+    await user.paste(why)
+    await user.click(within(dialog).getByLabelText("What would you do instead?"))
+    await user.paste(process)
+    await user.click(within(dialog).getByRole("button", { name: "Confirm reject draft" }))
+    await waitFor(() => {
+      expect(rejectMock).toHaveBeenCalledWith("draft-1", {
+        feedback_note: why,
+        reason_code: "incomplete",
+        process_note: process,
+      })
+    })
+    const rewrite = await screen.findByRole("dialog", { name: "Rewrite draft?" })
+    await user.click(within(rewrite).getByRole("button", { name: "Rewrite draft" }))
+    await waitFor(() => {
+      expect(regenerateDraftMock).toHaveBeenCalledWith("thread-1", {
+        instruction: `${why}\n\n${process}`,
+      })
+    })
+  }, 15_000)
 })

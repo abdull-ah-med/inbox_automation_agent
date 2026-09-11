@@ -37,6 +37,7 @@ const draft: DraftView = {
   approval_scope: null,
   applied_skills: [],
   tool_calls: null,
+  correct_actions: [],
 }
 
 const renderSection = (replyAddressee: ReplyAddresseeView | null) => {
@@ -227,5 +228,34 @@ describe("DraftSection briefing (no email reply)", () => {
     )
     expect(screen.getByRole("button", { name: "Generate draft" })).toBeDisabled()
     expect(screen.getByText("Generating…")).toBeInTheDocument()
+  })
+})
+
+describe("DraftSection regenerating", () => {
+  it("hides the old letter and shows Regenerating draft", () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <DraftSection
+          draft={draft}
+          badge={null}
+          actionError={null}
+          feedbackDone={false}
+          busy={false}
+          generatePending
+          mailboxKey="sales"
+          replyAddressee={null}
+          onApprove={() => undefined}
+          onApproveKeyDown={() => undefined}
+          onReject={() => undefined}
+          onRejectKeyDown={() => undefined}
+        />
+      </QueryClientProvider>,
+    )
+    expect(screen.queryByText("Thanks for reaching out.")).not.toBeInTheDocument()
+    expect(screen.getByText("Regenerating draft…")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Approve draft" })).not.toBeInTheDocument()
   })
 })

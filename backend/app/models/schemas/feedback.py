@@ -33,6 +33,13 @@ class DraftRejectSchema(BaseModel):
 
     feedback_note: str = Field(min_length=1, max_length=5_000)
     reason_code: RejectReasonCode
+    process_note: str | None = Field(default=None, max_length=2_000)
+
+    @model_validator(mode="after")
+    def empty_process_note_becomes_none(self) -> Self:
+        note = (self.process_note or "").strip()
+        self.process_note = note or None
+        return self
 
 
 class DraftWrongSchema(BaseModel):
@@ -54,4 +61,4 @@ class DraftFeedbackSchema(BaseModel):
 class RegenerateDraftSchema(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    instruction: str = Field(min_length=1, max_length=500)
+    instruction: str = Field(min_length=1, max_length=2_000)

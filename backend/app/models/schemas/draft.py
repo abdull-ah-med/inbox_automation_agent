@@ -71,3 +71,4 @@ class DraftResponseSchema(DraftSchema):
     tool_calls: list[DraftToolCallSchema] | None = None
     retrieved_atom_ids: list[UUID] = Field(default_factory=list)
     retrieved_note_ids: list[UUID] = Field(default_factory=list)
+    correct_actions: list[SuggestedActionSchema] = Field(default_factory=list)

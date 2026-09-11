@@ -20,12 +20,16 @@ type UseThreadReviewMutationsArgs = {
   approvalScope: ApprovalScope | ""
   rejectNote: string
   rejectReason: RejectReasonCode | ""
+  processNote: string
   setApproveOpen: Dispatch<SetStateAction<boolean>>
   setApprovalNote: Dispatch<SetStateAction<string>>
   setApprovalScope: Dispatch<SetStateAction<ApprovalScope | "">>
   setRejectOpen: Dispatch<SetStateAction<boolean>>
   setRejectNote: Dispatch<SetStateAction<string>>
   setRejectReason: Dispatch<SetStateAction<RejectReasonCode | "">>
+  setProcessNote: Dispatch<SetStateAction<string>>
+  setRewriteOpen: Dispatch<SetStateAction<boolean>>
+  setRewriteInstruction: Dispatch<SetStateAction<string>>
   setActionError: Dispatch<SetStateAction<string | null>>
   setResolvePromptOpen: Dispatch<SetStateAction<boolean>>
   resolveActionsTaken: string
@@ -45,12 +49,16 @@ export const useThreadReviewMutations = ({
   approvalScope,
   rejectNote,
   rejectReason,
+  processNote,
   setApproveOpen,
   setApprovalNote,
   setApprovalScope,
   setRejectOpen,
   setRejectNote,
   setRejectReason,
+  setProcessNote,
+  setRewriteOpen,
+  setRewriteInstruction,
   setActionError,
   setResolvePromptOpen,
   resolveActionsTaken,
@@ -93,7 +101,11 @@ export const useThreadReviewMutations = ({
   })
 
   const rejectMutation = useMutation({
-    mutationFn: async (payload: { feedback_note: string; reason_code: RejectReasonCode }) => {
+    mutationFn: async (payload: {
+      feedback_note: string
+      reason_code: RejectReasonCode
+      process_note?: string
+    }) => {
       if (!draftId) {
         throw new Error("No draft available to reject")
       }
@@ -106,16 +118,23 @@ export const useThreadReviewMutations = ({
       return api.drafts.reject(draftId, payload)
     },
     onSuccess: async (_draft, payload) => {
+      const process = payload.process_note?.trim() ?? ""
       setRejectOpen(false)
       setRejectNote("")
       setRejectReason("")
+      setProcessNote("")
       setActionError(null)
       await invalidateReviewQueues()
       if (payload.reason_code === "wrong_action") {
         await siblings.prompt("no_reply", payload.feedback_note)
-      } else {
-        maybePromptResolve()
+        return
       }
+      if (process) {
+        setRewriteInstruction(`${payload.feedback_note}\n\n${process}`)
+        setRewriteOpen(true)
+        return
+      }
+      maybePromptResolve()
     },
     onError: (error: Error) => {
       setActionError(error.message)
@@ -164,10 +183,19 @@ export const useThreadReviewMutations = ({
 
   const handleReject = () => {
     if (!rejectNote.trim() || !rejectReason) return
-    rejectMutation.mutate({
+    const process = processNote.trim()
+    const payload: {
+      feedback_note: string
+      reason_code: RejectReasonCode
+      process_note?: string
+    } = {
       feedback_note: rejectNote.trim(),
       reason_code: rejectReason,
-    })
+    }
+    if (rejectReason !== "wrong_action" && process) {
+      payload.process_note = process
+    }
+    rejectMutation.mutate(payload)
   }
 
   const handleConfirmResolve = () => {

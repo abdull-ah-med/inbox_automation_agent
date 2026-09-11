@@ -166,6 +166,16 @@ export const DraftSection = ({
     )
   }
 
+  if (generatePending && (draft.body || "").trim()) {
+    return (
+      <Panel title="Draft reply">
+        <p className="text-sm text-gray-500" aria-live="polite">
+          Regenerating draft…
+        </p>
+      </Panel>
+    )
+  }
+
   const noEmailReply = !(draft.body || "").trim()
 
   return (

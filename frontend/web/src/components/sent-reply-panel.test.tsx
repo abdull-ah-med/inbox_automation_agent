@@ -36,6 +36,7 @@ const draft: DraftView = {
   approval_scope: null,
   applied_skills: [],
   tool_calls: null,
+  correct_actions: [],
 }
 
 describe("SentReplyPanel", () => {

@@ -81,12 +81,10 @@ def _parse_suggested_actions(
         action = item.get("action")
         rationale = item.get("rationale")
         stakeholder = item.get("stakeholder")
-        if (
-            not isinstance(step, int)
-            or not isinstance(action, str)
-            or not isinstance(rationale, str)
-        ):
+        if not isinstance(step, int) or not isinstance(action, str):
             continue
+        if not isinstance(rationale, str):
+            rationale = ""
         stakeholder_val = stakeholder if isinstance(stakeholder, str) else None
         actions.append(
             SuggestedActionSchema(
@@ -193,6 +191,7 @@ def _to_response(row: Draft) -> DraftResponseSchema:
         approval_note=row.approval_note if isinstance(row.approval_note, str) else None,
         approval_scope=row.approval_scope if isinstance(row.approval_scope, str) else None,
         suggested_actions=_parse_suggested_actions(row.suggested_actions),
+        correct_actions=_parse_suggested_actions(row.correct_actions),
         applied_skills=_parse_applied_skills(row.applied_skills_json),
         tool_calls=_parse_tool_calls(row.tool_calls_json),
         retrieved_atom_ids=list(row.retrieved_atom_ids or []),
@@ -372,18 +371,15 @@ async def reject_draft(
     if existing.rejected_at is not None and existing.feedback_action == "reject":
         return existing
 
-    stmt = (
-        update(Draft)
-        .where(Draft.id == draft_id)
-        .values(
-            rejected_at=datetime.now(UTC),
-            feedback_note=feedback_note,
-            feedback_action="reject",
-            feedback_reason_code=reason_code,
-            approved_at=None,
-        )
-        .returning(Draft)
-    )
+    values: dict[str, Any] = {
+        "rejected_at": datetime.now(UTC),
+        "feedback_note": feedback_note,
+        "feedback_action": "reject",
+        "feedback_reason_code": reason_code,
+        "approved_at": None,
+    }
+
+    stmt = update(Draft).where(Draft.id == draft_id).values(**values).returning(Draft)
     result = await session.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:

@@ -198,6 +198,7 @@ export interface DraftView {
   approval_scope: "once" | "similar" | "sender_address" | "mailbox" | null
   applied_skills: AppliedSkill[]
   tool_calls: DraftToolCall[] | null
+  correct_actions: SuggestedAction[]
 }
 
 export type SkillSourceKind = "inline" | "imported"

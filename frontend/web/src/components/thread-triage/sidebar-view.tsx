@@ -13,6 +13,7 @@ import {
   type ApprovalScope,
   RejectDraftDialog,
   ResolvePromptDialog,
+  RewriteDraftDialog,
 } from "@/components/thread-triage/review-dialogs"
 import { Tabs, TabsContent, TabsIndicator, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type { useSiblingsPrompt } from "@/hooks/use-siblings-prompt"
@@ -60,6 +61,9 @@ type ThreadTriageSidebarViewProps = {
   approvalScope: ApprovalScope | ""
   rejectNote: string
   rejectReason: RejectReasonCode | ""
+  processNote: string
+  rewriteOpen: boolean
+  rewritePending: boolean
   approvePending: boolean
   rejectPending: boolean
   resolvePending: boolean
@@ -67,6 +71,7 @@ type ThreadTriageSidebarViewProps = {
   onApproveOpenChange: (open: boolean) => void
   onRejectOpenChange: (open: boolean) => void
   onResolvePromptOpenChange: (open: boolean) => void
+  onRewriteOpenChange: (open: boolean) => void
   onResolveActionsTakenChange: (value: string) => void
   onResolveInvolvedChange: (value: string) => void
   onMarkResolved: () => void
@@ -75,12 +80,16 @@ type ThreadTriageSidebarViewProps = {
   onApprovalScopeChange: (value: ApprovalScope | "") => void
   onRejectNoteChange: (value: string) => void
   onRejectReasonChange: (value: RejectReasonCode | "") => void
+  onProcessNoteChange: (value: string) => void
   onOpenApprove: () => void
+  onOpenReject: () => void
   onApproveKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onRejectKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   onConfirmApprove: () => void
   onConfirmReject: () => void
   onConfirmResolve: () => void
+  onConfirmRewrite: () => void
+  onSkipRewrite: () => void
   onGenerateDraft: () => void
   onGenerateDraftKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   threadContextEnabled?: boolean
@@ -116,6 +125,9 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     approvalScope,
     rejectNote,
     rejectReason,
+    processNote,
+    rewriteOpen,
+    rewritePending,
     approvePending,
     rejectPending,
     resolvePending,
@@ -123,6 +135,7 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onApproveOpenChange,
     onRejectOpenChange,
     onResolvePromptOpenChange,
+    onRewriteOpenChange,
     onResolveActionsTakenChange,
     onResolveInvolvedChange,
     onMarkResolved,
@@ -131,12 +144,16 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onApprovalScopeChange,
     onRejectNoteChange,
     onRejectReasonChange,
+    onProcessNoteChange,
     onOpenApprove,
+    onOpenReject,
     onApproveKeyDown,
     onRejectKeyDown,
     onConfirmApprove,
     onConfirmReject,
     onConfirmResolve,
+    onConfirmRewrite,
+    onSkipRewrite,
     onGenerateDraft,
     onGenerateDraftKeyDown,
     threadContextEnabled = false,
@@ -231,12 +248,12 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             actionError={actionError}
             feedbackDone={feedbackDone}
             busy={busy}
-            generatePending={generatePending}
+            generatePending={generatePending || rewritePending}
             mailboxKey={thread.mailbox_key}
             replyAddressee={props.replyAddressee}
             onApprove={onOpenApprove}
             onApproveKeyDown={onApproveKeyDown}
-            onReject={() => onRejectOpenChange(true)}
+            onReject={onOpenReject}
             onRejectKeyDown={onRejectKeyDown}
             onGenerateDraft={onGenerateDraft}
             onGenerateDraftKeyDown={onGenerateDraftKeyDown}
@@ -264,9 +281,18 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
         onRejectNoteChange={onRejectNoteChange}
         rejectReason={rejectReason}
         onRejectReasonChange={onRejectReasonChange}
+        processNote={processNote}
+        onProcessNoteChange={onProcessNoteChange}
         busy={busy}
         isPending={rejectPending}
         onConfirm={onConfirmReject}
+      />
+      <RewriteDraftDialog
+        open={rewriteOpen}
+        onOpenChange={onRewriteOpenChange}
+        isPending={rewritePending}
+        onConfirm={onConfirmRewrite}
+        onSkip={onSkipRewrite}
       />
       <ResolvePromptDialog
         open={resolvePromptOpen}

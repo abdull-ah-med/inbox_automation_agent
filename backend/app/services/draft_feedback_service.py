@@ -17,7 +17,13 @@ from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema
 from app.models.schemas.email import EmailDirectionEnum, EmailMessageSchema, ThreadStateEnum
-from app.repositories import draft_repo, message_repo, preference_pair_repo, thread_repo
+from app.repositories import (
+    draft_repo,
+    message_repo,
+    preference_pair_repo,
+    thread_context_repo,
+    thread_repo,
+)
 from app.services import (
     audit_service,
     embedding_service,
@@ -458,6 +464,7 @@ async def store_rejection_memory(
     """
     if not draft.feedback_note or not draft.feedback_reason_code:
         return
+    learning_text = draft.feedback_note
     mailbox = "unknown"
     routing_category = draft.routing_category or "general"
     reason_code = draft.feedback_reason_code
@@ -476,7 +483,7 @@ async def store_rejection_memory(
                 mailbox=mailbox,
                 routing_category=routing_category,
                 reason_code=reason_code,
-                note=draft.feedback_note,
+                note=learning_text,
             )
             if session.in_transaction():
                 await session.commit()
@@ -525,7 +532,7 @@ async def store_rejection_memory(
                             draft_id=str(draft.id),
                         )
 
-                if draft.feedback_note and anthropic_client:
+                if learning_text and anthropic_client:
                     await atomize_and_persist(
                         session,
                         anthropic_client,
@@ -534,7 +541,7 @@ async def store_rejection_memory(
                         source_kind="preference_pair",
                         source_id=pair.id if pair is not None else draft.id,
                         mailbox=fb_mailbox,
-                        text=draft.feedback_note,
+                        text=learning_text,
                         thread_id=draft.thread_id,
                         sender_address=sender_addr,
                         sender_domain=sender_dom,
@@ -568,6 +575,7 @@ async def reject_draft(
     reason_code: str,
     actor: str = "user",
     settings: Settings | None = None,
+    process_note: str | None = None,
 ) -> DraftResponseSchema:
     """Reject a draft with a required note and reason code. Idempotent. Does not send email."""
     existing = await draft_repo.get_draft_by_id(session, draft_id)
@@ -591,6 +599,10 @@ async def reject_draft(
     )
     if updated is None:
         raise DraftNotFoundError(f"Draft not found: {draft_id}")
+
+    pin = (process_note or "").strip()
+    if pin:
+        await thread_context_repo.append_user_notes(session, existing.thread_id, pin)
 
     try:
         await audit_service.log_event(

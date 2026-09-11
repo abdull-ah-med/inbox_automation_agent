@@ -345,6 +345,89 @@ async def test_reject_with_wrong_action_still_writes_rejection_memory() -> None:
 
 
 @pytest.mark.asyncio
+async def test_store_rejection_memory_uses_the_why_note_only() -> None:
+    """Rejection memory stores why the letter was wrong, not the process pin.
+
+    Process belongs on thread pins. Worked example: SampleLab why-note only.
+    """
+    draft = _draft(
+        id=uuid.uuid4(),
+        rejected_at=datetime.now(UTC),
+        feedback_action="reject",
+        feedback_note="DraftAssistant drafted a letter. This is an SampleLab invoice.",
+        feedback_reason_code="incomplete",
+        routing_category="billing",
+    )
+    settings = MagicMock()
+    settings.openai_api_key = "sk-test"
+    settings.mailbox_list = ["elise@example.com"]
+    session = AsyncMock()
+    session.in_transaction = lambda: False
+
+    class _CM:
+        async def __aenter__(self) -> AsyncMock:
+            return session
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+    expected_note = "DraftAssistant drafted a letter. This is an SampleLab invoice."
+
+    with (
+        patch(
+            "app.services.draft_feedback_service.get_session_factory",
+            return_value=lambda: _CM(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.thread_repo.get_by_id",
+            AsyncMock(
+                return_value=type(
+                    "T",
+                    (),
+                    {
+                        "mailbox": "elise@example.com",
+                        "alert_sender_norm": "billing@sample-lab-vendor.example.com",
+                    },
+                )()
+            ),
+        ),
+        patch(
+            "app.services.draft_feedback_service.rejection_memory_service.store_rejection",
+            AsyncMock(return_value=MagicMock(id=uuid.uuid4())),
+        ) as store_mock,
+        patch(
+            "app.services.draft_feedback_service.skill_candidate_service.maybe_propose_from_rejects",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.draft_feedback_service.atomize_and_persist",
+            AsyncMock(return_value=[]),
+        ) as atomize_mock,
+        patch(
+            "app.services.draft_feedback_service._insert_preference_pair_for_decision",
+            AsyncMock(return_value=MagicMock(id=uuid.uuid4())),
+        ),
+        patch(
+            "app.services.draft_feedback_service.record_outcome",
+            AsyncMock(),
+        ),
+        patch(
+            "app.services.draft_feedback_service._extract_thread_context_after_feedback",
+            AsyncMock(),
+        ),
+    ):
+        await draft_feedback_service.store_rejection_memory(
+            draft=draft,
+            settings=settings,
+            openai_client=MagicMock(),
+            anthropic_client=MagicMock(),
+        )
+
+    assert store_mock.await_args.kwargs["note"] == expected_note
+    assert atomize_mock.await_args.kwargs["text"] == expected_note
+
+
+@pytest.mark.asyncio
 async def test_mark_wrong_audits_without_rejection_memory() -> None:
     """/wrong sets feedback_action only — no rejected_at / rejection memory path."""
     draft_id = uuid.uuid4()

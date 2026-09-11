@@ -74,6 +74,12 @@ export const threadsApi = {
       method: "POST",
     })
   },
+  regenerateDraft(id: string, body: { instruction: string }) {
+    return apiFetch<DraftView>(`/api/threads/${id}/regenerate-draft`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
+  },
   resolutionFeedback(id: string, body: { action: "reopen" | "wrong_reason"; note?: string }) {
     return apiFetch<{ state: string; action: string }>(`/api/threads/${id}/resolution-feedback`, {
       method: "POST",

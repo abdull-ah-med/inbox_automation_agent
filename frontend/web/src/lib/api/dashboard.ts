@@ -56,7 +56,14 @@ export const draftsApi = {
       body: JSON.stringify(body ?? {}),
     })
   },
-  reject(id: string, body: { feedback_note: string; reason_code: string }) {
+  reject(
+    id: string,
+    body: {
+      feedback_note: string
+      reason_code: string
+      process_note?: string
+    },
+  ) {
     return apiFetch<DraftView>(`/api/drafts/${id}/reject`, {
       method: "POST",
       body: JSON.stringify(body),

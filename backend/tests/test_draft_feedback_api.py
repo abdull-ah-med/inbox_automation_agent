@@ -182,6 +182,58 @@ async def test_reject_ok(app) -> None:
 
 
 @pytest.mark.asyncio
+async def test_reject_process_note_over_2000_is_422(app) -> None:
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            f"/api/drafts/{uuid.uuid4()}/reject",
+            json={
+                "feedback_note": "Wrong process",
+                "reason_code": "incomplete",
+                "process_note": "a" * 2001,
+            },
+        )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_reject_with_process_note_passes_sentence_to_service(app) -> None:
+    process = (
+        "In this case I would process the SampleLab invoice and tell Beau "
+        "the rebill is with Harmeyer."
+    )
+    draft = _draft_response(
+        approved_at=None,
+        rejected_at=datetime.now(UTC),
+        feedback_action="reject",
+        feedback_note="DraftAssistant drafted a letter. This is an SampleLab invoice.",
+        feedback_reason_code="incomplete",
+    )
+    with (
+        patch(
+            "app.api.web.drafts.draft_feedback_service.reject_draft",
+            AsyncMock(return_value=draft),
+        ) as reject_mock,
+        patch(
+            "app.api.web.drafts.draft_feedback_service.store_rejection_memory",
+            AsyncMock(),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/drafts/{draft.id}/reject",
+                json={
+                    "feedback_note": "DraftAssistant drafted a letter. This is an SampleLab invoice.",
+                    "reason_code": "incomplete",
+                    "process_note": process,
+                },
+            )
+    assert resp.status_code == 200
+    assert reject_mock.await_args.kwargs["process_note"] == process
+
+
+@pytest.mark.asyncio
 async def test_wrong_ok(app) -> None:
     draft = _draft_response(
         approved_at=None,

@@ -92,6 +92,26 @@ async def save_user_notes(
     return ThreadContextRow.model_validate(row)
 
 
+async def append_user_notes(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    addition: str,
+) -> ThreadContextRow:
+    """Append a reviewer process sentence onto pins. No-op when addition is blank."""
+    note = addition.strip()
+    pointer = await get_or_create(session, thread_id)
+    if not note:
+        return pointer
+    current = (pointer.user_notes or "").strip()
+    merged = note if not current else f"{current}\n\n{note}"
+    return await save_user_notes(
+        session,
+        thread_id,
+        notes=merged,
+        expected_version=pointer.version,
+    )
+
+
 async def list_active_facts(session: AsyncSession, thread_id: uuid.UUID) -> list[FactRow]:
     stmt = (
         select(ThreadContextFact)

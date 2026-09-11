@@ -218,6 +218,7 @@ class DraftView(BaseModel):
     approval_scope: str | None = None
     applied_skills: list[AppliedSkillView] = Field(default_factory=list)
     tool_calls: list[DraftToolCallView] | None = None
+    correct_actions: list[SuggestedActionView] = Field(default_factory=list)
 
 
 class SentReplyView(BaseModel):

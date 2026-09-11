@@ -103,6 +103,7 @@ async def reject_draft(
         reason_code=body.reason_code,
         actor=user.email,
         settings=settings,
+        process_note=body.process_note,
     )
     await session.commit()
 

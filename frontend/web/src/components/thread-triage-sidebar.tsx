@@ -65,6 +65,9 @@ const ThreadTriageSidebarState = ({
   const [approvalScope, setApprovalScope] = useState<ApprovalScope | "">("")
   const [rejectNote, setRejectNote] = useState("")
   const [rejectReason, setRejectReason] = useState<RejectReasonCode | "">("")
+  const [processNote, setProcessNote] = useState("")
+  const [rewriteOpen, setRewriteOpen] = useState(false)
+  const [rewriteInstruction, setRewriteInstruction] = useState("")
   const [actionError, setActionError] = useState<string | null>(null)
   const siblings = useSiblingsPrompt(threadId)
   const presentation = thread.presentation
@@ -108,12 +111,16 @@ const ThreadTriageSidebarState = ({
     approvalScope,
     rejectNote,
     rejectReason,
+    processNote,
     setApproveOpen,
     setApprovalNote,
     setApprovalScope,
     setRejectOpen,
     setRejectNote,
     setRejectReason,
+    setProcessNote,
+    setRewriteOpen,
+    setRewriteInstruction,
     setActionError,
     setResolvePromptOpen,
     resolveActionsTaken,
@@ -127,6 +134,21 @@ const ThreadTriageSidebarState = ({
   const generateDraftMutation = useMutation({
     mutationFn: () => api.threads.generateDraft(threadId),
     onSuccess: async () => {
+      setActionError(null)
+      await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
+      await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
+      await queryClient.invalidateQueries({ queryKey: ["mailbox"] })
+    },
+    onError: (error: Error) => {
+      setActionError(error.message)
+    },
+  })
+
+  const regenerateDraftMutation = useMutation({
+    mutationFn: (instruction: string) => api.threads.regenerateDraft(threadId, { instruction }),
+    onSuccess: async () => {
+      setRewriteOpen(false)
+      setRewriteInstruction("")
       setActionError(null)
       await queryClient.invalidateQueries({ queryKey: ["thread", threadId] })
       await queryClient.invalidateQueries({ queryKey: ["dashboard", "overview"] })
@@ -160,10 +182,27 @@ const ThreadTriageSidebarState = ({
     handleOpenApprove()
   }
 
+  const handleOpenReject = () => {
+    setProcessNote("")
+    setRejectOpen(true)
+  }
+
   const handleRejectKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (!isActivationKey(event.key)) return
     event.preventDefault()
-    setRejectOpen(true)
+    handleOpenReject()
+  }
+
+  const handleConfirmRewrite = () => {
+    const instruction = rewriteInstruction.trim()
+    if (!instruction) return
+    regenerateDraftMutation.mutate(instruction)
+  }
+
+  const handleSkipRewrite = () => {
+    setRewriteOpen(false)
+    setRewriteInstruction("")
+    maybePromptResolve()
   }
 
   return (
@@ -189,9 +228,10 @@ const ThreadTriageSidebarState = ({
         approveMutation.isPending ||
         rejectMutation.isPending ||
         generateDraftMutation.isPending ||
+        regenerateDraftMutation.isPending ||
         resolveMutation.isPending
       }
-      generatePending={generateDraftMutation.isPending}
+      generatePending={generateDraftMutation.isPending || regenerateDraftMutation.isPending}
       suggestedActions={draft?.suggested_actions ?? []}
       draftId={draft?.id}
       replyAddressee={replyAddressee}
@@ -199,6 +239,8 @@ const ThreadTriageSidebarState = ({
       approveOpen={approveOpen}
       rejectOpen={rejectOpen}
       resolvePromptOpen={resolvePromptOpen}
+      rewriteOpen={rewriteOpen}
+      rewritePending={regenerateDraftMutation.isPending}
       resolveActionsTaken={resolveActionsTaken}
       resolveInvolved={resolveInvolved}
       approveBody={approveBody}
@@ -206,6 +248,7 @@ const ThreadTriageSidebarState = ({
       approvalScope={approvalScope}
       rejectNote={rejectNote}
       rejectReason={rejectReason}
+      processNote={processNote}
       approvePending={approveMutation.isPending}
       rejectPending={rejectMutation.isPending}
       resolvePending={resolveMutation.isPending}
@@ -213,6 +256,7 @@ const ThreadTriageSidebarState = ({
       onApproveOpenChange={setApproveOpen}
       onRejectOpenChange={setRejectOpen}
       onResolvePromptOpenChange={setResolvePromptOpen}
+      onRewriteOpenChange={setRewriteOpen}
       onResolveActionsTakenChange={setResolveActionsTaken}
       onResolveInvolvedChange={setResolveInvolved}
       onMarkResolved={handleMarkResolved}
@@ -221,12 +265,16 @@ const ThreadTriageSidebarState = ({
       onApprovalScopeChange={setApprovalScope}
       onRejectNoteChange={setRejectNote}
       onRejectReasonChange={setRejectReason}
+      onProcessNoteChange={setProcessNote}
       onOpenApprove={handleOpenApprove}
+      onOpenReject={handleOpenReject}
       onApproveKeyDown={handleApproveKeyDown}
       onRejectKeyDown={handleRejectKeyDown}
       onConfirmApprove={handleConfirmApprove}
       onConfirmReject={handleReject}
       onConfirmResolve={handleConfirmResolve}
+      onConfirmRewrite={handleConfirmRewrite}
+      onSkipRewrite={handleSkipRewrite}
       onGenerateDraft={handleGenerateDraft}
       onGenerateDraftKeyDown={handleGenerateDraftKeyDown}
       threadContextEnabled={threadContextEnabled}

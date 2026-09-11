@@ -193,6 +193,8 @@ type RejectDraftDialogProps = {
   onRejectNoteChange: (value: string) => void
   rejectReason: RejectReasonCode | ""
   onRejectReasonChange: (value: RejectReasonCode | "") => void
+  processNote: string
+  onProcessNoteChange: (value: string) => void
   busy: boolean
   isPending: boolean
   onConfirm: () => void
@@ -205,75 +207,148 @@ export const RejectDraftDialog = ({
   onRejectNoteChange,
   rejectReason,
   onRejectReasonChange,
+  processNote,
+  onProcessNoteChange,
   busy,
   isPending,
   onConfirm,
-}: RejectDraftDialogProps) => (
+}: RejectDraftDialogProps) => {
+  const showProcess = rejectReason !== "wrong_action"
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>Reject draft</DialogTitle>
+          <DialogDescription>
+            Explain why this draft should be rejected. Email is never sent.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-gray-500" htmlFor="reject-reason">
+              Why is this wrong?
+            </label>
+            <Select
+              items={REJECT_ITEMS}
+              value={rejectReason || null}
+              onValueChange={(value) => onRejectReasonChange(value ?? "")}
+            >
+              <SelectTrigger
+                id="reject-reason"
+                aria-label="Rejection reason"
+                className="mt-1 w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  {REJECT_ITEMS.map((item) => (
+                    <SelectItem key={item.value ?? "placeholder"} value={item.value}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-gray-500">
+              &ldquo;Wrong action / no reply needed&rdquo; marks this thread as no action and leaves
+              Needs Attention. Any other reason will teach the system what to change next time.
+            </p>
+          </div>
+          <Textarea
+            value={rejectNote}
+            onChange={(event) => onRejectNoteChange(event.target.value)}
+            aria-label="Rejection note"
+            name="reject_note"
+            autoComplete="off"
+            rows={6}
+            placeholder="Why is this draft wrong…"
+          />
+          {showProcess ? (
+            <div>
+              <label className="text-xs text-gray-500" htmlFor="reject-process-note">
+                What would you do instead?
+              </label>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Optional. This is pinned on the thread so the next draft follows it.
+              </p>
+              <Textarea
+                id="reject-process-note"
+                value={processNote}
+                onChange={(event) => onProcessNoteChange(event.target.value)}
+                aria-label="What would you do instead?"
+                name="process_note"
+                autoComplete="off"
+                rows={4}
+                maxLength={2000}
+                placeholder="In this case I would … and tell Beau …"
+                className="mt-1"
+              />
+            </div>
+          ) : null}
+        </div>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            tabIndex={0}
+            aria-label="Cancel reject"
+            onClick={() => onOpenChange(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            tabIndex={0}
+            aria-label="Confirm reject draft"
+            disabled={!rejectNote.trim() || !rejectReason || busy}
+            onClick={onConfirm}
+          >
+            {isPending ? "Rejecting…" : "Reject"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+type RewriteDraftDialogProps = {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  isPending: boolean
+  onConfirm: () => void
+  onSkip: () => void
+}
+
+export const RewriteDraftDialog = ({
+  open,
+  onOpenChange,
+  isPending,
+  onConfirm,
+  onSkip,
+}: RewriteDraftDialogProps) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
-    <DialogContent size="lg">
+    <DialogContent>
       <DialogHeader>
-        <DialogTitle>Reject draft</DialogTitle>
+        <DialogTitle>Rewrite draft?</DialogTitle>
         <DialogDescription>
-          Explain why this draft should be rejected. Email is never sent.
+          Rewrite this draft using the process you just wrote. Email is never sent.
         </DialogDescription>
       </DialogHeader>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs text-gray-500" htmlFor="reject-reason">
-            Why is this wrong?
-          </label>
-          <Select
-            items={REJECT_ITEMS}
-            value={rejectReason || null}
-            onValueChange={(value) => onRejectReasonChange(value ?? "")}
-          >
-            <SelectTrigger id="reject-reason" aria-label="Rejection reason" className="mt-1 w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {REJECT_ITEMS.map((item) => (
-                  <SelectItem key={item.value ?? "placeholder"} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-xs text-gray-500">
-            &ldquo;Wrong action / no reply needed&rdquo; marks this thread as no action and leaves
-            Needs Attention. Any other reason will teach the system what to change next time.
-          </p>
-        </div>
-        <Textarea
-          value={rejectNote}
-          onChange={(event) => onRejectNoteChange(event.target.value)}
-          aria-label="Rejection note"
-          name="reject_note"
-          autoComplete="off"
-          rows={6}
-          placeholder="Why is this draft wrong…"
-        />
-      </div>
       <DialogFooter>
-        <Button
-          type="button"
-          variant="outline"
-          tabIndex={0}
-          aria-label="Cancel reject"
-          onClick={() => onOpenChange(false)}
-        >
-          Cancel
+        <Button type="button" variant="outline" tabIndex={0} aria-label="Not now" onClick={onSkip}>
+          Not now
         </Button>
         <Button
           type="button"
-          variant="destructive"
           tabIndex={0}
-          aria-label="Confirm reject draft"
-          disabled={!rejectNote.trim() || !rejectReason || busy}
+          aria-label="Rewrite draft"
+          disabled={isPending}
           onClick={onConfirm}
         >
-          {isPending ? "Rejecting…" : "Reject"}
+          {isPending ? "Rewriting…" : "Rewrite draft"}
         </Button>
       </DialogFooter>
     </DialogContent>

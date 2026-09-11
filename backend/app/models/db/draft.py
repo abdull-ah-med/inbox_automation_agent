@@ -45,6 +45,11 @@ class Draft(Base):
         nullable=True,
         server_default="'[]'",
     )
+    correct_actions: Mapped[list[Any] | None] = mapped_column(
+        JSONB,
+        nullable=True,
+        server_default="'[]'",
+    )
     tool_calls_json: Mapped[list[Any] | dict[str, Any] | None] = mapped_column(
         JSONB,
         nullable=True,

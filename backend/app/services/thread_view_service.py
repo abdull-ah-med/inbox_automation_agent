@@ -100,9 +100,18 @@ def draft_response_to_view(draft: DraftResponseSchema) -> DraftView:
                 )
                 for call in draft.tool_calls
             ]
-            if draft.tool_calls is not None
+            if draft.tool_calls
             else None
         ),
+        correct_actions=[
+            SuggestedActionView(
+                step=action.step,
+                action=action.action,
+                stakeholder=action.stakeholder,
+                rationale=action.rationale,
+            )
+            for action in draft.correct_actions
+        ],
     )
 
 
