@@ -422,6 +422,15 @@ export interface ThreadDetail {
   draft_vs_sent_diff?: DraftVsSentDiff | null
   associated_threads?: RelatedThreadItem[]
   reply_addressee?: ReplyAddresseeView | null
+  draft_regen_in_progress?: boolean
+  draft_regen_error?: string | null
+}
+
+export interface DraftRegenAccepted {
+  status: "running"
+  thread_id: string
+  draft_regen_in_progress: boolean
+  draft_regen_error?: string | null
 }
 
 export interface MarkNotSpamResponse {

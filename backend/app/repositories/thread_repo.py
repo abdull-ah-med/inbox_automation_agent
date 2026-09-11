@@ -221,6 +221,9 @@ class ThreadSchema(BaseModel):
     alert_fingerprint: str | None = None
     alert_signature: str | None = None
     alert_sender_norm: str | None = None
+    draft_regen_status: str = "idle"
+    draft_regen_error: str | None = None
+    draft_regen_started_at: datetime | None = None
 
 
 async def get_by_conversation_id(
@@ -457,6 +460,33 @@ async def set_urgency(
         update(Thread)
         .where(Thread.id == thread_id)
         .values(urgency=urgency, urgency_reason=urgency_reason)
+        .returning(Thread)
+    )
+    result = await session.execute(stmt)
+    thread = result.scalar_one_or_none()
+    if thread is None:
+        return None
+    await session.flush()
+    return ThreadSchema.model_validate(thread)
+
+
+async def set_draft_regen_status(
+    session: AsyncSession,
+    thread_id: uuid.UUID,
+    *,
+    status: str,
+    error: str | None,
+    started_at: datetime | None,
+) -> ThreadSchema | None:
+    """Persist draft rewrite job status so reload can keep showing regenerating."""
+    stmt = (
+        update(Thread)
+        .where(Thread.id == thread_id)
+        .values(
+            draft_regen_status=status,
+            draft_regen_error=error,
+            draft_regen_started_at=started_at,
+        )
         .returning(Thread)
     )
     result = await session.execute(stmt)

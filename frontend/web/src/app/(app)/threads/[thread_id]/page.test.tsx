@@ -19,6 +19,7 @@ vi.mock("@/lib/api-client", () => ({
       detail: (...args: unknown[]) => threadDetail(...args),
       header: (...args: unknown[]) => threadHeader(...args),
       related: (...args: unknown[]) => relatedThreads(...args),
+      getContext: () => Promise.reject(new Error("context not enabled")),
     },
   },
 }))

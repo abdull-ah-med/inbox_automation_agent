@@ -315,3 +315,37 @@ async def test_approve_with_learning_context_ok(app) -> None:
     approve_mock.assert_awaited_once()
     assert approve_mock.await_args.kwargs["approval_note"] == "Soften tone"
     assert approve_mock.await_args.kwargs["approval_scope"] == "similar"
+
+
+@pytest.mark.asyncio
+async def test_reject_schedules_rejection_memory_in_background(app) -> None:
+    """Reject returns the draft without awaiting rejection-memory work."""
+    draft = _draft_response(
+        approved_at=None,
+        rejected_at=datetime.now(UTC),
+        feedback_action="reject",
+        feedback_note="Bad tone",
+        feedback_reason_code="tone",
+    )
+    with (
+        patch(
+            "app.api.web.drafts.draft_feedback_service.reject_draft",
+            AsyncMock(return_value=draft),
+        ),
+        patch("app.api.web.drafts.enqueue") as enqueue_mock,
+        patch(
+            "app.api.web.drafts.draft_feedback_service.store_rejection_memory",
+            new_callable=AsyncMock,
+        ) as memory_mock,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                f"/api/drafts/{draft.id}/reject",
+                json={"feedback_note": "Bad tone", "reason_code": "tone"},
+            )
+    assert resp.status_code == 200
+    assert resp.json()["feedback_action"] == "reject"
+    assert enqueue_mock.call_count == 1
+    assert enqueue_mock.call_args.args[1] is memory_mock
+    assert memory_mock.await_count == 0

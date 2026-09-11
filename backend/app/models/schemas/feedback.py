@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -62,3 +63,12 @@ class RegenerateDraftSchema(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     instruction: str = Field(min_length=1, max_length=2_000)
+
+
+class DraftRegenAcceptedSchema(BaseModel):
+    """202 body after rewrite is queued — poll thread detail until idle."""
+
+    status: Literal["running"] = "running"
+    thread_id: uuid.UUID
+    draft_regen_in_progress: bool = True
+    draft_regen_error: str | None = None

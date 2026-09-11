@@ -92,6 +92,8 @@ type ThreadTriageSidebarViewProps = {
   onSkipRewrite: () => void
   onGenerateDraft: () => void
   onGenerateDraftKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => void
+  onRewriteAgain?: () => void
+  onRewriteAgainKeyDown?: (event: React.KeyboardEvent<HTMLButtonElement>) => void
   threadContextEnabled?: boolean
   showLegacyInsights?: boolean
 }
@@ -156,6 +158,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
     onSkipRewrite,
     onGenerateDraft,
     onGenerateDraftKeyDown,
+    onRewriteAgain,
+    onRewriteAgainKeyDown,
     threadContextEnabled = false,
     showLegacyInsights = !threadContextEnabled,
   } = props
@@ -257,6 +261,8 @@ export const ThreadTriageSidebarView = (props: ThreadTriageSidebarViewProps) => 
             onRejectKeyDown={onRejectKeyDown}
             onGenerateDraft={onGenerateDraft}
             onGenerateDraftKeyDown={onGenerateDraftKeyDown}
+            onRewriteAgain={onRewriteAgain}
+            onRewriteAgainKeyDown={onRewriteAgainKeyDown}
           />
         </TabsContent>
       </Tabs>

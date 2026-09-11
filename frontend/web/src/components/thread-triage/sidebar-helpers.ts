@@ -1,4 +1,11 @@
-import type { DraftView } from "@/lib/types"
+import type {
+  ActivityEntry,
+  ClassificationView,
+  DraftView,
+  MessageDetail,
+  ReplyAddresseeView,
+  ThreadSummary,
+} from "@/lib/types"
 
 export type FeedbackBadge = {
   label: string
@@ -45,3 +52,34 @@ export const isFeedbackDone = (draft: DraftView | null): boolean => {
   if (!draft) return false
   return Boolean(draft.approved_at || draft.rejected_at || draft.feedback_action)
 }
+
+export const sidebarOptionalDefaults = (props: {
+  activity?: ActivityEntry[]
+  messages?: MessageDetail[]
+  replyAddressee?: ReplyAddresseeView | null
+  draftRegenInProgress?: boolean
+  draftRegenError?: string | null
+}) => ({
+  activity: props.activity ?? [],
+  messages: props.messages ?? [],
+  replyAddressee: props.replyAddressee ?? null,
+  draftRegenInProgress: Boolean(props.draftRegenInProgress),
+  draftRegenError: props.draftRegenError ?? null,
+})
+
+export const sidebarDraftDisplay = (
+  thread: ThreadSummary,
+  draft: DraftView | null,
+  classification: ClassificationView | null,
+) => ({
+  teachingNote: teachingNoteFor(thread.teaching_note, draft?.teaching_note),
+  urgency: firstUrgency(
+    thread.presentation?.urgency_assessed,
+    thread.urgency,
+    draft?.urgency,
+    classification?.urgency,
+  ),
+  urgencyReason: draft?.urgency_reason ?? null,
+  badge: draft ? feedbackBadge(draft) : null,
+  suggestedActions: draft?.suggested_actions ?? [],
+})

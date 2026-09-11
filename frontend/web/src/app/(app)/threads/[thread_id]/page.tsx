@@ -56,6 +56,7 @@ function ThreadDetailPageContent() {
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["thread", threadId],
     queryFn: () => api.threads.detail(threadId),
+    refetchInterval: (query) => (query.state.data?.draft_regen_in_progress === true ? 1500 : false),
   })
   const originQuery = useQuery({
     queryKey: ["thread", originId, "header"],
@@ -205,6 +206,8 @@ const ThreadDetailLoaded = ({
             activity={activity ?? []}
             messages={messages}
             replyAddressee={reply_addressee ?? null}
+            draftRegenInProgress={Boolean(data.draft_regen_in_progress)}
+            draftRegenError={data.draft_regen_error ?? null}
           />
         </aside>
         <div className="lg:col-span-3">

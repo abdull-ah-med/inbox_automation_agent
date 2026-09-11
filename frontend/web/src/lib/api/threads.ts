@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/api/client"
 import type {
+  DraftRegenAccepted,
   DraftView,
   MarkNotSpamResponse,
   RelatedThreadList,
@@ -75,7 +76,7 @@ export const threadsApi = {
     })
   },
   regenerateDraft(id: string, body: { instruction: string }) {
-    return apiFetch<DraftView>(`/api/threads/${id}/regenerate-draft`, {
+    return apiFetch<DraftRegenAccepted>(`/api/threads/${id}/regenerate-draft`, {
       method: "POST",
       body: JSON.stringify(body),
     })
