@@ -217,7 +217,9 @@ def _body_sent_reply_detected(payload: Mapping[str, Any], _human_body: str) -> s
     if matched == "approved_draft":
         return "You sent the approved draft from Outlook. Taken off Needs Attention."
     if matched == "time_window":
-        return "DraftAssistant saw you send from Outlook and closed this. Taken off Needs Attention."
+        return (
+            "DraftAssistant saw you send from Outlook and closed this. Taken off Needs Attention."
+        )
     return "You sent a reply from Outlook. Taken off Needs Attention."
 
 

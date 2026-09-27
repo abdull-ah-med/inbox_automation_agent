@@ -11,8 +11,8 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import DraftNotFoundError
 from app.core.draftassistant_resolve import RESOLUTION_SUMMARIES, build_resolve_snapshot
+from app.core.exceptions import DraftNotFoundError
 from app.core.tenant_scope import TenantScope
 from app.db.session import get_session_factory
 from app.models.schemas.draft import DraftResponseSchema

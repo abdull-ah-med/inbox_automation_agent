@@ -1188,7 +1188,9 @@ async def aggregate_overview(
                 )
             ).label("stale_count"),
             func.count(case((open_fyi, 1))).label("open_fyi_count"),
-            func.count(case((draftassistant_recent, 1))).label("recently_resolved_draftassistant_count"),
+            func.count(case((draftassistant_recent, 1))).label(
+                "recently_resolved_draftassistant_count"
+            ),
             func.count(case((and_(needs_elise, Thread.urgency == "CRITICAL"), 1))).label(
                 "urgency_critical"
             ),
@@ -1218,7 +1220,9 @@ async def aggregate_overview(
                 "filtered_count": int(row.filtered_count or 0),
                 "stale_count": int(row.stale_count or 0),
                 "open_fyi_count": int(row.open_fyi_count or 0),
-                "recently_resolved_draftassistant_count": int(row.recently_resolved_draftassistant_count or 0),
+                "recently_resolved_draftassistant_count": int(
+                    row.recently_resolved_draftassistant_count or 0
+                ),
                 "urgency_breakdown": {
                     "CRITICAL": int(row.urgency_critical or 0),
                     "HIGH": int(row.urgency_high or 0),

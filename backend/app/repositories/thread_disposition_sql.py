@@ -150,7 +150,9 @@ def is_fyi_briefing(latest_draft: Any) -> Any:
     )
 
 
-def draftassistant_resolved_recently(now: datetime, hours: int = RECENTLY_RESOLVED_DRAFTASSISTANT_HOURS) -> Any:
+def draftassistant_resolved_recently(
+    now: datetime, hours: int = RECENTLY_RESOLVED_DRAFTASSISTANT_HOURS
+) -> Any:
     cutoff = now - timedelta(hours=hours)
     reviewer = exists(
         select(1).where(

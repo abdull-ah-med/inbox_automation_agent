@@ -133,9 +133,8 @@ def test_follow_up_accepts_assistant_history_longer_than_a_search_query() -> Non
     from app.models.schemas.chat import ChatAskRequest, ChatHistoryTurn
     from app.models.schemas.search import SEARCH_QUERY_MAX_CHARS
 
-    answer = (
-        "The latest O'Mason Lumber thread is Re: O'Mason Lumber Users from "
-        "29 July 2026. " + ("n" * 480)
+    answer = "The latest O'Mason Lumber thread is Re: O'Mason Lumber Users from 29 July 2026. " + (
+        "n" * 480
     )
     assert len(answer) > SEARCH_QUERY_MAX_CHARS
     body = ChatAskRequest(

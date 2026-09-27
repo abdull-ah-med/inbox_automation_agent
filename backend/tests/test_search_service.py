@@ -1718,9 +1718,7 @@ async def test_unembedded_thread_is_found_by_subject_and_sender(db_session) -> N
         db_session,
         _settings(),
         openai_client=None,
-        query=(
-            "can you give me the latest on Omason timber products? what s happening with them?"
-        ),
+        query=("can you give me the latest on Omason timber products? what s happening with them?"),
     )
     hit_ids = [hit.thread_id for hit in result.hits]
     assert thread_id in hit_ids

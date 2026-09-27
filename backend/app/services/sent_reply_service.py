@@ -268,9 +268,7 @@ async def resolve_thread_from_outbound(
         if matched_by == "approved_draft":
             human_body = "You sent the approved draft from Outlook. Taken off Needs Attention."
         elif matched_by == "time_window":
-            human_body = (
-                "DraftAssistant saw you send from Outlook and closed this. Taken off Needs Attention."
-            )
+            human_body = "DraftAssistant saw you send from Outlook and closed this. Taken off Needs Attention."
         else:
             human_body = "You sent a reply from Outlook. Taken off Needs Attention."
         await audit_service.log_event(

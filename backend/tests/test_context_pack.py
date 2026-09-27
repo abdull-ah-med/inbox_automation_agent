@@ -232,4 +232,6 @@ def test_org_identity_included_when_set() -> None:
         org_identity="We are SampleSite Support, not SAMPLERECORDS.",
     )
     assert "We are SampleSite Support, not SAMPLERECORDS." in packed
-    assert packed.index("We are SampleSite Support, not SAMPLERECORDS.") < packed.index("Do not CC legal")
+    assert packed.index("We are SampleSite Support, not SAMPLERECORDS.") < packed.index(
+        "Do not CC legal"
+    )

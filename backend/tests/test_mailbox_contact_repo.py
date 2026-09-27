@@ -131,4 +131,7 @@ async def test_list_search_update_delete_are_global(db_session) -> None:
     )
     await db_session.commit()
     assert deleted is True
-    assert await mailbox_contact_repo.get(db_session, "samplecontact@sample-vendor.example.com") is None
+    assert (
+        await mailbox_contact_repo.get(db_session, "samplecontact@sample-vendor.example.com")
+        is None
+    )

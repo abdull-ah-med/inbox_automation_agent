@@ -224,7 +224,9 @@ async def test_get_context_hides_signature_and_rewrites_elises_email(db_session)
                 "actor_kind": "llm",
             },
             {
-                "body": ("sampleagent@sample-site.example.com asked Dev whether they have pre-QBO data."),
+                "body": (
+                    "sampleagent@sample-site.example.com asked Dev whether they have pre-QBO data."
+                ),
                 "source_message_id": outbound.id,
                 "actor_kind": "llm",
             },

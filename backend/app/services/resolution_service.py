@@ -11,13 +11,13 @@ from openai import AsyncOpenAI
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import ThreadNotFoundError, ThreadStateError
 from app.core.draftassistant_resolve import (
     REOPEN_ACTION_FINGERPRINT,
     RESOLUTION_SUMMARIES,
     build_resolve_snapshot,
     restore_disposition_from_snapshot,
 )
+from app.core.exceptions import ThreadNotFoundError, ThreadStateError
 from app.core.tenant_scope import TenantScope
 from app.models.schemas.email import ThreadStateEnum
 from app.repositories import audit_repo, message_repo, thread_repo
